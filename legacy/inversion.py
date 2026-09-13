@@ -1,0 +1,295 @@
+"""
+SD3 rectified-flow inversion and region-controlled generation.
+
+The editing loop is:
+
+    image -> VAE -> latent -> INVERT (unbiased) -> noise + trajectory
+                                                       |
+    target prompt -> token masks -> lambda field ------+
+                     target mask -> alpha field        |
+                                                       v
+                                            GENERATE (biased, pinned) -> image
+
+Three things here are load-bearing and easy to get wrong.
+
+1. INVERSION RUNS UNBIASED. The field is applied only on generation. Biasing
+   inversion corrupts the latent being recovered and destroys the background
+   preservation that the whole method depends on.
+
+2. CFG NEEDS A SPLIT FIELD. With classifier-free guidance the batch is
+   [uncond, cond]. The uncond half has an empty prompt, so its "edit token"
+   positions are padding. Biasing attention toward padding is meaningless and
+   actively harmful, so the uncond half gets a zero mask.
+
+3. INVERSION HERE IS NAIVE EULER and accumulates error, which is exactly the
+   problem BiFM solves. Stage 0 uses 50 steps where the error is tolerable.
+   Check `roundtrip_error` before trusting any edit: if reconstruction is
+   poor, measured "background preservation" is really inversion error.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field as _field
+
+import numpy as np
+import torch
+
+from region.alpha_field import blend_latents, pin_weights
+from region.attention import RegionAttentionSpec
+from region.prompts import build_token_masks
+from region.sd3_processor import RegionJointAttnProcessor, install
+
+
+@dataclass
+class Inversion:
+    """Result of inverting an image, with the trajectory kept for pinning."""
+
+    noise: torch.Tensor                     # latent at sigma = sigma_end
+    trajectory: dict = _field(default_factory=dict)   # sigma -> latent
+    sigmas: list = _field(default_factory=list)
+    # Where inversion actually stopped. Generation must start from the SAME
+    # sigma; starting at 1.0 from a latent that only reached 0.98 injects a
+    # mismatch that looks like inversion error.
+    sigma_end: float = 1.0
+
+    def at(self, sigma: float) -> torch.Tensor:
+        """Nearest stored latent. Used by the alpha pin during generation."""
+        key = min(self.trajectory, key=lambda s: abs(s - sigma))
+        return self.trajectory[key]
+
+
+class SD3EditPipeline:
+    """Thin wrapper over a diffusers SD3 pipeline for region-controlled edits."""
+
+    def __init__(self, pipe, device="cuda"):
+        self.pipe = pipe
+        self.device = device
+        self.dtype = pipe.transformer.dtype
+        self.proc: RegionJointAttnProcessor = install(pipe.transformer)
+        self.tokenizers = {
+            "clip": pipe.tokenizer,
+            "t5": pipe.tokenizer_3,
+        }
+
+    # ---------------------------------------------------------------- VAE --
+    def encode_image(self, image: np.ndarray) -> torch.Tensor:
+        """HxWx3 uint8 or float [0,1] -> scaled latent."""
+        x = np.asarray(image, dtype=np.float32)
+        if x.max() > 1.5:
+            x = x / 255.0
+        t = torch.from_numpy(x).permute(2, 0, 1)[None] * 2.0 - 1.0
+        t = t.to(self.device, self.dtype)
+        with torch.no_grad():
+            posterior = self.pipe.vae.encode(t).latent_dist
+            lat = posterior.mode()          # deterministic; sampling adds noise
+        cfg = self.pipe.vae.config
+        return (lat - cfg.shift_factor) * cfg.scaling_factor
+
+    def decode_latent(self, latent: torch.Tensor) -> np.ndarray:
+        cfg = self.pipe.vae.config
+        lat = latent / cfg.scaling_factor + cfg.shift_factor
+        with torch.no_grad():
+            img = self.pipe.vae.decode(lat.to(self.dtype)).sample
+        img = (img / 2 + 0.5).clamp(0, 1)[0].permute(1, 2, 0)
+        return (img.float().cpu().numpy() * 255).astype(np.uint8)
+
+    # ------------------------------------------------------------ prompts --
+    def encode_prompt(self, prompt: str, negative: str = ""):
+        with torch.no_grad():
+            pe, npe, pool, npool = self.pipe.encode_prompt(
+                prompt=prompt, prompt_2=None, prompt_3=None,
+                negative_prompt=negative, device=self.device,
+                do_classifier_free_guidance=True,
+            )
+        return pe.to(self.dtype), npe.to(self.dtype), pool.to(self.dtype), npool.to(self.dtype)
+
+    # ----------------------------------------------------------- sigmas ----
+    def _sigmas(self, steps: int):
+        self.pipe.scheduler.set_timesteps(steps, device=self.device)
+        return self.pipe.scheduler.sigmas.to(torch.float32).cpu().numpy()
+
+    def _velocity(self, latent, sigma, pe, pool, guidance=1.0, npe=None, npool=None):
+        """Transformer forward. guidance <= 1 skips the CFG batch entirely."""
+        t = torch.tensor(
+            [sigma * self.pipe.scheduler.config.num_train_timesteps],
+            device=self.device, dtype=self.dtype,
+        )
+        if guidance <= 1.0 or npe is None:
+            with torch.no_grad():
+                return self.pipe.transformer(
+                    hidden_states=latent, encoder_hidden_states=pe,
+                    pooled_projections=pool, timestep=t,
+                )[0]
+
+        batch = torch.cat([latent, latent])
+        with torch.no_grad():
+            v = self.pipe.transformer(
+                hidden_states=batch,
+                encoder_hidden_states=torch.cat([npe, pe]),
+                pooled_projections=torch.cat([npool, pool]),
+                timestep=t.repeat(2),
+            )[0]
+        v_un, v_c = v.chunk(2)
+        return v_un + guidance * (v_c - v_un)
+
+    # ---------------------------------------------------------- inversion --
+    def invert(
+        self,
+        latent,
+        prompt: str,
+        steps: int = 50,
+        sigma_min: float = 0.05,
+        sigma_max: float = 0.98,
+    ) -> Inversion:
+        """Integrate the flow ODE from image toward noise.
+
+        Runs with the region bias OFF and no CFG. CFG during inversion is a
+        known source of drift: the guided velocity is not the velocity of any
+        actual ODE, so integrating it backwards does not invert anything.
+
+        WHY THE SIGMA CLAMP. At sigma ~ 0 the model is asked for
+        v = noise - x_0 from a CLEAN image. It cannot know the noise, so its
+        best estimate is E[noise] - x_0 = -x_0, and the first Euler step
+        shrinks the latent toward zero instead of adding noise. The error
+        compounds: unclamped inversion of a std-1.25 latent lands at std 0.58
+        rather than 1.0.
+
+        It is also barely trained there. SD3 samples timesteps from a
+        logit-normal, so both endpoints are rare during training, and the model
+        output near sigma=0 carries transformer-patch structure -- which shows
+        up as 16px striping in the decode.
+
+        sigma_min=0.05 skips the degenerate start. sigma_max=0.98 skips the
+        other under-trained end. Both are worth sweeping: too large a
+        sigma_min leaves the image insufficiently noised for the edit to take.
+        """
+        self.proc.set_region(None, direction="invert")
+        pe, _, pool, _ = self.encode_prompt(prompt)
+
+        sigmas = self._sigmas(steps)[::-1]          # ascending: 0 -> 1
+        sigmas = [float(s) for s in sigmas if sigma_min <= s <= sigma_max]
+        if len(sigmas) < 2:
+            raise ValueError(
+                f"only {len(sigmas)} sigmas survive the clamp "
+                f"[{sigma_min}, {sigma_max}] at {steps} steps -- widen it"
+            )
+
+        x = latent.clone()
+        traj = {sigmas[0]: x.clone()}
+
+        for i in range(len(sigmas) - 1):
+            s, s_next = sigmas[i], sigmas[i + 1]
+            v = self._velocity(x, s, pe, pool, guidance=1.0)
+            x = x + (s_next - s) * v
+            traj[s_next] = x.clone()
+
+        return Inversion(
+            noise=x, trajectory=traj, sigmas=sigmas, sigma_end=sigmas[-1]
+        )
+
+    # --------------------------------------------------------- generation --
+    def generate(
+        self,
+        inv: Inversion,
+        target_prompt: str,
+        source_prompt: str = "",
+        lam_field: np.ndarray | None = None,
+        tau_field: np.ndarray | None = None,
+        steps: int = 50,
+        guidance: float = 5.0,
+        edit_spans: list | None = None,
+        softness: float = 0.08,
+    ) -> np.ndarray:
+        """Integrate back to an image with the region bias and the alpha pin."""
+        pe, npe, pool, npool = self.encode_prompt(target_prompt)
+        n_txt = pe.shape[1]
+
+        # --- token masks -------------------------------------------------
+        edit = torch.zeros(2, n_txt, dtype=torch.bool, device=self.device)
+        keep = torch.zeros(2, n_txt, dtype=torch.bool, device=self.device)
+        if source_prompt:
+            tm = build_token_masks(source_prompt, target_prompt, self.tokenizers)
+            if tm.edit.size != n_txt:
+                raise ValueError(
+                    f"token mask length {tm.edit.size} != context {n_txt}; "
+                    "fix SD3_ENCODERS"
+                )
+            # index 1 is the CONDITIONAL half; the uncond half stays all-False
+            edit[1] = torch.from_numpy(tm.edit).to(self.device)
+            keep[1] = torch.from_numpy(tm.preserve).to(self.device)
+
+        x = inv.noise.clone()
+        sigmas = self._sigmas(steps)                # descending: 1 -> 0
+        # Start where inversion stopped, not at 1.0. Mismatching these makes a
+        # correct inversion look broken.
+        sigmas = [float(s) for s in sigmas if s <= inv.sigma_end + 1e-6]
+        field_t = (
+            torch.as_tensor(lam_field.reshape(-1), device=self.device, dtype=self.dtype)
+            .expand(2, -1)
+            if lam_field is not None else None
+        )
+
+        for i in range(len(sigmas) - 1):
+            s, s_next = float(sigmas[i]), float(sigmas[i + 1])
+
+            if field_t is not None:
+                # Strong early for layout, relaxed late for blending.
+                scale = float(np.clip(0.5 + 0.5 * s, 0.0, 1.0))
+                self.proc.set_region(
+                    RegionAttentionSpec(
+                        field=field_t, edit_token_mask=edit,
+                        preserve_token_mask=keep, scale=scale,
+                    ),
+                    direction="generate",
+                )
+
+            v = self._velocity(x, s, pe, pool, guidance, npe, npool)
+            x = x + (s_next - s) * v
+
+            # --- alpha pin: hold shallow-inverted tokens to the source ----
+            if tau_field is not None:
+                z_inv = inv.at(s_next)
+                w = pin_weights(tau_field.reshape(-1), s_next, softness)
+                w = torch.as_tensor(w, device=self.device, dtype=self.dtype)
+                b, c, h, wd = x.shape
+                # field is on the TOKEN grid; latents are 2x that per side
+                w2 = (
+                    w.view(1, 1, h // 2, wd // 2)
+                    .repeat_interleave(2, -2).repeat_interleave(2, -1)
+                )
+                x = w2 * z_inv + (1.0 - w2) * x
+
+        return self.decode_latent(x)
+
+    # -------------------------------------------------------- validation --
+    def roundtrip_error(
+        self, image: np.ndarray, prompt: str, steps: int = 50,
+        sigma_min: float = 0.05, sigma_max: float = 0.98,
+    ) -> dict:
+        """Invert then regenerate with no edit. Run this FIRST.
+
+        If reconstruction is poor, every "background preservation" number
+        downstream is measuring Euler inversion error rather than the effect of
+        any field. This is the single most important sanity check before a
+        sweep, and it is the quantity BiFM exists to improve.
+        """
+        lat = self.encode_image(image)
+        vae_only = self.decode_latent(lat)
+
+        inv = self.invert(lat, prompt, steps, sigma_min, sigma_max)
+        recon = self.generate(inv, prompt, steps=steps, guidance=1.0)
+
+        def psnr(a, b):
+            a = np.asarray(a, np.float32) / 255.0
+            b = np.asarray(b, np.float32) / 255.0
+            mse = float(((a - b) ** 2).mean())
+            return float("inf") if mse < 1e-12 else 10 * np.log10(1.0 / mse)
+
+        return {
+            "vae_only_psnr": psnr(image, vae_only),      # ceiling
+            "roundtrip_psnr": psnr(image, recon),        # what you actually get
+            "recon": recon,
+            "vae_only": vae_only,
+            "noise_std": float(inv.noise.float().std()),   # want ~1.0
+            "sigma_end": inv.sigma_end,
+        }

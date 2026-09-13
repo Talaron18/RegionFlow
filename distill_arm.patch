@@ -1,0 +1,417 @@
+diff --git a/scripts/eval_interval_field.py b/scripts/eval_interval_field.py
+index 5fee5fb..0318f24 100644
+--- a/scripts/eval_interval_field.py
++++ b/scripts/eval_interval_field.py
+@@ -111,6 +111,31 @@ def sse(a, b):
+     return (a - b).pow(2).flatten(1).sum(1)
+ 
+ 
++def correction_metrics(c_model: torch.Tensor, c_true: torch.Tensor) -> dict:
++    """Per-sample scores of the learned r-dependence, averaged.
++
++    c_model = u_hat(r) - u_hat(r = t), c_true = u_true - v.
++
++      corr_err       ||c_model - c_true||^2 / ||c_true||^2. 1.0 is what
++                     predicting NO correction scores; below 1 the learned
++                     r-dependence helps. Exact, per sample -- not rebuilt
++                     from the D_r ratio and mean cos.
++      corr_err_best  1 - cos^2: the best any rescaling of c_model could
++                     reach with its current direction. When corr_err sits
++                     near this, magnitude is already right for the direction
++                     and only better direction can lower it.
++      corr_ratio     ||c_model|| / ||c_true||, per-sample mean.
++    """
++    cm, ct = c_model.flatten(1).double(), c_true.flatten(1).double()
++    nt2 = ct.pow(2).sum(1).clamp(min=1e-24)
++    cos = torch.nn.functional.cosine_similarity(cm, ct, dim=1)
++    return {
++        "corr_err": float(((cm - ct).pow(2).sum(1) / nt2).mean()),
++        "corr_err_best": float((1 - cos ** 2).mean()),
++        "corr_ratio": float((cm.norm(dim=1) / nt2.sqrt()).mean()),
++    }
++
++
+ def main() -> int:
+     ap = argparse.ArgumentParser()
+     ap.add_argument("--cache", required=True)
+@@ -231,6 +256,7 @@ def main() -> int:
+             corr = torch.nn.functional.cosine_similarity(
+                 (u_hat - u_hat_r0).flatten(1), (u_true - v_inst).flatten(1),
+                 dim=1)
++            cm = correction_metrics(u_hat - u_hat_r0, u_true - v_inst)
+             rows.append({
+                 "delta": d, "sse_model": e_model, "sse_zero": e_zero,
+                 "sse_base_instantaneous": e_base,
+@@ -243,6 +269,7 @@ def main() -> int:
+                 "D_r_model": dr_model,
+                 "D_r_ratio": dr_model / max(dr_true, 1e-12),
+                 "cos_correction": float(corr.mean()),
++                **cm,
+             })
+             rr = rows[-1]
+             print(f"  d={d:<5} model {e_model:>10.4g}  base {e_base:>10.4g}"
+@@ -250,7 +277,9 @@ def main() -> int:
+                   f"  excess {rr['excess_over_base']:>9.4g}"
+                   f"  D_r {100*rr['D_r_model']:>5.1f}% vs true "
+                   f"{100*rr['D_r_true']:>5.1f}%"
+-                  f"  cos {rr['cos_correction']:>+6.3f}")
++                  f"  cos {rr['cos_correction']:>+6.3f}"
++                  f"  corr_err {rr['corr_err']:>6.3f}"
++                  f" (best@cos {rr['corr_err_best']:>6.3f})")
+ 
+         results[name] = {"step": sd.get("step"),
+                          "interval_kind": adapter.cfg.interval_kind,
+@@ -288,6 +317,17 @@ def main() -> int:
+         print(f"{name:<30}" + "".join(f"{r['cos_correction']:>10.3f}"
+                                       for r in res["rows"]))
+ 
++    print("\ncorrection error ||c_model - c_true||^2 / ||c_true||^2 "
++          "(<1 beats predicting no correction):")
++    for name, res in results.items():
++        print(f"{name:<30}" + "".join(f"{r['corr_err']:>10.3f}"
++                                      for r in res["rows"]))
++    print("  ...best achievable at each sample's own cos (magnitude "
++          "ratio = cos):")
++    for name, res in results.items():
++        print(f"{name:<30}" + "".join(f"{r['corr_err_best']:>10.3f}"
++                                      for r in res["rows"]))
++
+     print("\n--- excess over base: sse_model - sse_base ---")
+     print("A value that is CONSTANT across Delta means the adapter added a")
+     print("Delta-INDEPENDENT perturbation and learned nothing about intervals.")
+@@ -305,7 +345,10 @@ def main() -> int:
+     print("  2. D_r ratio across Delta. Flat means no interval dependence was")
+     print("     learned, whatever the magnitude.")
+     print("  3. excess spread. Small spread confirms 1 and 2 independently.")
+-    print("  4. model/base. Only meaningful once the above show real learning.")
++    print("  4. corr_err against corr_err_best. Equal means the magnitude is")
++    print("     already right for the direction; only better direction helps.")
++    print("  5. model/base. Only meaningful once the above show real learning,")
++    print("     and at small Delta it is dominated by r-INDEPENDENT drift.")
+     print(f"\nwritten: {args.out}")
+     return 0
+ 
+diff --git a/scripts/gate_b_meanflow.py b/scripts/gate_b_meanflow.py
+index 8bccfd1..1a2f4a3 100644
+--- a/scripts/gate_b_meanflow.py
++++ b/scripts/gate_b_meanflow.py
+@@ -173,7 +173,8 @@ def cmd_train(args) -> int:
+                             cond_dropout_prob=args.cond_dropout,
+                             data_proportion=args.data_proportion,
+                             tangent=args.tangent, max_delta=args.max_delta,
+-                            max_t=args.max_t)
++                            max_t=args.max_t, first_term=args.first_term,
++                            norm_p=args.norm_p)
+     print(f"[meanflow] data_proportion = {ref.data_proportion} "
+           f"(reference: 0.75)")
+     # GUARD. Every target-shaping flag, read back from the config object the
+@@ -181,14 +182,26 @@ def cmd_train(args) -> int:
+     import dataclasses
+     for flag, field in (("estimator", "estimator"), ("fd_eps", "fd_eps"),
+                         ("tangent", "tangent"), ("max_delta", "max_delta"),
+-                        ("max_t", "max_t"),
++                        ("max_t", "max_t"), ("first_term", "first_term"),
++                        ("norm_p", "norm_p"),
+                         ("data_proportion", "data_proportion")):
+         if getattr(args, flag) != getattr(ref, field):
+             raise RuntimeError(f"--{flag.replace('_', '-')} "
+                                f"{getattr(args, flag)!r} did not reach the "
+                                f"loss config ({getattr(ref, field)!r})")
+     print(f"[meanflow] target: estimator={ref.estimator} fd_eps={ref.fd_eps} "
+-          f"tangent={ref.tangent} max_delta={ref.max_delta} max_t={ref.max_t}")
++          f"tangent={ref.tangent} first_term={ref.first_term} "
++          f"norm_p={ref.norm_p} max_delta={ref.max_delta} max_t={ref.max_t}")
++    if ref.first_term == "frozen" and ref.norm_p != 0.0:
++        # With e - x0 as first term every sample's sse sits near the
++        # flow-matching floor (~2e4), so 1/(sse + eps) is nearly uniform and
++        # norm_p=1 behaves like plain MSE. A frozen first term removes that
++        # floor: anchor sse starts at 0, and 1/(sse + 0.01) would hand anchors
++        # up to ~100x the weight of interval samples. norm_p=0 is the setting
++        # that reproduces the weighting the fd run actually had.
++        print("[meanflow] WARNING: first_term=frozen with norm_p="
++              f"{ref.norm_p}: adaptive weights will concentrate on near-zero-"
++              "error anchors. Watch adp_ess; --norm-p 0 is the matched choice.")
+     if ref.estimator != "jvp" and ref.fd_eps < 0.01:
+         print(f"[meanflow] note: fd_eps={ref.fd_eps} is below the smoothing "
+               "range the target probe measured (0.01-0.05); a fine stencil "
+@@ -240,6 +253,7 @@ def cmd_train(args) -> int:
+             raise RuntimeError(f"delta {stats['delta_max']:.4f} exceeds "
+                                f"--max-delta {ref.max_delta}")
+         loss_fn_ref.tangent_sum += stats["tangent_rel_vg"]
++        loss_fn_ref.first_sum += stats["first_rel_vg"]
+         # GUARD. A "P10" run that silently trained at 75% anchors produced a
+         # full set of plausible logs, an eval, and a written interpretation
+         # before frac_anchor was checked. The realised fraction is measured
+@@ -270,6 +284,14 @@ def cmd_train(args) -> int:
+                     "the loss")
+             print(f"[meanflow] tangent check: {ref.tangent}, "
+                   f"||w - v_g||/||v_g|| = {tan:.3f} -- ok")
++            fst = loss_fn_ref.first_sum / loss_fn_ref.seen
++            if (ref.first_term == "cond") != (fst == 0.0):
++                raise RuntimeError(
++                    f"first_term={ref.first_term} but ||first - v_g||/||v_g|| "
++                    f"averages {fst:.3g} over 50 batches; the first term did "
++                    "not reach the loss")
++            print(f"[meanflow] first-term check: {ref.first_term}, "
++                  f"||first - v_g||/||v_g|| = {fst:.3f} -- ok")
+         return loss, stats
+ 
+     def loss_fn_custom(model, batch, step, cfg):
+@@ -295,6 +317,7 @@ def cmd_train(args) -> int:
+     loss_fn_ref.seen = 0
+     loss_fn_ref.anchor_sum = 0.0
+     loss_fn_ref.tangent_sum = 0.0
++    loss_fn_ref.first_sum = 0.0
+     loss_fn = loss_fn_ref if args.faithful else loss_fn_custom
+ 
+     # Held-out validation at a FIXED (t, r), independent of what the batch
+@@ -347,7 +370,8 @@ def cmd_train(args) -> int:
+                        lr=args.lr, max_hours=args.max_hours, log_every=args.log_every,
+                        ckpt_every=args.ckpt_every, seed=args.seed,
+                        delta_start=args.delta_start, delta_end=args.delta_end,
+-                       val_every=args.val_every, val_delta=args.val_delta)
++                       val_every=args.val_every, val_delta=args.val_delta,
++                       keep_last=args.keep_last)
+     trainer = Trainer(adapter, loader, tcfg, loss_fn, val_fn=val_fn)
+     resume = Path(args.out) / "ckpt_latest.pt"
+     if resume.exists():
+@@ -493,6 +517,15 @@ def main() -> int:
+                    help="cap on t - r for interval samples (1.0 = reference)")
+     t.add_argument("--max-t", type=float, default=1.0,
+                    help="cap on t (1.0 = reference)")
++    t.add_argument("--first-term", default="cond", choices=["cond", "frozen"],
++                   help="first term of the target. cond: e - x0 (reference, "
++                        "iMF). frozen: pretrained v(z,t) -- anchors distil "
++                        "the teacher. Pair frozen with --norm-p 0")
++    t.add_argument("--norm-p", type=float, default=1.0,
++                   help="adaptive loss weighting exponent (reference 1.0; "
++                        "0 = plain sum-reduced MSE)")
++    t.add_argument("--keep-last", type=int, default=3,
++                   help="numbered snapshots (every 5x --ckpt-every) to keep")
+     t.add_argument("--adaptive-p", type=float, default=0.75)
+     t.add_argument("--v-source", default="teacher",
+                    choices=["teacher", "empirical"])
+diff --git a/tests/test_meanflow_target.py b/tests/test_meanflow_target.py
+index 976d706..e58a1e5 100644
+--- a/tests/test_meanflow_target.py
++++ b/tests/test_meanflow_target.py
+@@ -220,5 +220,89 @@ try:
+ except ValueError:
+     check("frozen tangent without base_fn raises", True)
+ 
++# 9. first_term='frozen' ------------------------------------------------------------
++for est, tan in (("fd", "frozen"), ("fd", "cond"), ("jvp", "boundary")):
++    cfg = RefMeanFlowConfig(estimator=est, fd_eps=0.025, tangent=tan,
++                            first_term="frozen", norm_p=0.0)
++    with torch.no_grad():
++        w_man = {"frozen": base_fn(z, t), "cond": v_g,
++                 "boundary": u_fn(z, t, t)}[tan]
++        first_man = base_fn(z, t)
++    if est == "fd":
++        du = central_difference(u_fn, z, t, r, w_man, cfg.fd_eps)
++    else:
++        with torch.no_grad():
++            _, du = torch.func.jvp(u_fn, (z, t, r), (w_man, torch.ones_like(t),
++                                                      torch.zeros_like(r)))
++    delta = (t - r).clamp(0.0, 1.0).reshape(SH)
++    tgt = (first_man - delta * du).detach()
++    l_man = weighted((u_fn(z, t, r) - tgt).pow(2).flatten(1).sum(1), cfg)
++    g_man = grad_of(l_man)
++    l_new, st = ref_meanflow_loss(u_fn, z, t, r, v_g, cfg, base_fn=base_fn)
++    g_new = grad_of(l_new)
++    rel_f = float(((first_man - v_g).flatten(1).norm(dim=1)
++                   / v_g.flatten(1).norm(dim=1)).mean())
++    check(f"first_term=frozen ({est}/{tan}): target, gradient, stat",
++          torch.allclose(l_man, l_new, rtol=1e-12, atol=0)
++          and torch.allclose(g_man, g_new, rtol=1e-10, atol=0)
++          and abs(st["first_rel_vg"] - rel_f) < 1e-12)
++
++# anchors distil exactly: with u_fn == base_fn at r == t the frozen target is
++# matched and sse is 0 -- the property that makes norm_p=1 dangerous here
++def u_eq_base(z_, t_, r_):
++    return base_fn(z_, t_) + 0.0 * theta
++zt_a, t_a, v_a = z[:3], t[:3], v_g[:3]
++_, st_a = ref_meanflow_loss(u_eq_base, zt_a, t_a, t_a.clone(), v_a,
++                            RefMeanFlowConfig(estimator="fd", fd_eps=0.025,
++                                              tangent="frozen",
++                                              first_term="frozen"),
++                            base_fn=base_fn)
++check("frozen first term: anchors of the teacher have sse 0",
++      st_a["sse"] < 1e-20, f"sse {st_a['sse']:.1e}")
++check("cond first term: first_rel_vg is exactly 0",
++      ref_meanflow_loss(u_fn, z, t, r, v_g, RefMeanFlowConfig())[1]
++      ["first_rel_vg"] == 0.0)
++
++# 10. adaptive-weight concentration stat ---------------------------------------------
++_, st_p0 = ref_meanflow_loss(u_fn, z, t, r, v_g, RefMeanFlowConfig(norm_p=0.0))
++check("adp_ess is 1.0 with norm_p=0", abs(st_p0["adp_ess"] - 1.0) < 1e-12,
++      f"{st_p0['adp_ess']:.6f}")
++_, st_p1 = ref_meanflow_loss(u_fn, z, t, r, v_g, RefMeanFlowConfig(norm_p=1.0))
++check("adp_ess in (1/N, 1] with norm_p=1",
++      1.0 / z.shape[0] - 1e-12 <= st_p1["adp_ess"] <= 1.0 + 1e-12,
++      f"{st_p1['adp_ess']:.3f}")
++check("t_at_sse_min is one of the batch's t",
++      bool((t - st_p1["t_at_sse_min"]).abs().min() < 1e-12))
++
++for kwargs in ({"first_term": "teacher"},
++               {"first_term": "frozen", "omega": 2.0},
++               {"first_term": "frozen", "kappa": 0.5}):
++    try:
++        RefMeanFlowConfig(**kwargs)
++        check(f"rejects {kwargs}", False)
++    except ValueError:
++        check(f"rejects {kwargs}", True)
++
++# 11. eval correction metrics ------------------------------------------------------
++sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
++from eval_interval_field import correction_metrics  # noqa: E402
++ct = torch.randn(4, 2, 3, 3, dtype=DT)
++m0 = correction_metrics(torch.zeros_like(ct), ct)
++m1 = correction_metrics(ct.clone(), ct)
++m2 = correction_metrics(2 * ct, ct)
++ortho = torch.randn_like(ct)
++ortho = ortho - (ortho.flatten(1) * ct.flatten(1)).sum(1).reshape(SH) \
++    / ct.flatten(1).pow(2).sum(1).reshape(SH) * ct
++m3 = correction_metrics(0.3 * ct + ortho, ct)
++cos3 = torch.nn.functional.cosine_similarity(
++    (0.3 * ct + ortho).flatten(1), ct.flatten(1), dim=1)
++check("corr_err: zero correction scores 1, exact scores 0, 2x scores 1",
++      abs(m0["corr_err"] - 1) < 1e-12 and m1["corr_err"] < 1e-24
++      and abs(m2["corr_err"] - 1) < 1e-12 and abs(m1["corr_err_best"]) < 1e-12)
++check("corr_err_best = 1 - cos^2 and is a lower bound",
++      abs(m3["corr_err_best"] - float((1 - cos3 ** 2).mean())) < 1e-12
++      and m3["corr_err"] >= m3["corr_err_best"] - 1e-12,
++      f"err {m3['corr_err']:.3f} best {m3['corr_err_best']:.3f}")
++
+ print("\nALL PASS" if not fails else f"\n{len(fails)} FAILED: {fails}")
+ sys.exit(1 if fails else 0)
+diff --git a/transport/meanflow_ref.py b/transport/meanflow_ref.py
+index 5f45dce..dd89337 100644
+--- a/transport/meanflow_ref.py
++++ b/transport/meanflow_ref.py
+@@ -101,6 +101,16 @@ class RefMeanFlowConfig:
+     #:               adapter's r-independent drift later. Needs base_fn.
+     #: The regression target's FIRST term stays v_g either way, as in iMF.
+     tangent: str = "cond"
++    #: FIRST TERM of the regression target, target = first - Delta * du/dt.
++    #:   "cond"    v_g (e - x0, guided). Reference and iMF. Default.
++    #:   "frozen"  the pretrained field v(z_t, t). Anchors then DISTIL the
++    #:             teacher exactly (u(z,t,t) -> v) instead of re-fitting the
++    #:             instantaneous field to this dataset. Tests whether the
++    #:             ~900 SSE r-independent excess every run shares (concat 913,
++    #:             centred 908, fd 904 at Delta=0.05) comes from that re-fit.
++    #:             Removes the flow-matching noise floor from the loss, which
++    #:             changes what norm_p does -- see __post_init__.
++    first_term: str = "cond"
+     #: Training-range caps, applied in sample_tr before the anchor mask.
+     #: 1.0 = no cap = the reference. max_delta clamps r >= t - max_delta
+     #: (mass piles up AT the cap; the loss logs how much). max_t clamps t.
+@@ -137,9 +147,19 @@ class RefMeanFlowConfig:
+                 raise ValueError(f"{name} must be in (0, 1], got {val}")
+         if self.fd_eps <= 0:
+             raise ValueError(f"fd_eps must be > 0, got {self.fd_eps}")
++        if self.first_term not in FIRST_TERMS:
++            raise ValueError(f"first_term must be one of {FIRST_TERMS}, "
++                             f"got {self.first_term!r}")
++        # The frozen first term replaces the guided empirical velocity; a
++        # guided frozen first term is a different objective nobody has
++        # specified. Refuse rather than silently ignore omega/kappa.
++        if self.first_term == "frozen" and (self.omega != 1.0
++                                            or self.kappa != 0.0):
++            raise ValueError("first_term='frozen' requires omega=1, kappa=0")
+ 
+ 
+ TANGENTS = ("cond", "boundary", "frozen")
++FIRST_TERMS = ("cond", "frozen")
+ 
+ 
+ def sample_tr(batch: int, cfg: RefMeanFlowConfig, device,
+@@ -308,8 +328,18 @@ def ref_meanflow_loss(u_fn, z_t, t, r, v_g, cfg: RefMeanFlowConfig,
+         du_dt = central_difference(fn, z_t, t, r, w, cfg.fd_eps)
+         u = fn(z_t, t, r)
+ 
++    if cfg.first_term == "cond":
++        first = v_g
++    elif cfg.tangent == "frozen":
++        first = w                      # already the frozen field; no forward
++    else:
++        if base_fn is None:
++            raise ValueError("first_term='frozen' needs base_fn(z, t)")
++        with torch.no_grad():
++            first = base_fn(z_t, t).detach().to(v_g.dtype)
++
+     delta = (t - r).clamp(0.0, 1.0).reshape(-1, *([1] * (u.dim() - 1)))
+-    u_tgt = (v_g - delta * du_dt).detach()
++    u_tgt = (first - delta * du_dt).detach()
+ 
+     # SUM over non-batch dims, not mean. This is the 65536x that put our
+     # adaptive weighting in a different regime.
+@@ -339,6 +369,19 @@ def ref_meanflow_loss(u_fn, z_t, t, r, v_g, cfg: RefMeanFlowConfig,
+                                      / v_g.flatten(1).norm(dim=1)
+                                      .clamp(min=1e-12)).mean()),
+             "delta_max": float((t - r).max()),
++            # 0.0 exactly for first_term='cond'; guarded trainer-side.
++            "first_rel_vg": float(((first - v_g).flatten(1).norm(dim=1)
++                                   / v_g.flatten(1).norm(dim=1)
++                                   .clamp(min=1e-12)).mean()),
++            # ADAPTIVE-WEIGHT CONCENTRATION. Per-sample gradient weight is
++            # 1/(sse + eps)^p, so one low-sse sample can dominate a step.
++            # ess = (sum w)^2 / (N sum w^2): 1.0 = uniform, 1/N = one sample
++            # carries the step. sse_min and t_at_sse_min name the culprit.
++            "adp_ess": float(((1.0 / adp_wt).sum() ** 2)
++                             / (per_sample.numel()
++                                * ((1.0 / adp_wt) ** 2).sum())),
++            "sse_min": float(per_sample.min()),
++            "t_at_sse_min": float(t[per_sample.argmin()]),
+             # clamping piles probability mass at the cap; 0.0 with no cap
+             "frac_at_delta_cap": float((((t - r) >= cfg.max_delta - 1e-6)
+                                         & ~anchor).float().mean()),
+diff --git a/transport/train.py b/transport/train.py
+index 7ed6df0..0bc8056 100644
+--- a/transport/train.py
++++ b/transport/train.py
+@@ -222,6 +222,7 @@ class Trainer:
+         self.adapter.train()
+         it = iter(self.loader)
+ 
++        win: dict = {}
+         while self.step < cfg.steps:
+             for g in self.opt.param_groups:
+                 g["lr"] = self._lr()
+@@ -245,14 +246,34 @@ class Trainer:
+             self.ema.update(self.params)
+             self.step += 1
+ 
++            # WINDOW AGGREGATES. The logged record is otherwise a snapshot of
++            # ONE step in every log_every, so a single noisy batch reads as a
++            # regime (a grad_norm spike at step 525 of the fd run was one
++            # step in 25). The snapshot keys are unchanged; win_* are means
++            # over every step since the last log, grad_norm_win_max the max.
++            g = float(gnorm)
++            win["n"] = win.get("n", 0) + 1
++            win["g_sum"] = win.get("g_sum", 0.0) + g
++            win["g_max"] = max(win.get("g_max", 0.0), g)
++            for k, v in agg.items():
++                win.setdefault("sum", {})[k] = win.get("sum", {}).get(k, 0.0) + float(v)
++                win.setdefault("cnt", {})[k] = win.get("cnt", {}).get(k, 0) + 1
++
+             if self.step % cfg.log_every == 0:
+                 rec = {"step": self.step, "lr": self._lr(),
+                        "grad_norm": float(gnorm),
+-                       "hours": (time.time() - self.t0) / 3600.0, **agg}
++                       "hours": (time.time() - self.t0) / 3600.0, **agg,
++                       "grad_norm_win_mean": win["g_sum"] / win["n"],
++                       "grad_norm_win_max": win["g_max"],
++                       "win_steps": win["n"]}
++                for k, v in win.get("sum", {}).items():
++                    rec[f"win_{k}"] = v / win["cnt"][k]
++                win.clear()
+                 with self._log_path.open("a") as fh:
+                     fh.write(json.dumps(rec) + "\n")
+                 print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}"
+-                               for k, v in rec.items()))
++                               for k, v in rec.items()
++                               if not k.startswith("win_")))
+ 
+             if self.step % cfg.ckpt_every == 0:
+                 self.save("latest")

@@ -1,0 +1,149 @@
+--- /tmp/bench_orig/inversion.py	2026-09-07 04:40:16.482155825 +0000
++++ bench/inversion.py	2026-09-07 04:40:41.261006628 +0000
+@@ -83,7 +83,9 @@
+             posterior = self.pipe.vae.encode(t).latent_dist
+             lat = posterior.mode()          # deterministic; sampling adds noise
+         cfg = self.pipe.vae.config
+-        return (lat - cfg.shift_factor) * cfg.scaling_factor
++        # fp32 ODE state. See _step for why the integration cannot run in
++        # bfloat16 even though the transformer does.
++        return ((lat - cfg.shift_factor) * cfg.scaling_factor).float()
+ 
+     def decode_latent(self, latent: torch.Tensor) -> np.ndarray:
+         cfg = self.pipe.vae.config
+@@ -121,12 +123,17 @@
+             [sigma * self.pipe.scheduler.config.num_train_timesteps],
+             device=self.device, dtype=torch.float32,
+         )
++        # The ODE state is fp32 (see _step); the transformer runs in bf16.
++        # Cast down here, cast the velocity back up on the way out, so the
++        # narrow dtype is confined to the forward pass.
++        latent = latent.to(self.dtype)
++
+         if guidance <= 1.0 or npe is None:
+             with torch.no_grad():
+                 return self.pipe.transformer(
+                     hidden_states=latent, encoder_hidden_states=pe,
+                     pooled_projections=pool, timestep=t,
+-                )[0]
++                )[0].float()
+ 
+         batch = torch.cat([latent, latent])
+         with torch.no_grad():
+@@ -136,7 +143,7 @@
+                 pooled_projections=torch.cat([npool, pool]),
+                 timestep=t.repeat(2),
+             )[0]
+-        v_un, v_c = v.chunk(2)
++        v_un, v_c = v.float().chunk(2)
+         return v_un + guidance * (v_c - v_un)
+ 
+     # ---------------------------------------------------------- inversion --
+@@ -154,7 +161,21 @@
+         slightly worse one. On flat synthetic content the velocities are small
+         and Euler survives; on a real photograph they are large and it does
+         not.
++
++        THE STATE MUST BE FP32. x accumulates every step, so `x + dt * v` in
++        bfloat16 rounds the increment against an 8-bit mantissa. As steps rise
++        dt shrinks, the increment becomes a smaller fraction of x, and more of
++        it is lost -- so error GROWS with step count. That is the same failure
++        mode as the bf16 timestep bug one level up, and it is why the measured
++        round trip fell from 200 to 400 NFE on both solvers rather than
++        converging. _velocity casts down to the model dtype internally and
++        returns fp32, so the transformer still runs in bf16.
+         """
++        if x.dtype != torch.float32:
++            raise TypeError(
++                f"ODE state is {x.dtype}, must be float32 -- accumulation "
++                "error would grow with step count. See _step docstring."
++            )
+         dt = s_next - s
+         v1 = self._velocity(x, s, pe, pool, guidance, npe, npool)
+         if solver == "euler":
+@@ -283,7 +304,9 @@
+             if tau_field is not None:
+                 z_inv = inv.at(s_next)
+                 w = pin_weights(tau_field.reshape(-1), s_next, softness)
+-                w = torch.as_tensor(w, device=self.device, dtype=self.dtype)
++                # fp32: this writes back into the ODE state, so a bf16 blend
++                # would re-narrow x every step and defeat the fix in _step.
++                w = torch.as_tensor(w, device=self.device, dtype=torch.float32)
+                 b, c, h, wd = x.shape
+                 # field is on the TOKEN grid; latents are 2x that per side
+                 w2 = (
+--- /tmp/scripts_orig/smoke_edit.py	2026-09-07 04:40:17.439575261 +0000
++++ scripts/smoke_edit.py	2026-09-07 04:41:19.231824183 +0000
+@@ -67,6 +67,14 @@
+                          "exit, so you can check the coordinates before "
+                          "spending a full run on a wrong box.")
+     ap.add_argument("--box", nargs=4, type=int)
++    ap.add_argument("--box-space", choices=("auto", "original", "resized"),
++                    default="auto",
++                    help="Coordinate space of --box. 'original' = pixels of "
++                         "the source file, 'resized' = pixels of the --size "
++                         "square actually fed to the model. 'auto' guesses "
++                         "from magnitude, which is WRONG for any box that "
++                         "fits inside --size but was measured on a larger "
++                         "photo. Say which one you mean.")
+     ap.add_argument("--source", default="three red apples on a wooden table")
+     ap.add_argument("--target", default="three [green] apples on a wooden table")
+     ap.add_argument("--steps", type=int, default=50)
+@@ -148,23 +156,52 @@
+         # rather than silently clipping to an empty or wrong region.
+         orig_w, orig_h = Image.open(args.image).size
+         x0, y0, x1, y1 = args.box
+-        if max(args.box) > args.size:
++
++        # The old magnitude heuristic (rescale iff max(box) > size) silently
++        # does the wrong thing for any box measured on the original photo that
++        # happens to fit inside --size: a small object near the top-left of a
++        # 4000px image gets used verbatim in 512-space and lands elsewhere,
++        # with no warning. Decide explicitly and always say which branch ran.
++        space = args.box_space
++        if space == "auto":
++            space = "original" if max(args.box) > args.size else "resized"
++            if (orig_w, orig_h) != (args.size, args.size):
++                print(f"WARNING: --box-space auto guessed '{space}' from "
++                      f"magnitude. Source is {orig_w}x{orig_h}, model frame is "
++                      f"{args.size}px. Pass --box-space explicitly.")
++        if space == "original":
+             sx, sy = args.size / orig_w, args.size / orig_h
+             x0, y0 = int(x0 * sx), int(y0 * sy)
+             x1, y1 = int(x1 * sx), int(y1 * sy)
+             print(f"box rescaled from original {orig_w}x{orig_h} to {args.size}px: "
+                   f"{tuple(args.box)} -> ({x0}, {y0}, {x1}, {y1})")
++        else:
++            print(f"box used as-is in {args.size}px model space: "
++                  f"({x0}, {y0}, {x1}, {y1})")
+         x0, x1 = sorted((max(0, x0), min(args.size, x1)))
+         y0, y1 = sorted((max(0, y0), min(args.size, y1)))
+         if x1 - x0 < 4 or y1 - y0 < 4:
+             ap.error(f"box ({x0},{y0},{x1},{y1}) is empty after clipping to "
+                      f"{args.size}px -- check the coordinates")
+         others = []
++
++        # Written on EVERY run, not just --preview-box. Previously the preview
++        # was produced only by preview runs, which exit early -- so a stale
++        # box_preview.png from an older invocation sat in the output directory
++        # beside fresh edit_r*.png showing a different region entirely.
++        prev = img.copy()
++        prev[y0:y1, x0:x1] = (prev[y0:y1, x0:x1] * 0.6 + np.array([255, 0, 0]) * 0.4)
++        Image.fromarray(prev.astype(np.uint8)).save(OUT / "box_preview.png")
++        print(f"box preview -> {OUT/'box_preview.png'}")
++
++        # A stale SAM overlay is the same trap. Remove it unless this run
++        # regenerates one.
++        stale = OUT / "mask_preview.png"
++        if not args.sam and stale.exists():
++            stale.unlink()
++            print(f"removed stale {stale.name} (this run is not using --sam)")
++
+         if args.preview_box:
+-            prev = img.copy()
+-            prev[y0:y1, x0:x1] = (prev[y0:y1, x0:x1] * 0.6 + np.array([255, 0, 0]) * 0.4)
+-            Image.fromarray(prev.astype(np.uint8)).save(OUT / "box_preview.png")
+-            print(f"box preview -> {OUT/'box_preview.png'}")
+             if args.sam:
+                 from region.segment import SAMSegmenter
+                 seg = SAMSegmenter(args.sam_checkpoint)

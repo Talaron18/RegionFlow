@@ -1,0 +1,508 @@
+"""
+Benchmark loaders.
+
+PIE-Bench ships two things this project can use directly and that are better
+than the heuristics in `region.prompts`:
+
+  * BRACKETS. The target prompt marks changed spans, e.g.
+        "a slanted [rusty] mountain bicycle on the road in front of a building"
+    That is a human annotation of exactly which tokens are edit tokens. Prefer
+    it over the SequenceMatcher diff whenever it is present -- the diff is a
+    fallback for datasets without it.
+
+  * editing_type_id. Ten annotated edit categories, which replaces the keyword
+    guess in `infer_edit_type` and feeds the band radius directly.
+
+Schema varies between PIE-Bench v1 (cure-lab/PnPInversion) and PIE-Bench++
+(UB-CVML-Group), which renamed the prompt keys and made blended_word a list.
+Both are handled by alias. MAG-Bench's on-disk format is not documented in the
+paper, so its loader is deliberately tolerant and paired with `inspect_schema`
+-- run that first and adapt the aliases rather than trusting these defaults.
+
+VERIFY ON FIRST LOAD. Every assumption here about key names, RLE convention and
+type ids is from documentation, not from the files. `validate()` exists to
+catch a mismatch loudly instead of producing a silently wrong mask.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from collections import Counter
+from pathlib import Path
+
+import numpy as np
+
+from bench.sweep import BenchCase
+
+
+# Folder names in PIE-Bench encode the type; counts sum to 700.
+PIE_TYPE_NAMES = {
+    "0": "random",
+    "1": "change_object",
+    "2": "add_object",
+    "3": "delete_object",
+    "4": "change_attribute_content",
+    "5": "change_attribute_pose",
+    "6": "change_attribute_color",
+    "7": "change_attribute_material",
+    "8": "change_background",
+    "9": "change_style",
+}
+
+# Band radius in latent tokens per PIE edit type. See the band-semantics table
+# in the README: seam only for colour, headroom for replacement, wide for
+# anything with physical spillover.
+PIE_BAND_TOKENS = {
+    "change_attribute_color": 1.0,
+    "change_attribute_material": 1.0,
+    "change_attribute_content": 2.0,
+    "change_object": 3.0,
+    "add_object": 3.0,
+    "delete_object": 3.0,
+    "change_attribute_pose": 4.0,
+    "change_background": 4.0,
+    "change_style": 4.0,     # global edit; the hierarchy degenerates, see below
+    "random": 2.0,
+}
+
+# Edits whose target is the whole image. The graded field has nothing to grade
+# against, so these are excluded from the tiering sweep by default and reported
+# separately.
+GLOBAL_EDIT_TYPES = {"change_style", "change_background"}
+
+_ALIASES = {
+    "source_prompt": ("original_prompt", "source_prompt", "src_prompt", "prompt"),
+    "target_prompt": ("editing_prompt", "target_prompt", "tgt_prompt", "edited_prompt"),
+    "instruction": ("editing_instruction", "instruction", "edit_instruction"),
+    "type_id": ("editing_type_id", "edit_type_id", "type_id"),
+    "blended": ("blended_word", "blended_words", "blend_word"),
+    "image_path": ("image_path", "img_path", "image", "file_name", "path"),
+    "mask": ("mask", "mask_rle", "segmentation"),
+}
+
+
+def _pick(entry: dict, field: str):
+    for key in _ALIASES[field]:
+        if key in entry:
+            return entry[key]
+    return None
+
+
+def decode_rle(rle, shape) -> np.ndarray:
+    """Decode PIE-Bench's flat run-length mask.
+
+    Runs alternate starting with the 0-value run, e.g. "0 262144" means a
+    zero-length run of 0s followed by 262144 ones. Accepts a space-separated
+    string or a list of ints.
+
+    Raises if the run lengths do not sum to H*W, which is the check that
+    catches a wrong convention before it becomes a wrong mask.
+    """
+    if isinstance(rle, str):
+        runs = [int(x) for x in rle.split()]
+    else:
+        runs = [int(x) for x in rle]
+
+    h, w = shape
+    total = int(np.sum(runs))
+    if total != h * w:
+        raise ValueError(
+            f"RLE runs sum to {total}, expected {h*w} for shape {shape}. "
+            "The convention or the assumed image size is wrong -- check "
+            "inspect_schema() output before proceeding."
+        )
+
+    flat = np.zeros(h * w, dtype=bool)
+    pos, val = 0, False
+    for run in runs:
+        if val and run:
+            flat[pos : pos + run] = True
+        pos += run
+        val = not val
+    return flat.reshape(h, w)
+
+
+def parse_brackets(target_prompt: str) -> tuple[str, list[str]]:
+    """Split "a [rusty] bike" -> ("a rusty bike", ["rusty"]).
+
+    The returned spans are the annotated edit tokens. Use them to build the
+    edit-token mask instead of diffing, when available.
+    """
+    spans = re.findall(r"\[([^\]]*)\]", target_prompt)
+    clean = re.sub(r"[\[\]]", "", target_prompt)
+    return clean, [s.strip() for s in spans if s.strip()]
+
+
+def parse_blended(blended) -> list[tuple[str, str]]:
+    """Normalise blended_word forms to [(source_word, target_word), ...].
+
+    v1:  "bicycle bicycle"        (space separated, one pair)
+    ++:  ["cat,dog", "chair,chair"]  (list of comma-separated pairs)
+    """
+    if blended is None:
+        return []
+    items = [blended] if isinstance(blended, str) else list(blended)
+    out = []
+    for item in items:
+        parts = [p.strip() for p in (item.split(",") if "," in item else item.split())]
+        if len(parts) >= 2:
+            out.append((parts[0], parts[1]))
+        elif parts:
+            out.append((parts[0], parts[0]))
+    return out
+
+
+def mask_bucket(mask: np.ndarray, small: float = 0.02, large: float = 0.15) -> str:
+    """Area-based stratification.
+
+    MAG-Bench ships its own three categories; PIE-Bench does not, so derive
+    them. Thresholds are fractions of image area and are a starting guess --
+    check the resulting distribution with `summarise` and adjust so the buckets
+    are not wildly unbalanced.
+    """
+    frac = float((np.asarray(mask) > 0).mean())
+    if frac < small:
+        return "small"
+    if frac < large:
+        return "medium"
+    return "large"
+
+
+def inspect_schema(json_path, n: int = 3) -> str:
+    """Dump the actual structure of an annotation file.
+
+    Run this FIRST on any benchmark. Every loader below encodes assumptions
+    that were read from documentation rather than from the files.
+    """
+    data = json.loads(Path(json_path).read_text())
+    if isinstance(data, list):
+        entries = data[:n]
+        keys = Counter(k for e in data if isinstance(e, dict) for k in e)
+    else:
+        entries = [data[k] for k in list(data)[:n]]
+        keys = Counter(k for e in data.values() if isinstance(e, dict) for k in e)
+
+    lines = [f"{len(data)} entries", "", "key frequency:"]
+    lines += [f"  {k:<28} {c}" for k, c in keys.most_common()]
+    lines += ["", "first entries:"]
+    for e in entries:
+        for k, v in e.items():
+            s = repr(v)
+            lines.append(f"  {k:<28} {s[:110]}{'...' if len(s) > 110 else ''}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _type_from_entry(entry: dict) -> str:
+    """Resolve the edit type, by explicit id or from the image path.
+
+    PIE-Bench v1 has a top-level `editing_type_id`. PIE-Bench++ does not — it
+    carries per-word `edit_action` entries instead — but both encode the type
+    in the image path's folder prefix:
+
+        "0_random_140/000000000000.jpg"      -> random
+        "6_change_attribute_color_40/..."    -> change_attribute_color
+
+    So the path is the reliable source across both variants.
+    """
+    tid = _pick(entry, "type_id")
+    if tid is not None and str(tid) in PIE_TYPE_NAMES:
+        return PIE_TYPE_NAMES[str(tid)]
+
+    path = str(_pick(entry, "image_path") or "")
+    prefix = path.split("/")[0].split("_")[0]
+    if prefix in PIE_TYPE_NAMES:
+        return PIE_TYPE_NAMES[prefix]
+    return "unknown"
+
+
+def load_pie_bench(
+    root,
+    json_name: str = "mapping_file.json",
+    image_size: tuple = (512, 512),
+    load_image=None,
+    exclude_global: bool = True,
+    limit: int | None = None,
+) -> list[BenchCase]:
+    """Load PIE-Bench into BenchCase objects.
+
+    load_image(path) -> HxWx3 array. Injected so PIL is not a hard dependency
+    and so a test can pass a stub.
+
+    exclude_global drops style and background edits, whose target is the whole
+    image. Keeping them in the r-sweep dilutes the tiering result with cases
+    where tiering is meaningless by construction.
+    """
+    root = Path(root)
+    data = json.loads((root / json_name).read_text())
+    items = data.items() if isinstance(data, dict) else enumerate(data)
+
+    cases, skipped = [], Counter()
+    for key, entry in items:
+        if limit and len(cases) >= limit:
+            break
+
+        type_name = _type_from_entry(entry)
+        if exclude_global and type_name in GLOBAL_EDIT_TYPES:
+            skipped[type_name] += 1
+            continue
+
+        raw_target = _pick(entry, "target_prompt") or ""
+        target_prompt, spans = parse_brackets(raw_target)
+        source_prompt = re.sub(r"[\[\]]", "", _pick(entry, "source_prompt") or "")
+
+        rel = _pick(entry, "image_path")
+        image = load_image(root / "annotation_images" / rel) if load_image else None
+        shape = image.shape[:2] if image is not None else image_size
+
+        try:
+            mask = decode_rle(_pick(entry, "mask"), shape)
+        except (ValueError, TypeError) as exc:
+            skipped[f"mask_decode: {exc.__class__.__name__}"] += 1
+            continue
+
+        pairs = parse_blended(_pick(entry, "blended"))
+        cases.append(
+            BenchCase(
+                case_id=str(key),
+                image=image,
+                source_prompt=source_prompt,
+                target_prompt=target_prompt,
+                target_mask=mask,
+                mask_bucket=mask_bucket(mask),
+                source_attribute=pairs[0][0] if pairs else None,
+                target_attribute=pairs[0][1] if pairs else None,
+            )
+        )
+        cases[-1].edit_type = type_name          # type: ignore[attr-defined]
+        cases[-1].edit_spans = spans             # type: ignore[attr-defined]
+        cases[-1].band_tokens = PIE_BAND_TOKENS.get(type_name, 2.0)  # type: ignore
+
+    if skipped:
+        print(f"[load_pie_bench] skipped: {dict(skipped)}")
+    return cases
+
+
+def load_mag_bench(
+    root,
+    json_name: str = "annotations.json",
+    mask_dir: str = "masks",
+    load_image=None,
+    load_mask=None,
+    limit: int | None = None,
+) -> list[BenchCase]:
+    """Load MAG-Bench. Tolerant by design.
+
+    The paper describes 200 images with source prompt, target prompt, mask and
+    three mask-size categories, but does not document the file layout. Run
+    `inspect_schema` on the annotation file and adjust `_ALIASES` before
+    trusting this. Masks are assumed to be PNGs named by case id; pass
+    `load_mask` to override.
+    """
+    root = Path(root)
+    data = json.loads((root / json_name).read_text())
+    items = data.items() if isinstance(data, dict) else enumerate(data)
+
+    cases = []
+    for key, entry in items:
+        if limit and len(cases) >= limit:
+            break
+        rel = _pick(entry, "image_path") or f"{key}.jpg"
+        image = load_image(root / rel) if load_image else None
+
+        if load_mask:
+            mask = load_mask(root / mask_dir / f"{key}.png")
+        elif _pick(entry, "mask") is not None:
+            shape = image.shape[:2] if image is not None else (512, 512)
+            mask = decode_rle(_pick(entry, "mask"), shape)
+        else:
+            raise ValueError(f"no mask for case {key}; pass load_mask=")
+
+        bucket = entry.get("mask_size") or entry.get("category") or mask_bucket(mask)
+        cases.append(
+            BenchCase(
+                case_id=str(key),
+                image=image,
+                source_prompt=_pick(entry, "source_prompt") or "",
+                target_prompt=_pick(entry, "target_prompt") or "",
+                target_mask=mask,
+                mask_bucket=str(bucket),
+            )
+        )
+    return cases
+
+
+def attach_instance_annotations(cases, sidecar_path, load_mask=None) -> list:
+    """Merge multi-instance annotations from a sidecar file.
+
+    Neither benchmark ships masks for the non-selected same-category objects,
+    so the instance-leakage metric cannot run without this. Sidecar format:
+
+        {"000000000012": {"n_instances": 3,
+                          "other_masks": ["ann/12_a.png", "ann/12_b.png"]}}
+
+    or with inline RLE under "other_masks_rle". Cases absent from the sidecar
+    keep other_instance_masks=None and are excluded from leakage reporting
+    rather than counted as zero-leak, which would bias the rate downward.
+    """
+    side = json.loads(Path(sidecar_path).read_text())
+    base = Path(sidecar_path).parent
+    hit = 0
+    for case in cases:
+        rec = side.get(case.case_id)
+        if not rec:
+            continue
+        if "other_masks_rle" in rec:
+            shape = case.target_mask.shape
+            masks = [decode_rle(r, shape) for r in rec["other_masks_rle"]]
+        elif load_mask:
+            masks = [load_mask(base / p) for p in rec.get("other_masks", [])]
+        else:
+            continue
+        case.other_instance_masks = masks
+        hit += 1
+    print(f"[instances] annotated {hit}/{len(cases)} cases")
+    return cases
+
+
+def validate(cases) -> str:
+    """Loud sanity report. Read it before running any sweep."""
+    from region.lambda_field import target_token_area
+
+    n = len(cases)
+    if n == 0:
+        return "no cases loaded"
+
+    buckets = Counter(c.mask_bucket for c in cases)
+    types = Counter(getattr(c, "edit_type", "unknown") for c in cases)
+    areas = [float((c.target_mask > 0).mean()) for c in cases]
+    toks = [target_token_area(c.target_mask) for c in cases]
+    tiny = sum(t < 4.0 for t in toks)
+    empty = sum(not c.target_mask.any() for c in cases)
+    full = sum(c.target_mask.all() for c in cases)
+    with_inst = sum(bool(c.other_instance_masks) for c in cases)
+    with_spans = sum(bool(getattr(c, "edit_spans", None)) for c in cases)
+
+    lines = [
+        f"cases                 {n}",
+        f"mask area  min/med/max {min(areas):.4f} / {np.median(areas):.4f} / {max(areas):.4f}",
+        f"token area min/med/max {min(toks):.1f} / {np.median(toks):.1f} / {max(toks):.1f}",
+        f"buckets               {dict(buckets)}",
+        f"edit types            {dict(types)}",
+        f"bracket annotations   {with_spans}/{n}",
+        f"instance annotations  {with_inst}/{n}   <- leakage metric needs these",
+        f"targets under 4 tok   {tiny}   <- no room for a graded field, crop path",
+    ]
+    if empty:
+        lines.append(f"!! EMPTY MASKS         {empty}  -- RLE convention is probably wrong")
+    if full:
+        lines.append(f"!! FULL-IMAGE MASKS    {full}  -- global edits, exclude from sweep")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# PIE-Bench++ (HuggingFace parquet mirror)
+# ---------------------------------------------------------------------------
+# The original PIE-Bench is behind a Google Form, so the HF mirror
+# UB-CVML-Group/PIE_Bench_pp is often the practical route. Same 700 images,
+# revised prompts with bracket annotations, per-word `edit_action` metadata,
+# CC-BY-SA-4.0. Layout is parquet with embedded image bytes rather than JSON
+# plus image folders, so it needs its own reader.
+
+
+def load_pie_bench_pp(
+    root,
+    exclude_global: bool = True,
+    limit: int | None = None,
+) -> list[BenchCase]:
+    """Load the parquet mirror. Requires `datasets` or pandas+pyarrow.
+
+    Column names are not assumed: `describe_parquet` below prints what is
+    actually there, and this reader resolves through the same alias table as
+    the JSON loader.
+    """
+    import io
+
+    import pandas as pd
+    from PIL import Image
+
+    root = Path(root)
+    files = sorted(root.rglob("*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"no parquet under {root}")
+
+    df = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+    cases, skipped = [], Counter()
+
+    for i, row in df.iterrows():
+        if limit and len(cases) >= limit:
+            break
+        entry = row.to_dict()
+
+        type_name = _type_from_entry(entry)
+        if exclude_global and type_name in GLOBAL_EDIT_TYPES:
+            skipped[type_name] += 1
+            continue
+
+        # Image may be a dict with 'bytes', raw bytes, or a PIL object.
+        img = entry.get("image")
+        if isinstance(img, dict) and "bytes" in img:
+            img = Image.open(io.BytesIO(img["bytes"]))
+        elif isinstance(img, (bytes, bytearray)):
+            img = Image.open(io.BytesIO(img))
+        if img is None:
+            skipped["no_image"] += 1
+            continue
+        image = np.array(img.convert("RGB"))
+
+        raw_target = _pick(entry, "target_prompt") or ""
+        target_prompt, spans = parse_brackets(str(raw_target))
+        source_prompt = re.sub(r"[\[\]]", "", str(_pick(entry, "source_prompt") or ""))
+
+        try:
+            mask = decode_rle(_pick(entry, "mask"), image.shape[:2])
+        except (ValueError, TypeError) as exc:
+            skipped[f"mask_decode: {exc.__class__.__name__}"] += 1
+            continue
+
+        pairs = parse_blended(_pick(entry, "blended"))
+        case_id = str(entry.get("image_path") or entry.get("id") or i)
+        cases.append(
+            BenchCase(
+                case_id=case_id,
+                image=image,
+                source_prompt=source_prompt,
+                target_prompt=target_prompt,
+                target_mask=mask,
+                mask_bucket=mask_bucket(mask),
+                source_attribute=pairs[0][0] if pairs else None,
+                target_attribute=pairs[0][1] if pairs else None,
+            )
+        )
+        cases[-1].edit_type = type_name                              # type: ignore
+        cases[-1].edit_spans = spans                                 # type: ignore
+        cases[-1].band_tokens = PIE_BAND_TOKENS.get(type_name, 2.0)  # type: ignore
+
+    if skipped:
+        print(f"[load_pie_bench_pp] skipped: {dict(skipped)}")
+    return cases
+
+
+def describe_parquet(root, n: int = 2) -> str:
+    """Print the real columns and a sample row. Run before trusting the reader."""
+    import pandas as pd
+
+    files = sorted(Path(root).rglob("*.parquet"))
+    if not files:
+        return f"no parquet under {root}"
+    df = pd.read_parquet(files[0])
+    lines = [f"{len(files)} parquet file(s), first has {len(df)} rows", "", "columns:"]
+    lines += [f"  {c:<24} {str(df[c].dtype):<10}" for c in df.columns]
+    lines += ["", "sample:"]
+    for _, row in df.head(n).iterrows():
+        for c in df.columns:
+            v = repr(row[c])
+            lines.append(f"  {c:<24} {v[:100]}{'...' if len(v) > 100 else ''}")
+        lines.append("")
+    return "\n".join(lines)

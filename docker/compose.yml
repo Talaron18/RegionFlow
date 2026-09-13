@@ -1,0 +1,47 @@
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        UID: "${UID:-1000}"
+        GID: "${GID:-1000}"
+    image: regionflow:dev
+    container_name: regionflow
+
+    # Needs nvidia-container-toolkit on the host.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Default 64 MB kills DataLoader workers with cryptic bus errors. You have
+    # 64 GB of RAM; 16 GB here is not extravagant.
+    shm_size: "16gb"
+
+    environment:
+      # Reduces fragmentation on a single 24 GB card, which is what you hit
+      # first when T5-XXL and the DiT are both resident.
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+      # TorchScript's compiler segfaults on this stack, and forward-mode AD
+      # reaches it lazily via make_dual -> decompositions_for_jvp ->
+      # torch.jit.script. Setting this makes jit.script a passthrough.
+      # Without it, every torch.func.jvp call dies with signal 11, which
+      # blocks stage 2 entirely. Nothing here needs TorchScript.
+      PYTORCH_JIT: "0"
+      HF_TOKEN: "${HF_TOKEN}"          # SD3-Medium is gated: accept the licence first
+      HF_HUB_ENABLE_HF_TRANSFER: "0"   # flip to 1 after `pip install hf_transfer`
+      # 9950X has 16 cores / 32 threads. Leave headroom for dataloader workers.
+      OMP_NUM_THREADS: "8"
+
+    volumes:
+      - ../:/workspace                 # code, live-edited from the host
+      - ${DATA_DIR:-/mnt/data}:/data   # weights, datasets, outputs — the 3 TB disk
+
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    ipc: host

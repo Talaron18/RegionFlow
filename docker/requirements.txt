@@ -1,0 +1,36 @@
+# Torch is installed separately in the Dockerfile from the CUDA index.
+# Everything below is CUDA-agnostic.
+
+# --- diffusion stack ---
+diffusers>=0.31
+transformers>=4.44
+accelerate>=0.34
+peft>=0.13
+safetensors>=0.4.5
+sentencepiece>=0.2.0        # T5 tokenizer; SD3 fails to load without it
+protobuf>=4.25              # ditto, silent failure if missing
+huggingface-hub>=0.25
+
+# --- numerics / imaging ---
+numpy>=1.26,<3
+scipy>=1.11                 # distance_transform_edt, label, binary_fill_holes
+pillow>=10.0
+opencv-python-headless>=4.9
+einops>=0.8
+
+# --- metrics ---
+lpips>=0.1.4
+torchmetrics>=1.4
+open-clip-torch>=2.24       # CLIP scores for clip_bleed / clip_edited
+scikit-image>=0.24          # SSIM
+
+# --- masks ---
+pycocotools>=2.0.7          # if a benchmark ships COCO RLE rather than flat RLE
+
+# --- tooling ---
+tqdm>=4.66
+pandas>=2.2                 # sweep result tables
+pyarrow>=17                 # parquet, for the HF PIE-Bench++ mirror
+matplotlib>=3.8
+rich>=13.7
+pytest>=8.0

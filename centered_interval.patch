@@ -1,0 +1,576 @@
+diff --git a/scripts/check_interval_branch.py b/scripts/check_interval_branch.py
+new file mode 100644
+index 0000000..d35c5c4
+--- /dev/null
++++ b/scripts/check_interval_branch.py
+@@ -0,0 +1,121 @@
++"""Is the interval branch learning, or random-walking? CPU only, seconds.
++
++    python scripts/check_interval_branch.py runs/gate_b_p10/ckpt_*.pt \\
++        runs/centered/ckpt_*.pt --cache /data/cache/<hash>
++
++For each checkpoint it reports, for every zero-initialised output layer of the
++interval embedding:
++
++    rms          RMS of the weights = total displacement from init
++    noise        what Adam's random walk would give over the actual lr
++                 schedule if every gradient were direction-free:
++                 sqrt(sum_i lr_i^2)
++    full         what a perfectly consistent gradient would give: sum_i lr_i
++    rms/noise    ~1.0 means the layer has only random-walked. The concat
++                 embedding measured 1.04 at step 200 and 1.75 at step 1000.
++    drift%       sqrt(rms^2 - noise^2) / full: rough fraction of the maximum
++                 possible consistent movement. Assumes iid gradient noise.
++
++and, with --cache, the size of what the embedding writes into pooled_projections,
++as a fraction of ||pooled|| itself:
++
++    r-signal     || d_pool(t, Delta) - d_pool(t, 0) ||   (the part that can
++                 carry interval information)
++    offset       || d_pool(t, 0) ||                       (the part that cannot)
++
++Concat and centered checkpoints are handled alike; the kind is read from the
++parameter names. This says whether the r-path MOVED. Whether it moved the
++RIGHT way is eval_interval_field.py's cos_correction, and needs the GPU.
++"""
++from __future__ import annotations
++
++import argparse
++import math
++import sys
++from pathlib import Path
++
++import torch
++
++sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
++
++from transport.conditioning import (  # noqa: E402
++    interval_kind_from_keys, make_interval_embedding,
++)
++
++READOUTS = {
++    "concat": {"net.4": "single MLP (t and Delta mixed)"},
++    "centered": {"delta_branch.4": "f: Delta branch",
++                 "t_branch.4": "g: t branch"},
++}
++DELTAS = (0.05, 0.1, 0.2, 0.4, 0.8)
++
++
++def lr_at(step: int, c: dict) -> float:
++    """Mirror of transport/train.py Trainer._lr."""
++    if step < c["warmup"]:
++        return c["lr"] * (step + 1) / c["warmup"]
++    p = (step - c["warmup"]) / max(1, c["steps"] - c["warmup"])
++    return c["lr"] * 0.5 * (1 + math.cos(math.pi * min(p, 1.0)))
++
++
++def main() -> int:
++    ap = argparse.ArgumentParser()
++    ap.add_argument("ckpts", nargs="+")
++    ap.add_argument("--cache", default=None,
++                    help="TripletCache dir; enables the r-signal/offset "
++                         "columns relative to ||pooled||")
++    ap.add_argument("--samples", type=int, default=32)
++    args = ap.parse_args()
++
++    pooled_norm = None
++    if args.cache:
++        from transport.data import TripletCache
++        cache = TripletCache(args.cache)
++        n = min(args.samples, len(cache))
++        pooled_norm = float(torch.stack([
++            torch.from_numpy(cache[i]["pooled"]).float().norm()
++            for i in range(n)]).mean())
++        print(f"mean ||pooled|| over {n} cached samples: {pooled_norm:.3f}\n")
++
++    for path in args.ckpts:
++        ck = torch.load(path, map_location="cpu", weights_only=False)
++        c, step = ck["config"], ck["step"]
++        kind = interval_kind_from_keys(ck["adapter"].keys())
++        if kind is None:
++            print(f"{path}: no interval weights, skipped")
++            continue
++        sd = {k.split("interval.", 1)[1]: v.float()
++              for k, v in ck["adapter"].items() if k.startswith("interval.")}
++        lrs = [lr_at(s, c) for s in range(step)]
++        noise = math.sqrt(sum(x * x for x in lrs))
++        full = sum(lrs)
++
++        print(f"{path}  step {step}  kind {kind}  (noise {noise:.2e}, "
++              f"full {full:.2e})")
++        for prefix, label in READOUTS[kind].items():
++            w = sd[f"{prefix}.weight"]
++            rms = w.pow(2).mean().sqrt().item()
++            drift = math.sqrt(max(rms ** 2 - noise ** 2, 0.0))
++            print(f"    {label:<32} rms {rms:.2e}  rms/noise "
++                  f"{rms / max(noise, 1e-30):5.2f}  drift {100 * drift / full:5.1f}%")
++
++        if pooled_norm is not None:
++            emb = make_interval_embedding(kind, pooled_dim=sd[
++                next(k for k in sd if k.endswith("4.weight"))].shape[0])
++            emb.load_state_dict(sd)
++            with torch.no_grad():
++                for t in (0.5, 0.9):
++                    d = torch.tensor([x for x in DELTAS if x <= t])
++                    tt = torch.full_like(d, t)
++                    base = emb(tt, tt.clone())
++                    sig = (emb(tt, tt - d) - base).norm(dim=1)
++                    cells = "  ".join(f"d={x:<4} {100 * s / pooled_norm:6.3f}%"
++                                      for x, s in zip(d.tolist(), sig.tolist()))
++                    print(f"    t={t}: offset {100 * base[0].norm() / pooled_norm:6.3f}%"
++                          f"   r-signal  {cells}")
++        print()
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/scripts/eval_interval_field.py b/scripts/eval_interval_field.py
+index bb27b62..5fee5fb 100644
+--- a/scripts/eval_interval_field.py
++++ b/scripts/eval_interval_field.py
+@@ -66,6 +66,9 @@ import torch
+ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ 
+ from transport.adapter import AdapterConfig, TransportAdapter  # noqa: E402
++from transport.conditioning import (  # noqa: E402
++    interval_kind_from_keys, make_interval_embedding,
++)
+ from transport.data import TripletCache  # noqa: E402
+ 
+ DELTAS = (0.05, 0.10, 0.20, 0.30, 0.50, 0.80)
+@@ -156,13 +159,35 @@ def main() -> int:
+ 
+     results = {}
+     for ckpt_path in args.ckpt:
+-        name = Path(ckpt_path).stem
++        # run/ckpt, not just ckpt: two runs' ckpt_final would otherwise share
++        # a key and the second would silently overwrite the first.
++        name = f"{Path(ckpt_path).parent.name}/{Path(ckpt_path).stem}"
++        if name in results:
++            raise RuntimeError(f"{name} given twice")
+         sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)
++        # The embedding's structure is read from the checkpoint, not a flag,
++        # so concat and centered runs can be scored in one invocation. Only
++        # the interval module is swapped: rebuilding TransportAdapter on the
++        # same transformer would inject LoRA a second time.
++        kind = interval_kind_from_keys(sd["adapter"].keys())
++        if kind is not None and kind != adapter.cfg.interval_kind:
++            adapter.interval = make_interval_embedding(
++                kind, int(tr.config.pooled_projection_dim)).to(args.device)
++            adapter.cfg.interval_kind = kind
+         missing, unexpected = adapter.load_state_dict(sd["adapter"],
+                                                       strict=False)
+         if unexpected:
+             raise RuntimeError(f"{name}: unexpected keys {unexpected[:5]}")
+-        print(f"\n[{name}] step {sd.get('step')}")
++        # strict=False has to tolerate the frozen base weights, which are
++        # never saved -- but it would equally tolerate absent interval
++        # weights, and a zero-initialised interval path scores as "no r
++        # dependence learned" without any error. Refuse that case.
++        lost = [k for k in missing if k.startswith("interval.")]
++        if lost:
++            raise RuntimeError(f"{name}: interval weights absent from "
++                               f"checkpoint: {lost[:4]}")
++        print(f"\n[{name}] step {sd.get('step')}  "
++              f"interval={adapter.cfg.interval_kind}")
+ 
+         rows = []
+         for d in args.deltas:
+@@ -227,7 +252,9 @@ def main() -> int:
+                   f"{100*rr['D_r_true']:>5.1f}%"
+                   f"  cos {rr['cos_correction']:>+6.3f}")
+ 
+-        results[name] = {"step": sd.get("step"), "rows": rows}
++        results[name] = {"step": sd.get("step"),
++                         "interval_kind": adapter.cfg.interval_kind,
++                         "rows": rows}
+ 
+     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+     Path(args.out).write_text(json.dumps(
+@@ -237,28 +264,28 @@ def main() -> int:
+     print("model/base < 1 means the learned interval field beats simply reusing")
+     print("the instantaneous velocity. The largest Delta where that holds is")
+     print("the Gate B answer.\n")
+-    hdr = f"{'ckpt':<16}" + "".join(f"{'d=' + str(d):>10}" for d in args.deltas)
++    hdr = f"{'ckpt':<30}" + "".join(f"{'d=' + str(d):>10}" for d in args.deltas)
+     print(hdr)
+     for name, res in results.items():
+-        print(f"{name:<16}" + "".join(f"{r['vs_base']:>10.3f}"
++        print(f"{name:<30}" + "".join(f"{r['vs_base']:>10.3f}"
+                                       for r in res["rows"]))
+     print("(model/base; < 1.0 beats doing nothing)")
+ 
+     print("\n--- D_r: has the adapter acquired the interval dimension? ---")
+-    print(f"{'':<16}" + "".join(f"{'d=' + str(d):>10}" for d in args.deltas))
++    print(f"{'':<30}" + "".join(f"{'d=' + str(d):>10}" for d in args.deltas))
+     first = next(iter(results.values()))
+-    print(f"{'TRUE (target)':<16}"
++    print(f"{'TRUE (target)':<30}"
+           + "".join(f"{100*r['D_r_true']:>9.1f}%" for r in first["rows"]))
+     for name, res in results.items():
+-        print(f"{name:<16}"
++        print(f"{name:<30}"
+               + "".join(f"{100*r['D_r_model']:>9.1f}%" for r in res["rows"]))
+     print("\nD_r_model / D_r_true  (1.0 = right magnitude of r-dependence):")
+     for name, res in results.items():
+-        print(f"{name:<16}" + "".join(f"{r['D_r_ratio']:>10.2f}"
++        print(f"{name:<30}" + "".join(f"{r['D_r_ratio']:>10.2f}"
+                                       for r in res["rows"]))
+     print("\ncos(model correction, true correction)  (1.0 = right direction):")
+     for name, res in results.items():
+-        print(f"{name:<16}" + "".join(f"{r['cos_correction']:>10.3f}"
++        print(f"{name:<30}" + "".join(f"{r['cos_correction']:>10.3f}"
+                                       for r in res["rows"]))
+ 
+     print("\n--- excess over base: sse_model - sse_base ---")
+@@ -269,7 +296,7 @@ def main() -> int:
+         sub = [e for e, r in zip(ex, res["rows"]) if r["delta"] <= 0.3]
+         spread = (100 * float(np.std(sub) / max(np.mean(sub), 1e-12))
+                   if sub else float("nan"))
+-        print(f"{name:<16}" + "".join(f"{e:>10.4g}" for e in ex)
++        print(f"{name:<30}" + "".join(f"{e:>10.4g}" for e in ex)
+               + f"   (d<=0.3 spread {spread:.1f}%)")
+ 
+     print("\nREAD IN THIS ORDER:")
+diff --git a/scripts/gate_b_meanflow.py b/scripts/gate_b_meanflow.py
+index fd3f8b8..59900a5 100644
+--- a/scripts/gate_b_meanflow.py
++++ b/scripts/gate_b_meanflow.py
+@@ -58,7 +58,7 @@ from transport.train import (                       # noqa: E402
+ 
+ 
+ def build_adapter(model, device, rank, max_blocks=None, dtype="float32",
+-                  mode="meanflow"):
++                  mode="meanflow", interval_kind="concat"):
+     """Load the frozen transformer.
+ 
+     FLOAT32 IS REQUIRED FOR estimator='jvp'. Forward-mode AD promotes its
+@@ -84,7 +84,8 @@ def build_adapter(model, device, rank, max_blocks=None, dtype="float32",
+         model, subfolder="transformer",
+         torch_dtype=getattr(torch, dtype)).to(device)
+     ad = TransportAdapter(
+-        tr, AdapterConfig(mode=mode, rank=rank, max_blocks=max_blocks)
++        tr, AdapterConfig(mode=mode, rank=rank, max_blocks=max_blocks,
++                          interval_kind=interval_kind)
+     ).to(device)
+     for p in ad.trainable_parameters():
+         p.data = p.data.float()
+@@ -139,7 +140,28 @@ def cmd_train(args) -> int:
+         )
+     adapter = build_adapter(args.model, args.device, args.rank,
+                             args.max_blocks, dtype=args.dtype,
+-                            mode="meanflow" if args.faithful else "interval")
++                            mode="meanflow" if args.faithful else "interval",
++                            interval_kind=args.interval_kind)
++    # GUARD. Same lesson as the anchor check below: confirm the flag reached
++    # the module that was actually built, not just the argparse namespace.
++    from transport.conditioning import INTERVAL_KINDS, interval_kind_from_keys
++    built = type(adapter.interval).__name__
++    want = INTERVAL_KINDS[args.interval_kind].__name__
++    if built != want:
++        raise RuntimeError(f"--interval-kind {args.interval_kind} built {built}, "
++                           f"expected {want}")
++    print(f"[interval] kind = {args.interval_kind} ({built})")
++    resume_ck = Path(args.out) / "ckpt_latest.pt"
++    if resume_ck.exists():
++        prev = interval_kind_from_keys(
++            torch.load(resume_ck, map_location="cpu",
++                       weights_only=False)["adapter"].keys())
++        if prev is not None and prev != args.interval_kind:
++            raise RuntimeError(
++                f"{resume_ck} was trained with interval kind {prev!r} but "
++                f"--interval-kind is {args.interval_kind!r}. Resuming would "
++                "load with strict=False and silently skip the interval "
++                "weights. Use a fresh --out.")
+     enable_memory_savers(adapter.transformer)
+     mf = MeanFlowConfig(estimator=args.estimator, fd_eps=args.fd_eps,
+                         adaptive_p=args.adaptive_p)
+@@ -424,6 +446,12 @@ def main() -> int:
+                    help="the ORIGINAL gated formulation, kept only as an "
+                         "ablation against the faithful baseline. Its anchors "
+                         "produce zero adapter gradient by construction.")
++    t.add_argument("--interval-kind", default="concat",
++                   choices=["concat", "centered"],
++                   help="how r reaches pooled_projections. 'concat' is the "
++                        "Stage 1 IntervalEmbedding. 'centered' is "
++                        "g(t) + [f(t,Delta) - f(t,0)], so the Delta branch "
++                        "cannot carry an r-independent offset.")
+     t.add_argument("--omega", type=float, default=1.0)
+     t.add_argument("--kappa", type=float, default=0.5)
+     t.add_argument("--cond-dropout", type=float, default=0.1)
+diff --git a/tests/test_centered_interval.py b/tests/test_centered_interval.py
+new file mode 100644
+index 0000000..6bf2fa9
+--- /dev/null
++++ b/tests/test_centered_interval.py
+@@ -0,0 +1,119 @@
++"""CPU checks for CenteredIntervalEmbedding. No model, no GPU, seconds.
++
++    python tests/test_centered_interval.py
++
++Each check tests the property the run depends on, on the code path that
++executes (forward and delta_part as TransportAdapter calls them), not a
++neighbouring function. Cancellation tolerances are 1e-5 relative, not 0:
++BLAS may route the two halves of the batched call through different
++microkernels. A real failure is O(1).
++"""
++import sys
++from pathlib import Path
++
++import torch
++
++sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
++
++from transport.conditioning import (  # noqa: E402
++    CenteredIntervalEmbedding, IntervalEmbedding, interval_kind_from_keys,
++    make_interval_embedding, sinusoidal,
++)
++
++torch.manual_seed(0)
++fails = []
++
++
++def check(name, ok, detail=""):
++    print(f"  {'PASS' if ok else 'FAIL'}  {name}  {detail}")
++    if not ok:
++        fails.append(name)
++
++
++def randomise(module, scale=0.05):
++    """Move every weight off init, so no check passes because of zeros."""
++    with torch.no_grad():
++        for p in module.parameters():
++            p.copy_(torch.randn_like(p) * scale)
++
++
++B = 16
++t = torch.rand(B) * 0.8 + 0.2
++delta = torch.rand(B) * t
++r = t - delta
++
++# 1. identity at init
++emb = CenteredIntervalEmbedding()
++out0 = emb(t, r)
++check("zero output at init", out0.abs().max().item() == 0.0,
++      f"max {out0.abs().max().item():.2e}")
++
++# 2. with random weights: anchors cancel, intervals do not
++randomise(emb)
++with torch.no_grad():
++    anchor_part = emb.delta_part(t, t.clone())
++    interval_part = emb.delta_part(t, r)
++    g = emb.t_branch(sinusoidal(t, emb.freq_dim))
++    full_anchor = emb(t, t.clone())
++rel_anchor = (anchor_part.norm() / interval_part.norm()).item()
++check("delta part vanishes at r == t", rel_anchor < 1e-5,
++      f"|anchor| / |interval| = {rel_anchor:.2e}")
++check("delta part is live at r < t", interval_part.norm().item() > 1e-3,
++      f"|interval| = {interval_part.norm().item():.3e}")
++check("forward at r == t equals g(t)",
++      torch.allclose(full_anchor, g, atol=1e-6),
++      f"max {(full_anchor - g).abs().max().item():.2e}")
++
++# 3. gradient: anchors train g but not f's readout
++emb.zero_grad()
++(emb(t, t.clone()) * torch.randn(B, 2048)).sum().backward()
++gf = emb.delta_branch[-1].weight.grad.norm().item()
++gg = emb.t_branch[-1].weight.grad.norm().item()
++check("anchors give f-readout no gradient, g full gradient",
++      gg > 0 and gf / gg < 1e-5, f"|grad f| {gf:.2e}  |grad g| {gg:.2e}")
++
++# 4. gradient: from zero init, f's readout learns off-anchor
++fresh = CenteredIntervalEmbedding()
++(fresh(t, r) * torch.randn(B, 2048)).sum().backward()
++gf0 = fresh.delta_branch[-1].weight.grad.norm().item()
++check("f readout gets gradient at zero init when r < t", gf0 > 0,
++      f"|grad| {gf0:.2e}")
++
++# 5. forward-mode AD, as the jvp estimator uses it (tangent dt=1, dr=0)
++fn = lambda tt, rr: emb(tt, rr)  # noqa: E731
++_, tangent = torch.func.jvp(fn, (t, r), (torch.ones(B), torch.zeros(B)))
++tangent = tangent.detach()
++with torch.no_grad():
++    h = 1e-4
++    fd = (emb(t + h, r) - emb(t - h, r)) / (2 * h)
++cos = torch.nn.functional.cosine_similarity(tangent.flatten(), fd.flatten(),
++                                            dim=0).item()
++rel = ((tangent - fd).norm() / fd.norm()).item()
++check("jvp matches central difference", torch.isfinite(tangent).all().item()
++      and cos > 0.99 and rel < 5e-2, f"cos {cos:.4f}  rel {rel:.2e}")
++
++# 6. checkpoint-kind detection, from real state_dict names
++ck_concat = {f"interval.{k}": v for k, v in IntervalEmbedding().state_dict().items()}
++ck_cent = {f"interval.{k}": v for k, v in emb.state_dict().items()}
++lora = {"transformer.transformer_blocks.0.attn.to_q.lora_A.weight": None}
++check("detects concat", interval_kind_from_keys({**ck_concat, **lora}) == "concat")
++check("detects centered", interval_kind_from_keys({**ck_cent, **lora}) == "centered")
++check("no interval keys -> None", interval_kind_from_keys(lora) is None)
++try:
++    interval_kind_from_keys({**ck_concat, **ck_cent})
++    check("mixture raises", False)
++except ValueError:
++    check("mixture raises", True)
++
++# 7. factory validates
++try:
++    make_interval_embedding("centred", 2048)
++    check("unknown kind raises", False)
++except ValueError:
++    check("unknown kind raises", True)
++check("factory builds centered",
++      isinstance(make_interval_embedding("centered", 2048),
++                 CenteredIntervalEmbedding))
++
++print("\nALL PASS" if not fails else f"\n{len(fails)} FAILED: {fails}")
++sys.exit(1 if fails else 0)
+diff --git a/transport/adapter.py b/transport/adapter.py
+index 25f3ba9..1bab508 100644
+--- a/transport/adapter.py
++++ b/transport/adapter.py
+@@ -50,7 +50,7 @@ from dataclasses import dataclass
+ import torch
+ import torch.nn as nn
+ 
+-from .conditioning import IntervalEmbedding, MaskEncoder
++from .conditioning import MaskEncoder, make_interval_embedding
+ from .gating import GateHolder, adapter_parameters, inject_lora
+ 
+ 
+@@ -62,6 +62,10 @@ class AdapterConfig:
+     max_blocks: int | None = None
+     use_mask: bool = True
+     use_interval: bool = True
++    #: "concat"   IntervalEmbedding: one MLP on [sin(t), sin(Delta)]. Stage 1.
++    #: "centered" CenteredIntervalEmbedding: g(t) + [f(t,Delta) - f(t,0)].
++    #: Default stays "concat" so every existing checkpoint loads unchanged.
++    interval_kind: str = "concat"
+     #: SD3 scales sigma by this before the transformer sees it.
+     num_train_timesteps: int = 1000
+ 
+@@ -87,7 +91,8 @@ class TransportAdapter(nn.Module):
+ 
+         pooled_dim = int(transformer.config.pooled_projection_dim)
+         latent_ch = int(transformer.config.in_channels)
+-        self.interval = IntervalEmbedding(pooled_dim) if cfg.use_interval else None
++        self.interval = (make_interval_embedding(cfg.interval_kind, pooled_dim)
++                         if cfg.use_interval else None)
+         self.mask_enc = MaskEncoder(latent_ch) if cfg.use_mask else None
+ 
+     # ------------------------------------------------------------ plumbing --
+diff --git a/transport/conditioning.py b/transport/conditioning.py
+index 01fa441..f9a2cc2 100644
+--- a/transport/conditioning.py
++++ b/transport/conditioning.py
+@@ -90,6 +90,111 @@ class IntervalEmbedding(nn.Module):
+         return self.net(e)
+ 
+ 
++def _mlp(d_in: int, hidden: int, d_out: int) -> nn.Sequential:
++    net = nn.Sequential(
++        nn.Linear(d_in, hidden),
++        nn.SiLU(),
++        nn.Linear(hidden, hidden),
++        nn.SiLU(),
++        nn.Linear(hidden, d_out),
++    )
++    nn.init.zeros_(net[-1].weight)
++    nn.init.zeros_(net[-1].bias)
++    return net.float()
++
++
++class CenteredIntervalEmbedding(nn.Module):
++    """(r, t) -> additive delta on pooled_projections, with the Delta part centred.
++
++        d_pool = g(t) + [ f(t, Delta) - f(t, 0) ]
++
++    WHY. The concatenated IntervalEmbedding was probed on the P75 checkpoints
++    (step 200 and 1000). Its readout was indistinguishable from noise pushed
++    through its own hidden features (varying/const 0.100 trained vs 0.101
++    feature-shaped noise), identical at 76% and 10% anchors (0.098), and the
++    Delta-sensitivity of the hidden features fell from 0.48 to 0.26 over
++    training. Delta enters the input strongly (ratio 0.62) and is eroded inside
++    a single MLP whose updates concentrate on the shared mean direction, i.e.
++    any correction collapses into a t-only offset.
++
++    Here the Delta bracket is zero at r == t up to float rounding, so the
++    Delta branch cannot hold an r-independent offset. That offset has
++    somewhere else to go -- g(t) and the LoRA -- so the capacity the old
++    embedding had is kept; only its ability to hide inside the Delta path is
++    removed.
++
++    NOT THE REMOVED DELTA-GATE. That gate multiplied EVERY trainable path by
++    Delta, so the 75% anchor population produced zero gradient anywhere.
++    Here only f's contribution vanishes at anchors; g and the LoRA keep their
++    full anchor gradient, and f has nothing to learn at Delta = 0 by
++    definition.
++
++    Same sinusoidal basis and widths as IntervalEmbedding, deliberately: this
++    run changes the structure only. Low-passing the basis (P5) is a separate
++    run.
++    """
++
++    def __init__(self, pooled_dim: int = 2048, hidden: int = 512,
++                 freq_dim: int = 256) -> None:
++        super().__init__()
++        self.freq_dim = freq_dim
++        self.t_branch = _mlp(freq_dim, hidden, pooled_dim)            # g
++        self.delta_branch = _mlp(2 * freq_dim, hidden, pooled_dim)    # f
++
++    def delta_part(self, t: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
++        """f(t, Delta) - f(t, 0). Exposed so probes can measure it directly."""
++        delta = (t - r).clamp(min=0.0)
++        et = sinusoidal(t, self.freq_dim)
++        e = torch.cat([et, sinusoidal(delta, self.freq_dim)], dim=-1)
++        e0 = torch.cat([et, sinusoidal(torch.zeros_like(delta), self.freq_dim)],
++                       dim=-1)
++        # One batched call, so both halves go through identical kernels and
++        # the anchor rows cancel as exactly as the hardware allows.
++        f, f0 = self.delta_branch(torch.cat([e, e0], dim=0)).chunk(2, dim=0)
++        return f - f0
++
++    def forward(self, t: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
++        g = self.t_branch(sinusoidal(t, self.freq_dim))
++        return g + self.delta_part(t, r)
++
++
++#: interval_kind -> embedding class. Validated here rather than in
++#: TransportAdapter.__init__, because tests/check_modes.py locates the mode
++#: guard as the first `not in` comparison inside __init__, and a second guard
++#: there would silently become the one it parses.
++INTERVAL_KINDS = {
++    "concat": IntervalEmbedding,
++    "centered": CenteredIntervalEmbedding,
++}
++
++
++def make_interval_embedding(kind: str, pooled_dim: int) -> nn.Module:
++    if kind not in INTERVAL_KINDS:
++        raise ValueError(
++            f"interval_kind must be one of {sorted(INTERVAL_KINDS)}, got {kind!r}")
++    return INTERVAL_KINDS[kind](pooled_dim)
++
++
++def interval_kind_from_keys(keys) -> str | None:
++    """Which embedding a checkpoint was trained with, from its parameter names.
++
++    Returns None if the checkpoint has no interval parameters. Raises on a
++    mixture, which would mean two runs' weights were merged.
++    """
++    keys = list(keys)
++    has_concat = any("interval.net." in k for k in keys)
++    has_centered = any("interval.delta_branch" in k or "interval.t_branch" in k
++                       for k in keys)
++    if has_concat and has_centered:
++        raise ValueError("checkpoint holds BOTH concat and centered interval "
++                         "weights; it is not from a single run")
++    if has_centered:
++        return "centered"
++    if has_concat:
++        return "concat"
++    return None
++
++
+ class MaskEncoder(nn.Module):
+     """(B, 1, H, W) binary mask on the LATENT grid -> additive delta on the latent.
+ 

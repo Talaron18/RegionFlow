@@ -1,0 +1,377 @@
+--- /tmp/bench_orig/inversion.py	2026-09-07 04:40:16.482155825 +0000
++++ bench/inversion.py	2026-09-07 05:24:32.890796000 +0000
+@@ -83,7 +83,9 @@
+             posterior = self.pipe.vae.encode(t).latent_dist
+             lat = posterior.mode()          # deterministic; sampling adds noise
+         cfg = self.pipe.vae.config
+-        return (lat - cfg.shift_factor) * cfg.scaling_factor
++        # fp32 ODE state. See _step for why the integration cannot run in
++        # bfloat16 even though the transformer does.
++        return ((lat - cfg.shift_factor) * cfg.scaling_factor).float()
+ 
+     def decode_latent(self, latent: torch.Tensor) -> np.ndarray:
+         cfg = self.pipe.vae.config
+@@ -121,12 +123,17 @@
+             [sigma * self.pipe.scheduler.config.num_train_timesteps],
+             device=self.device, dtype=torch.float32,
+         )
++        # The ODE state is fp32 (see _step); the transformer runs in bf16.
++        # Cast down here, cast the velocity back up on the way out, so the
++        # narrow dtype is confined to the forward pass.
++        latent = latent.to(self.dtype)
++
+         if guidance <= 1.0 or npe is None:
+             with torch.no_grad():
+                 return self.pipe.transformer(
+                     hidden_states=latent, encoder_hidden_states=pe,
+                     pooled_projections=pool, timestep=t,
+-                )[0]
++                )[0].float()
+ 
+         batch = torch.cat([latent, latent])
+         with torch.no_grad():
+@@ -136,7 +143,7 @@
+                 pooled_projections=torch.cat([npool, pool]),
+                 timestep=t.repeat(2),
+             )[0]
+-        v_un, v_c = v.chunk(2)
++        v_un, v_c = v.float().chunk(2)
+         return v_un + guidance * (v_c - v_un)
+ 
+     # ---------------------------------------------------------- inversion --
+@@ -154,7 +161,21 @@
+         slightly worse one. On flat synthetic content the velocities are small
+         and Euler survives; on a real photograph they are large and it does
+         not.
++
++        THE STATE MUST BE FP32. x accumulates every step, so `x + dt * v` in
++        bfloat16 rounds the increment against an 8-bit mantissa. As steps rise
++        dt shrinks, the increment becomes a smaller fraction of x, and more of
++        it is lost -- so error GROWS with step count. That is the same failure
++        mode as the bf16 timestep bug one level up, and it is why the measured
++        round trip fell from 200 to 400 NFE on both solvers rather than
++        converging. _velocity casts down to the model dtype internally and
++        returns fp32, so the transformer still runs in bf16.
+         """
++        if x.dtype != torch.float32:
++            raise TypeError(
++                f"ODE state is {x.dtype}, must be float32 -- accumulation "
++                "error would grow with step count. See _step docstring."
++            )
+         dt = s_next - s
+         v1 = self._velocity(x, s, pe, pool, guidance, npe, npool)
+         if solver == "euler":
+@@ -255,7 +276,14 @@
+         sigmas = self._sigmas(steps)                # descending: 1 -> 0
+         # Start where inversion stopped, not at 1.0. Mismatching these makes a
+         # correct inversion look broken.
+-        sigmas = [float(s) for s in sigmas if s <= inv.sigma_end + 1e-6]
++        # Stop where inversion STARTED, not at 0. invert() clamps its low end
++        # to sigma_min, so the image latent lives at inv.sigmas[0]; stepping
++        # below that integrates through the degenerate near-zero region the
++        # clamp exists to avoid, and the number of spurious steps varies with
++        # step count -- which made sweep rows incomparable.
++        s_lo = inv.sigmas[0] - 1e-6
++        sigmas = [float(s) for s in sigmas
++                  if s_lo <= s <= inv.sigma_end + 1e-6]
+         field_t = (
+             torch.as_tensor(lam_field.reshape(-1), device=self.device, dtype=self.dtype)
+             .expand(2, -1)
+@@ -283,7 +311,9 @@
+             if tau_field is not None:
+                 z_inv = inv.at(s_next)
+                 w = pin_weights(tau_field.reshape(-1), s_next, softness)
+-                w = torch.as_tensor(w, device=self.device, dtype=self.dtype)
++                # fp32: this writes back into the ODE state, so a bf16 blend
++                # would re-narrow x every step and defeat the fix in _step.
++                w = torch.as_tensor(w, device=self.device, dtype=torch.float32)
+                 b, c, h, wd = x.shape
+                 # field is on the TOKEN grid; latents are 2x that per side
+                 w2 = (
+--- /tmp/bench_orig/data.py	2026-09-07 04:40:16.478454377 +0000
++++ bench/data.py	2026-09-07 06:12:45.031917419 +0000
+@@ -549,3 +549,209 @@
+             lines.append(f"  {c:<24} {v[:100]}{'...' if len(v) > 100 else ''}")
+         lines.append("")
+     return "\n".join(lines)
++
++
++# ---------------------------------------------------------------- MagicBrush --
++#
++# MagicBrush (osunlp/MagicBrush) is the only dataset surveyed that ships a real
++# per-edit mask on EVERY row, which is what makes the leakage metric runnable.
++# It differs from the PIE-Bench family in three ways that matter:
++#
++#   1. INSTRUCTION, NOT CAPTION PAIR. Rows carry `instruction` ("make the sky
++#      purple"), not source/target prompts. The lambda field derives edit tokens
++#      by diffing the two captions, and there is nothing here to diff. See
++#      `MAGICBRUSH_PROMPT_GAP` below -- this is a design decision, not a bug to
++#      paper over in the loader.
++#
++#   2. MIXED RESOLUTIONS WITHIN A ROW. Observed on the dev split: source_img is
++#      500x500 RGB while mask_img and target_img are 1024x1024, and mask_img is
++#      RGBA. Anything that assumes one shape per row produces a silently
++#      misaligned field. Everything is resampled to `size` here.
++#
++#   3. MULTI-TURN. `turn_index` counts edits in a chain; turn 2 is applied to
++#      the OUTPUT of turn 1, not to source_img of turn 1. Mixing turns into one
++#      eval set compares edits made from different starting images. Default is
++#      turn_index == 1 only.
++#
++# MASK POLARITY IS UNVERIFIED. The convention (white = edited region, or the
++# inverse) is not documented in the dataset card. `verify_magicbrush` below
++# checks it empirically against the source/target difference. Run it before
++# trusting a single case.
++
++MAGICBRUSH_PROMPT_GAP = """\
++MagicBrush has no source caption. Three options, in order of effort:
++
++  (a) source_prompt="" -- generate() then builds no token mask and the lambda
++      field falls back to spatial-only. Loses the token-level edit targeting
++      that is half of the method. Fine for alpha-pin-only experiments.
++  (b) Caption source_img with BLIP-2 and pair it with the instruction. Adds a
++      caption-quality confound on top of the one already measured (prompt
++      mismatch was worth 3.65 dB on can.jpg).
++  (c) Use MagicBrush for the mask/leakage metrics only, and keep PIE-Bench for
++      anything needing a caption pair.
++
++(c) is the honest split and is what the loader assumes by default.
++"""
++
++
++def load_magicbrush(
++    root,
++    split: str = "dev",
++    turns: tuple = (1,),
++    size: int = 512,
++    limit: int | None = None,
++    source_prompt_fn=None,
++) -> list:
++    """Load MagicBrush parquet shards into BenchCase objects.
++
++    Args:
++      root: directory containing data/*.parquet
++      split: "dev" or "train"; matched against the shard filename
++      turns: which turn_index values to keep. (1,) keeps only first edits,
++             whose source_img is a real photograph rather than a prior model
++             output. Pass None to keep all turns and accept the confound.
++      size: everything is resampled to size x size, matching the model frame
++      source_prompt_fn: optional callable(image_ndarray) -> str used to fill
++             source_prompt. Left None, source_prompt is "" -- see
++             MAGICBRUSH_PROMPT_GAP.
++
++    The instruction goes into target_prompt so the case is usable as-is; it is
++    NOT a caption, and build_token_masks against an empty source will produce
++    an empty edit mask. That is intended and visible rather than silent.
++    """
++    import io
++
++    import pandas as pd
++    from PIL import Image
++
++    root = Path(root)
++    data_dir = root / "data" if (root / "data").is_dir() else root
++    shards = sorted(p for p in data_dir.glob("*.parquet") if split in p.name)
++    if not shards:
++        raise FileNotFoundError(
++            f"no '{split}' parquet shards under {data_dir} -- "
++            f"found: {[p.name for p in data_dir.glob('*.parquet')][:5]}"
++        )
++
++    def _img(cell, mode, resample):
++        """Parquet image cell -> size x size ndarray."""
++        if cell is None:
++            return None
++        raw = cell["bytes"] if isinstance(cell, dict) else cell
++        im = Image.open(io.BytesIO(raw))
++        if mode == "L":
++            # mask_img is RGBA; alpha is not the mask, the colour channels are.
++            im = im.convert("RGB").convert("L")
++        else:
++            im = im.convert("RGB")
++        return np.array(im.resize((size, size), resample))
++
++    cases, skipped = [], Counter()
++    for shard in shards:
++        df = pd.read_parquet(shard)
++        for _, row in df.iterrows():
++            if turns is not None and int(row["turn_index"]) not in turns:
++                skipped["wrong_turn"] += 1
++                continue
++
++            src = _img(row["source_img"], "RGB", Image.BICUBIC)
++            msk = _img(row["mask_img"], "L", Image.NEAREST)
++            if src is None or msk is None:
++                skipped["no_image"] += 1
++                continue
++
++            m = msk > 127
++            frac = float(m.mean())
++            # A mask covering everything or nothing carries no localisation.
++            if frac < 0.001 or frac > 0.99:
++                skipped[f"degenerate_mask({frac:.3f})"] += 1
++                continue
++
++            instr = str(row["instruction"]).strip()
++            cases.append(
++                BenchCase(
++                    case_id=f"{row['img_id']}_t{row['turn_index']}",
++                    image=src,
++                    source_prompt=(
++                        source_prompt_fn(src) if source_prompt_fn else ""
++                    ),
++                    target_prompt=instr,
++                    target_mask=m,
++                    box=_mask_to_box(m),
++                    mask_bucket=mask_bucket(m),
++                )
++            )
++            if limit and len(cases) >= limit:
++                print(f"[load_magicbrush] {len(cases)} cases, skipped {dict(skipped)}")
++                return cases
++
++    print(f"[load_magicbrush] {len(cases)} cases from {len(shards)} shard(s), "
++          f"skipped {dict(skipped)}")
++    return cases
++
++
++def _mask_to_box(m: np.ndarray) -> tuple | None:
++    ys, xs = np.where(m)
++    if len(xs) == 0:
++        return None
++    return (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
++
++
++def verify_magicbrush(root, split: str = "dev", n: int = 40, size: int = 512) -> str:
++    """Check mask polarity and alignment empirically. Run before using cases.
++
++    The test: where source and target images differ, the mask should be True.
++    If agreement is near 0 the polarity is inverted; if near chance the mask is
++    misaligned with the images and nothing downstream is trustworthy.
++    """
++    import io
++
++    import pandas as pd
++    from PIL import Image
++
++    root = Path(root)
++    data_dir = root / "data" if (root / "data").is_dir() else root
++    shards = sorted(p for p in data_dir.glob("*.parquet") if split in p.name)
++    if not shards:
++        return f"no '{split}' shards under {data_dir}"
++
++    def _arr(cell, mode):
++        raw = cell["bytes"] if isinstance(cell, dict) else cell
++        im = Image.open(io.BytesIO(raw))
++        im = im.convert("RGB").convert("L") if mode == "L" else im.convert("RGB")
++        return np.array(im.resize((size, size), Image.NEAREST)).astype(np.float32)
++
++    recall, precision, shapes = [], [], Counter()
++    df = pd.read_parquet(shards[0])
++    for _, row in df.head(n).iterrows():
++        if int(row["turn_index"]) != 1:
++            continue
++        src, tgt = _arr(row["source_img"], "RGB"), _arr(row["target_img"], "RGB")
++        m = _arr(row["mask_img"], "L") > 127
++        shapes[f"src{Image.open(io.BytesIO(row['source_img']['bytes'])).size}"
++               f"/msk{Image.open(io.BytesIO(row['mask_img']['bytes'])).size}"] += 1
++        changed = np.abs(src - tgt).mean(2) > 20
++        if changed.sum() < 50 or m.sum() < 50:
++            continue
++        recall.append(float((changed & m).sum() / changed.sum()))
++        precision.append(float((changed & m).sum() / m.sum()))
++
++    if not recall:
++        return "no usable rows -- all masks or diffs were empty"
++
++    r, p = float(np.mean(recall)), float(np.mean(precision))
++    out = [
++        f"MagicBrush {split}: {len(recall)} rows checked",
++        f"  native sizes seen: {dict(shapes)}",
++        f"  recall  (changed pixels inside mask): {r:.3f}",
++        f"  precision (mask pixels that changed): {p:.3f}",
++    ]
++    if r > 0.7:
++        out.append("  -> polarity CORRECT (white = edited region)")
++    elif r < 0.3:
++        out.append("  -> polarity LOOKS INVERTED. Negate before use.")
++    else:
++        out.append("  -> AMBIGUOUS. Do not use until resolved; inspect by eye.")
++    out.append("  (low precision is expected and fine -- masks are drawn "
++               "loosely around the region, so they exceed the changed pixels.)")
++    return "\n".join(out)
+--- /tmp/scripts_orig/smoke_edit.py	2026-09-07 04:40:17.439575261 +0000
++++ scripts/smoke_edit.py	2026-09-07 04:41:29.437610000 +0000
+@@ -67,6 +67,14 @@
+                          "exit, so you can check the coordinates before "
+                          "spending a full run on a wrong box.")
+     ap.add_argument("--box", nargs=4, type=int)
++    ap.add_argument("--box-space", choices=("auto", "original", "resized"),
++                    default="auto",
++                    help="Coordinate space of --box. 'original' = pixels of "
++                         "the source file, 'resized' = pixels of the --size "
++                         "square actually fed to the model. 'auto' guesses "
++                         "from magnitude, which is WRONG for any box that "
++                         "fits inside --size but was measured on a larger "
++                         "photo. Say which one you mean.")
+     ap.add_argument("--source", default="three red apples on a wooden table")
+     ap.add_argument("--target", default="three [green] apples on a wooden table")
+     ap.add_argument("--steps", type=int, default=50)
+@@ -148,23 +156,52 @@
+         # rather than silently clipping to an empty or wrong region.
+         orig_w, orig_h = Image.open(args.image).size
+         x0, y0, x1, y1 = args.box
+-        if max(args.box) > args.size:
++
++        # The old magnitude heuristic (rescale iff max(box) > size) silently
++        # does the wrong thing for any box measured on the original photo that
++        # happens to fit inside --size: a small object near the top-left of a
++        # 4000px image gets used verbatim in 512-space and lands elsewhere,
++        # with no warning. Decide explicitly and always say which branch ran.
++        space = args.box_space
++        if space == "auto":
++            space = "original" if max(args.box) > args.size else "resized"
++            if (orig_w, orig_h) != (args.size, args.size):
++                print(f"WARNING: --box-space auto guessed '{space}' from "
++                      f"magnitude. Source is {orig_w}x{orig_h}, model frame is "
++                      f"{args.size}px. Pass --box-space explicitly.")
++        if space == "original":
+             sx, sy = args.size / orig_w, args.size / orig_h
+             x0, y0 = int(x0 * sx), int(y0 * sy)
+             x1, y1 = int(x1 * sx), int(y1 * sy)
+             print(f"box rescaled from original {orig_w}x{orig_h} to {args.size}px: "
+                   f"{tuple(args.box)} -> ({x0}, {y0}, {x1}, {y1})")
++        else:
++            print(f"box used as-is in {args.size}px model space: "
++                  f"({x0}, {y0}, {x1}, {y1})")
+         x0, x1 = sorted((max(0, x0), min(args.size, x1)))
+         y0, y1 = sorted((max(0, y0), min(args.size, y1)))
+         if x1 - x0 < 4 or y1 - y0 < 4:
+             ap.error(f"box ({x0},{y0},{x1},{y1}) is empty after clipping to "
+                      f"{args.size}px -- check the coordinates")
+         others = []
++
++        # Written on EVERY run, not just --preview-box. Previously the preview
++        # was produced only by preview runs, which exit early -- so a stale
++        # box_preview.png from an older invocation sat in the output directory
++        # beside fresh edit_r*.png showing a different region entirely.
++        prev = img.copy()
++        prev[y0:y1, x0:x1] = (prev[y0:y1, x0:x1] * 0.6 + np.array([255, 0, 0]) * 0.4)
++        Image.fromarray(prev.astype(np.uint8)).save(OUT / "box_preview.png")
++        print(f"box preview -> {OUT/'box_preview.png'}")
++
++        # A stale SAM overlay is the same trap. Remove it unless this run
++        # regenerates one.
++        stale = OUT / "mask_preview.png"
++        if not args.sam and stale.exists():
++            stale.unlink()
++            print(f"removed stale {stale.name} (this run is not using --sam)")
++
+         if args.preview_box:
+-            prev = img.copy()
+-            prev[y0:y1, x0:x1] = (prev[y0:y1, x0:x1] * 0.6 + np.array([255, 0, 0]) * 0.4)
+-            Image.fromarray(prev.astype(np.uint8)).save(OUT / "box_preview.png")
+-            print(f"box preview -> {OUT/'box_preview.png'}")
+             if args.sam:
+                 from region.segment import SAMSegmenter
+                 seg = SAMSegmenter(args.sam_checkpoint)

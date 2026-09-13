@@ -1,0 +1,156 @@
+diff --git a/scripts/gate_b_meanflow.py b/scripts/gate_b_meanflow.py
+index 489420e..82ea468 100644
+--- a/scripts/gate_b_meanflow.py
++++ b/scripts/gate_b_meanflow.py
+@@ -36,6 +36,7 @@ from __future__ import annotations
+ import argparse
+ import json
+ import sys
++import tempfile
+ from pathlib import Path
+ 
+ import numpy as np
+@@ -121,14 +122,79 @@ def encode_null(model_id, device):
+     return pe.float(), po.float()
+ 
+ 
++def run_bench(adapter, loader, tcfg, loss_fn, args) -> int:
++    """Time the real training step. No checkpoints, no logs, no state kept.
++
++    Runs the same Trainer inner loop -- micro-batches, accumulation, clip,
++    Adam, EMA -- so the number is the step time training would actually get,
++    not a forward-pass proxy.
++    """
++    import time
++
++    import torch
++
++    from transport.train import Trainer
++
++    tcfg.steps = args.bench_steps + 3
++    tcfg.val_every = 10 ** 9
++    tcfg.ckpt_every = 10 ** 9
++    # never touch the real run directory: Trainer creates out_dir on init
++    tcfg.out_dir = tempfile.mkdtemp(prefix="gateb_bench_")
++    trainer = Trainer(adapter, loader, tcfg, loss_fn)
++    it = iter(loader)
++    torch.cuda.reset_peak_memory_stats()
++    t0 = None
++    for i in range(tcfg.steps):
++        if i == 3:                       # warmup: allocator, workers, autotune
++            torch.cuda.synchronize()
++            t0 = time.time()
++        trainer.opt.zero_grad(set_to_none=True)
++        for _ in range(tcfg.grad_accum):
++            try:
++                batch = next(it)
++            except StopIteration:
++                it = iter(loader)
++                batch = next(it)
++            loss, _ = loss_fn(adapter, batch, i, tcfg)
++            (loss / tcfg.grad_accum).backward()
++        torch.nn.utils.clip_grad_norm_(trainer.params, tcfg.grad_clip)
++        trainer.opt.step()
++        trainer.ema.update(trainer.params)
++    torch.cuda.synchronize()
++    dt = (time.time() - t0) / args.bench_steps
++    peak = torch.cuda.max_memory_allocated() / 2 ** 30
++    print(f"\n[bench] {dt:.2f} s/step  ({args.batch}x{args.accum} = "
++          f"{args.batch * args.accum}/step, {dt / (args.batch * args.accum):.3f} "
++          f"s/sample)  peak VRAM {peak:.1f} GiB  "
++          f"checkpointing={'on' if args.grad_checkpointing else 'off'}")
++    print(f"[bench] 5000 steps at this rate: {5000 * dt / 3600:.1f} h")
++    return 0
++
++
+ def cmd_train(args) -> int:
+     import torch
+     from torch.utils.data import DataLoader
+ 
+     torch.manual_seed(args.seed)
+     ds = torch_dataset(TripletCache(args.cache))
++    # THROUGHPUT. batch x accum is the optimiser batch and is unchanged by
++    # how it is split: the loss is a per-sample mean, so batch=8/accum=2 and
++    # batch=2/accum=8 give the same gradient. Bigger micro-batches are
++    # strictly better GPU utilisation IF they fit -- the 5k run peaked at
++    # 9.5 of 24 GB with batch=2, so there is headroom. Measure, do not assume:
++    # --bench-steps times a few steps and exits.
++    #
++    # persistent_workers keeps the 4 loader workers alive across epochs. The
++    # trainer re-iterates the loader on StopIteration, which respawns them
++    # every epoch otherwise; at batch=2 an epoch is short.
+     loader = DataLoader(ds, batch_size=args.batch, shuffle=True,
+-                        num_workers=4, drop_last=True, pin_memory=True)
++                        num_workers=args.num_workers, drop_last=True,
++                        pin_memory=True,
++                        persistent_workers=args.num_workers > 0,
++                        prefetch_factor=4 if args.num_workers > 0 else None)
++    print(f"[data] {len(ds)} cached samples, batch {args.batch} x accum "
++          f"{args.accum} = {args.batch * args.accum} per step, "
++          f"{args.num_workers} workers")
+ 
+     if args.estimator == "jvp" and args.dtype != "float32":
+         raise SystemExit(
+@@ -162,7 +228,21 @@ def cmd_train(args) -> int:
+                 f"--interval-kind is {args.interval_kind!r}. Resuming would "
+                 "load with strict=False and silently skip the interval "
+                 "weights. Use a fresh --out.")
+-    enable_memory_savers(adapter.transformer)
++    # Gradient checkpointing trades ~30-40% step time for activation memory.
++    # It is REQUIRED for --estimator jvp (forward-mode AD is taken under
++    # no_grad by checkpoint_safe, but the backward still runs through the
++    # checkpointed blocks). With --estimator fd there is no forward-mode AD
++    # anywhere, so it is purely a memory/speed dial.
++    if args.grad_checkpointing:
++        enable_memory_savers(adapter.transformer)
++    else:
++        if args.estimator == "jvp":
++            raise SystemExit("--no-grad-checkpointing with --estimator jvp is "
++                             "not supported; use --estimator fd")
++        torch.backends.cuda.matmul.allow_tf32 = True
++        torch.backends.cudnn.allow_tf32 = True
++        print("[train] gradient checkpointing OFF -- if this OOMs, lower "
++              "--batch and raise --accum by the same factor")
+     mf = MeanFlowConfig(estimator=args.estimator, fd_eps=args.fd_eps,
+                         adaptive_p=args.adaptive_p)
+ 
+@@ -210,6 +290,8 @@ def cmd_train(args) -> int:
+     # live here, and a resume under different settings is refused.
+     cfg_path = Path(args.out) / "meanflow_config.json"
+     cfg_now = dataclasses.asdict(ref)
++    if args.bench_steps:
++        cfg_path = Path(tempfile.mkdtemp(prefix="gateb_bench_")) / "cfg.json"
+     cfg_path.parent.mkdir(parents=True, exist_ok=True)
+     if cfg_path.exists():
+         prev_cfg = json.loads(cfg_path.read_text())
+@@ -383,6 +465,8 @@ def cmd_train(args) -> int:
+               f"{tcfg.grad_clip} will bind on every step. Watch "
+               "grad_clip_frac; --grad-clip 0 matches the norm_p=1 runs, "
+               "where the clip never binds.")
++    if args.bench_steps:
++        return run_bench(adapter, loader, tcfg, loss_fn, args)
+     trainer = Trainer(adapter, loader, tcfg, loss_fn, val_fn=val_fn)
+     resume = Path(args.out) / "ckpt_latest.pt"
+     if resume.exists():
+@@ -503,8 +587,20 @@ def main() -> int:
+     t.add_argument("--cache", required=True)
+     t.add_argument("--out", default="runs/gate_b")
+     t.add_argument("--steps", type=int, default=30000)
+-    t.add_argument("--batch", type=int, default=2)
++    t.add_argument("--batch", type=int, default=2,
++                   help="micro-batch. batch x accum is what the optimiser "
++                        "sees; raising batch and lowering accum by the same "
++                        "factor leaves the gradient unchanged and uses the "
++                        "GPU better, if it fits")
+     t.add_argument("--accum", type=int, default=8)
++    t.add_argument("--num-workers", type=int, default=4)
++    t.add_argument("--grad-checkpointing", action="store_true", default=True)
++    t.add_argument("--no-grad-checkpointing", dest="grad_checkpointing",
++                   action="store_false",
++                   help="faster, more activation memory; fd estimator only")
++    t.add_argument("--bench-steps", type=int, default=0,
++                   help="time this many steps (after 3 warmup steps), print "
++                        "s/step and peak VRAM, then exit without training")
+     t.add_argument("--lr", type=float, default=5e-5)
+     t.add_argument("--rank", type=int, default=32)
+     t.add_argument("--max-blocks", type=int, default=None)

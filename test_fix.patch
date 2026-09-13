@@ -1,0 +1,40 @@
+diff --git a/tests/test_meanflow_target.py b/tests/test_meanflow_target.py
+index e58a1e5..adbfdd9 100644
+--- a/tests/test_meanflow_target.py
++++ b/tests/test_meanflow_target.py
+@@ -222,8 +222,10 @@ except ValueError:
+ 
+ # 9. first_term='frozen' ------------------------------------------------------------
+ for est, tan in (("fd", "frozen"), ("fd", "cond"), ("jvp", "boundary")):
++    # kappa=0 explicitly: the config's reference default is kappa=0.5, and a
++    # frozen first term refuses guidance
+     cfg = RefMeanFlowConfig(estimator=est, fd_eps=0.025, tangent=tan,
+-                            first_term="frozen", norm_p=0.0)
++                            first_term="frozen", norm_p=0.0, kappa=0.0)
+     with torch.no_grad():
+         w_man = {"frozen": base_fn(z, t), "cond": v_g,
+                  "boundary": u_fn(z, t, t)}[tan]
+@@ -255,7 +257,8 @@ zt_a, t_a, v_a = z[:3], t[:3], v_g[:3]
+ _, st_a = ref_meanflow_loss(u_eq_base, zt_a, t_a, t_a.clone(), v_a,
+                             RefMeanFlowConfig(estimator="fd", fd_eps=0.025,
+                                               tangent="frozen",
+-                                              first_term="frozen"),
++                                              first_term="frozen",
++                                              kappa=0.0),
+                             base_fn=base_fn)
+ check("frozen first term: anchors of the teacher have sse 0",
+       st_a["sse"] < 1e-20, f"sse {st_a['sse']:.1e}")
+@@ -274,9 +277,11 @@ check("adp_ess in (1/N, 1] with norm_p=1",
+ check("t_at_sse_min is one of the batch's t",
+       bool((t - st_p1["t_at_sse_min"]).abs().min() < 1e-12))
+ 
++RefMeanFlowConfig(first_term="frozen", omega=1.0, kappa=0.0)   # must not raise
++check("accepts first_term=frozen with omega=1, kappa=0", True)
+ for kwargs in ({"first_term": "teacher"},
+-               {"first_term": "frozen", "omega": 2.0},
+-               {"first_term": "frozen", "kappa": 0.5}):
++               {"first_term": "frozen", "omega": 2.0, "kappa": 0.0},
++               {"first_term": "frozen", "omega": 1.0, "kappa": 0.5}):
+     try:
+         RefMeanFlowConfig(**kwargs)
+         check(f"rejects {kwargs}", False)

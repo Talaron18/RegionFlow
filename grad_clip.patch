@@ -1,0 +1,158 @@
+diff --git a/scripts/gate_b_meanflow.py b/scripts/gate_b_meanflow.py
+index 1a2f4a3..489420e 100644
+--- a/scripts/gate_b_meanflow.py
++++ b/scripts/gate_b_meanflow.py
+@@ -371,7 +371,18 @@ def cmd_train(args) -> int:
+                        ckpt_every=args.ckpt_every, seed=args.seed,
+                        delta_start=args.delta_start, delta_end=args.delta_end,
+                        val_every=args.val_every, val_delta=args.val_delta,
+-                       keep_last=args.keep_last)
++                       keep_last=args.keep_last, grad_clip=args.grad_clip)
++    # GUARD, same pattern as the target flags: read back what Trainer gets.
++    if tcfg.grad_clip != args.grad_clip:
++        raise RuntimeError(f"--grad-clip {args.grad_clip} did not reach "
++                           f"TrainConfig ({tcfg.grad_clip})")
++    print(f"[train] grad_clip={tcfg.grad_clip}"
++          f"{' (disabled)' if tcfg.grad_clip <= 0 else ''}")
++    if ref.norm_p == 0.0 and tcfg.grad_clip > 0:
++        print("[train] WARNING: norm_p=0 gives gradients ~1e2-1e4; a clip of "
++              f"{tcfg.grad_clip} will bind on every step. Watch "
++              "grad_clip_frac; --grad-clip 0 matches the norm_p=1 runs, "
++              "where the clip never binds.")
+     trainer = Trainer(adapter, loader, tcfg, loss_fn, val_fn=val_fn)
+     resume = Path(args.out) / "ckpt_latest.pt"
+     if resume.exists():
+@@ -526,6 +537,10 @@ def main() -> int:
+                         "0 = plain sum-reduced MSE)")
+     t.add_argument("--keep-last", type=int, default=3,
+                    help="numbered snapshots (every 5x --ckpt-every) to keep")
++    t.add_argument("--grad-clip", type=float, default=1.0,
++                   help="global grad-norm clip (default 1.0); <= 0 disables. "
++                        "Use 0 with --norm-p 0, whose gradients are ~2e4x "
++                        "larger than the norm_p=1 runs'")
+     t.add_argument("--adaptive-p", type=float, default=0.75)
+     t.add_argument("--v-source", default="teacher",
+                    choices=["teacher", "empirical"])
+diff --git a/tests/test_grad_clip.py b/tests/test_grad_clip.py
+new file mode 100644
+index 0000000..a7c3c3e
+--- /dev/null
++++ b/tests/test_grad_clip.py
+@@ -0,0 +1,63 @@
++"""CPU check for --grad-clip. Seconds.
++
++    python tests/test_grad_clip.py
++"""
++import math
++import sys
++from pathlib import Path
++
++import torch
++
++sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
++
++from transport.train import TrainConfig, clip_threshold  # noqa: E402
++
++fails = []
++
++
++def check(name, ok, detail=""):
++    print(f"  {'PASS' if ok else 'FAIL'}  {name}  {detail}")
++    if not ok:
++        fails.append(name)
++
++
++check("default clip is unchanged (1.0)", TrainConfig(gate="b").grad_clip == 1.0)
++check("positive threshold passes through", clip_threshold(1.0) == 1.0)
++check("0 disables", clip_threshold(0.0) == math.inf)
++check("negative disables", clip_threshold(-1.0) == math.inf)
++
++
++def grads(scale):
++    torch.manual_seed(0)
++    ps = [torch.nn.Parameter(torch.zeros(5, 7)), torch.nn.Parameter(torch.zeros(3))]
++    for p in ps:
++        p.grad = torch.randn_like(p) * scale
++    return ps
++
++
++# disabled: gradients bit-for-bit untouched, and the returned norm is the true one
++ps = grads(5e3)
++before = [p.grad.clone() for p in ps]
++true_norm = torch.sqrt(sum(p.grad.pow(2).sum() for p in ps))
++n = torch.nn.utils.clip_grad_norm_(ps, clip_threshold(0.0))
++check("disabled leaves gradients exactly unchanged",
++      all(torch.equal(b, p.grad) for b, p in zip(before, ps)))
++check("returned norm is the pre-clip norm",
++      torch.allclose(n, true_norm, rtol=1e-6), f"{float(n):.4g}")
++
++# enabled at 1.0 with large gradients: clips to unit norm, still reports pre-clip
++ps = grads(5e3)
++n = torch.nn.utils.clip_grad_norm_(ps, clip_threshold(1.0))
++after = torch.sqrt(sum(p.grad.pow(2).sum() for p in ps))
++check("enabled clip binds on large gradients",
++      float(n) > 1.0 and abs(float(after) - 1.0) < 1e-4,
++      f"pre {float(n):.4g} post {float(after):.4g}")
++
++# the ratio that motivated this: norm_p=0 gradients vs norm_p=1 at sse ~2e4
++ps = grads(0.05 / math.sqrt(38))          # total norm ~0.05, like the main run
++n = torch.nn.utils.clip_grad_norm_(ps, clip_threshold(1.0))
++check("main-run-sized gradients never reach the 1.0 clip", float(n) < 1.0,
++      f"{float(n):.3g}")
++
++print("\nALL PASS" if not fails else f"\n{len(fails)} FAILED: {fails}")
++sys.exit(1 if fails else 0)
+diff --git a/transport/train.py b/transport/train.py
+index 0bc8056..217ddd0 100644
+--- a/transport/train.py
++++ b/transport/train.py
+@@ -39,6 +39,21 @@ from pathlib import Path
+ import torch
+ 
+ 
++def clip_threshold(grad_clip: float) -> float:
++    """max_norm for clip_grad_norm_. grad_clip <= 0 disables clipping.
++
++    Why disabling exists: the threshold is absolute, but the loss scale is
++    not. With norm_p=1 every sample is divided by its own SSE (~2e4 at the
++    flow-matching floor), so gradients sit near 0.05 and a threshold of 1.0
++    never binds. With norm_p=0 the same objective's gradients are ~2e4x
++    larger, the threshold binds on every step, and training silently becomes
++    Adam on per-step unit-norm gradients -- which down-weights high-SSE
++    (long-interval) batches. Adam is invariant to a CONSTANT gradient scale,
++    so disabling the clip is what makes the two runs' optimisers match.
++    """
++    return float(grad_clip) if grad_clip > 0 else math.inf
++
++
+ @dataclass
+ class TrainConfig:
+     gate: str                       # "a" (pairflow) | "b" (meanflow)
+@@ -241,7 +256,10 @@ class Trainer:
+                 for k, v in stats.items():
+                     agg[k] = agg.get(k, 0.0) + v / cfg.grad_accum
+ 
+-            gnorm = torch.nn.utils.clip_grad_norm_(self.params, cfg.grad_clip)
++            max_norm = clip_threshold(cfg.grad_clip)
++            # returns the PRE-clip total norm, so grad_norm stays comparable
++            # across runs whether or not the clip binds
++            gnorm = torch.nn.utils.clip_grad_norm_(self.params, max_norm)
+             self.opt.step()
+             self.ema.update(self.params)
+             self.step += 1
+@@ -255,6 +273,7 @@ class Trainer:
+             win["n"] = win.get("n", 0) + 1
+             win["g_sum"] = win.get("g_sum", 0.0) + g
+             win["g_max"] = max(win.get("g_max", 0.0), g)
++            win["clipped"] = win.get("clipped", 0) + int(g > max_norm)
+             for k, v in agg.items():
+                 win.setdefault("sum", {})[k] = win.get("sum", {}).get(k, 0.0) + float(v)
+                 win.setdefault("cnt", {})[k] = win.get("cnt", {}).get(k, 0) + 1
+@@ -265,6 +284,7 @@ class Trainer:
+                        "hours": (time.time() - self.t0) / 3600.0, **agg,
+                        "grad_norm_win_mean": win["g_sum"] / win["n"],
+                        "grad_norm_win_max": win["g_max"],
++                       "grad_clip_frac": win["clipped"] / win["n"],
+                        "win_steps": win["n"]}
+                 for k, v in win.get("sum", {}).items():
+                     rec[f"win_{k}"] = v / win["cnt"][k]

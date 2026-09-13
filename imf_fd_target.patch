@@ -1,0 +1,593 @@
+diff --git a/scripts/gate_b_meanflow.py b/scripts/gate_b_meanflow.py
+index 59900a5..8bccfd1 100644
+--- a/scripts/gate_b_meanflow.py
++++ b/scripts/gate_b_meanflow.py
+@@ -171,9 +171,42 @@ def cmd_train(args) -> int:
+     ref = RefMeanFlowConfig(estimator=args.estimator, fd_eps=args.fd_eps,
+                             omega=args.omega, kappa=args.kappa,
+                             cond_dropout_prob=args.cond_dropout,
+-                            data_proportion=args.data_proportion)
++                            data_proportion=args.data_proportion,
++                            tangent=args.tangent, max_delta=args.max_delta,
++                            max_t=args.max_t)
+     print(f"[meanflow] data_proportion = {ref.data_proportion} "
+           f"(reference: 0.75)")
++    # GUARD. Every target-shaping flag, read back from the config object the
++    # loss will actually receive -- the P10 run is why this exists.
++    import dataclasses
++    for flag, field in (("estimator", "estimator"), ("fd_eps", "fd_eps"),
++                        ("tangent", "tangent"), ("max_delta", "max_delta"),
++                        ("max_t", "max_t"),
++                        ("data_proportion", "data_proportion")):
++        if getattr(args, flag) != getattr(ref, field):
++            raise RuntimeError(f"--{flag.replace('_', '-')} "
++                               f"{getattr(args, flag)!r} did not reach the "
++                               f"loss config ({getattr(ref, field)!r})")
++    print(f"[meanflow] target: estimator={ref.estimator} fd_eps={ref.fd_eps} "
++          f"tangent={ref.tangent} max_delta={ref.max_delta} max_t={ref.max_t}")
++    if ref.estimator != "jvp" and ref.fd_eps < 0.01:
++        print(f"[meanflow] note: fd_eps={ref.fd_eps} is below the smoothing "
++              "range the target probe measured (0.01-0.05); a fine stencil "
++              "sees the same fast components the JVP does")
++    # Provenance. The checkpoint stores TrainConfig only; the target settings
++    # live here, and a resume under different settings is refused.
++    cfg_path = Path(args.out) / "meanflow_config.json"
++    cfg_now = dataclasses.asdict(ref)
++    cfg_path.parent.mkdir(parents=True, exist_ok=True)
++    if cfg_path.exists():
++        prev_cfg = json.loads(cfg_path.read_text())
++        changed = {k: (prev_cfg.get(k), v) for k, v in cfg_now.items()
++                   if prev_cfg.get(k) != v}
++        if changed:
++            raise RuntimeError(f"{cfg_path} records a different target "
++                               f"config: {changed}. Use a fresh --out.")
++    else:
++        cfg_path.write_text(json.dumps(cfg_now, indent=1))
+ 
+     def loss_fn_ref(model, batch, step, cfg):
+         """Reference-faithful MeanFlow step. No curriculum, 75% anchors."""
+@@ -200,7 +233,13 @@ def cmd_train(args) -> int:
+ 
+         loss, stats = ref_meanflow_loss(
+             lambda z_, t_, r_: model(z_, t_, r_, pe_in, po_in),
+-            z_t, t, r, v_g, ref)
++            z_t, t, r, v_g, ref,
++            base_fn=lambda z_, t_: model.base_velocity(z_, t_, pe_in, po_in))
++        # GUARD, per batch: a cap that did not reach the sampler.
++        if stats["delta_max"] > ref.max_delta + 1e-6:
++            raise RuntimeError(f"delta {stats['delta_max']:.4f} exceeds "
++                               f"--max-delta {ref.max_delta}")
++        loss_fn_ref.tangent_sum += stats["tangent_rel_vg"]
+         # GUARD. A "P10" run that silently trained at 75% anchors produced a
+         # full set of plausible logs, an eval, and a written interpretation
+         # before frac_anchor was checked. The realised fraction is measured
+@@ -220,6 +259,17 @@ def cmd_train(args) -> int:
+                 )
+             print(f"[meanflow] anchor fraction check: {got:.3f} vs requested "
+                   f"{ref.data_proportion} -- ok")
++            # GUARD: the tangent. 'cond' must give exactly 0; any other mode
++            # must not. A 'frozen' or 'boundary' tangent differs from e - x0
++            # by the flow-matching noise, which is O(1) relative.
++            tan = loss_fn_ref.tangent_sum / loss_fn_ref.seen
++            if (ref.tangent == "cond") != (tan == 0.0):
++                raise RuntimeError(
++                    f"tangent={ref.tangent} but ||w - v_g||/||v_g|| averages "
++                    f"{tan:.3g} over 50 batches; the tangent did not reach "
++                    "the loss")
++            print(f"[meanflow] tangent check: {ref.tangent}, "
++                  f"||w - v_g||/||v_g|| = {tan:.3f} -- ok")
+         return loss, stats
+ 
+     def loss_fn_custom(model, batch, step, cfg):
+@@ -244,6 +294,7 @@ def cmd_train(args) -> int:
+ 
+     loss_fn_ref.seen = 0
+     loss_fn_ref.anchor_sum = 0.0
++    loss_fn_ref.tangent_sum = 0.0
+     loss_fn = loss_fn_ref if args.faithful else loss_fn_custom
+ 
+     # Held-out validation at a FIXED (t, r), independent of what the batch
+@@ -267,10 +318,14 @@ def cmd_train(args) -> int:
+             r = t - delta
+             tt = t.reshape(-1, 1, 1, 1)
+             z_t = (1 - tt) * x0 + tt * eps
++            # Same estimator, fd_eps and tangent as training. Previously this
++            # built RefMeanFlowConfig(estimator=...) alone, so an fd run
++            # validated at the default fd_eps. It is still a self-referential
++            # number and still not fit for checkpoint selection.
+             _, st = ref_meanflow_loss(
+                 lambda z_, t_, r_: model(z_, t_, r_, pe, po),
+-                z_t, t, r, eps - x0,
+-                RefMeanFlowConfig(estimator=args.estimator))
++                z_t, t, r, eps - x0, ref,
++                base_fn=lambda z_, t_: model.base_velocity(z_, t_, pe, po))
+             out[name] = st["sse"]
+         ratio = out["interval"] / max(out["anchor"], 1e-12)
+         print(f"    val sse: anchor {out['anchor']:.4g}  "
+@@ -425,7 +480,19 @@ def main() -> int:
+                         "estimator=jvp: forward-mode AD promotes tangents to "
+                         "fp32 and bf16 weights raise a dtype error at the "
+                         "first attention projection.")
+-    t.add_argument("--fd-eps", type=float, default=1e-3)
++    t.add_argument("--fd-eps", type=float, default=1e-3,
++                   help="central-difference half-width for --estimator fd. "
++                        "The target probe's usable range was 0.025-0.05; "
++                        "1e-3 does not smooth")
++    t.add_argument("--tangent", default="cond",
++                   choices=["cond", "boundary", "frozen"],
++                   help="z-tangent of du/dt. cond: e - x0 (reference). "
++                        "boundary: u_theta(z,t,t), iMF. frozen: pretrained "
++                        "v(z,t), what the probe's marg rows measured")
++    t.add_argument("--max-delta", type=float, default=1.0,
++                   help="cap on t - r for interval samples (1.0 = reference)")
++    t.add_argument("--max-t", type=float, default=1.0,
++                   help="cap on t (1.0 = reference)")
+     t.add_argument("--adaptive-p", type=float, default=0.75)
+     t.add_argument("--v-source", default="teacher",
+                    choices=["teacher", "empirical"])
+diff --git a/scripts/test_reference_audit.py b/scripts/test_reference_audit.py
+index 566ef6a..329bbd9 100644
+--- a/scripts/test_reference_audit.py
++++ b/scripts/test_reference_audit.py
+@@ -182,7 +182,12 @@ def main() -> int:
+     import transport.meanflow_ref as mr
+     ref_src = Path(mr.__file__).read_text()
+     ref_tree = ast.parse(ref_src)
+-    banned = {"delta_schedule", "max_delta", "delta_start", "delta_end"}
++    # CURRICULUM symbols are banned: anything that changes the Delta range
++    # over training. A STATIC cap is a different thing -- a fixed training-
++    # range restriction, off by default -- and is checked separately below,
++    # so allowing the name `max_delta` here does not open a hole for a
++    # schedule.
++    banned = {"delta_schedule", "delta_start", "delta_end"}
+     found = set()
+     for node in ast.walk(ref_tree):
+         if isinstance(node, ast.Name) and node.id in banned:
+@@ -200,6 +205,15 @@ def main() -> int:
+     fields = set(RefMeanFlowConfig().__dataclass_fields__)
+     check("RefMeanFlowConfig has no curriculum fields",
+           not (fields & banned), f"has {sorted(fields & banned)}")
++    # Static caps and the tangent option: permitted deviations, but only if
++    # the DEFAULTS are the reference and nothing is step-dependent.
++    import inspect
++    d = RefMeanFlowConfig()
++    check("static caps default to no cap, tangent defaults to reference",
++          d.max_delta == 1.0 and d.max_t == 1.0 and d.tangent == "cond",
++          f"max_delta={d.max_delta} max_t={d.max_t} tangent={d.tangent}")
++    check("sample_tr takes no step argument (no schedule possible)",
++          "step" not in inspect.signature(sample_tr).parameters)
+ 
+     print("\n8. guidance form")
+     from transport.meanflow_ref import guided_velocity
+diff --git a/tests/test_meanflow_target.py b/tests/test_meanflow_target.py
+new file mode 100644
+index 0000000..976d706
+--- /dev/null
++++ b/tests/test_meanflow_target.py
+@@ -0,0 +1,224 @@
++"""CPU checks for the MeanFlow target options. No model, seconds.
++
++    python tests/test_meanflow_target.py
++
++A toy u_fn with a closed-form total derivative stands in for the adapter.
++The first two checks pin the REFERENCE path (tangent='cond', no caps) to a
++verbatim re-implementation of the pre-change code, so the new options cannot
++have altered the baseline run.
++"""
++import math
++import sys
++from pathlib import Path
++
++import torch
++
++sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
++
++from transport.meanflow_ref import (  # noqa: E402
++    RefMeanFlowConfig, central_difference, ref_meanflow_loss, sample_tr,
++    tangent_velocity,
++)
++
++torch.manual_seed(0)
++DT = torch.float64
++fails = []
++
++
++def check(name, ok, detail=""):
++    print(f"  {'PASS' if ok else 'FAIL'}  {name}  {detail}")
++    if not ok:
++        fails.append(name)
++
++
++theta = torch.tensor(1.3, dtype=DT, requires_grad=True)
++SH = (-1, 1, 1, 1)
++EVAL_T = []
++
++
++def u_fn(z, t, r):
++    EVAL_T.append(t.detach().clone())
++    h = (t - r).clamp(min=0.0)
++    a = torch.cos(3 * t) + 0.5 * h
++    b = torch.sin(2 * t)
++    return theta * (a.reshape(SH) * z + b.reshape(SH))
++
++
++def du_dt_exact(z, t, r, w):
++    """Total derivative along (w, dt=1, dr=0), valid for t - r > 0."""
++    a = torch.cos(3 * t) + 0.5 * (t - r)
++    return theta.detach() * (a.reshape(SH) * w
++                             + (-3 * torch.sin(3 * t) + 0.5).reshape(SH) * z
++                             + (2 * torch.cos(2 * t)).reshape(SH))
++
++
++def base_fn(z, t):
++    return 0.7 * z + torch.sin(t).reshape(SH)
++
++
++def batch(B=6, eps_margin=0.1):
++    t = torch.rand(B, dtype=DT) * (1 - 2 * eps_margin) + eps_margin
++    r = t - torch.rand(B, dtype=DT) * (t - 0.08) - 0.07   # Delta >= 0.07
++    z = torch.randn(B, 2, 3, 3, dtype=DT)
++    v_g = torch.randn_like(z)
++    return z, t, r, v_g
++
++
++def weighted(per_sample, cfg):
++    return (per_sample / ((per_sample + cfg.norm_eps) ** cfg.norm_p).detach()).mean()
++
++
++def original_loss(z, t, r, v_g, cfg):
++    """Pre-change ref_meanflow_loss, verbatim in substance."""
++    dt, dr = torch.ones_like(t), torch.zeros_like(r)
++    if cfg.estimator == "jvp":
++        with torch.no_grad():
++            _, du = torch.func.jvp(u_fn, (z, t, r), (v_g, dt, dr))
++        du = du.detach()
++    else:
++        e = cfg.fd_eps
++        with torch.no_grad():
++            du = ((u_fn(z + e * v_g, t + e * dt, r)
++                   - u_fn(z - e * v_g, t - e * dt, r)) / (2 * e)).detach()
++    u = u_fn(z, t, r)
++    delta = (t - r).clamp(0.0, 1.0).reshape(SH)
++    tgt = (v_g - delta * du).detach()
++    return weighted((u - tgt).pow(2).flatten(1).sum(1), cfg)
++
++
++def grad_of(loss):
++    theta.grad = None
++    loss.backward()
++    return theta.grad.clone()
++
++
++# 1-2. reference path unchanged -------------------------------------------------
++z, t, r, v_g = batch()
++for est in ("jvp", "fd"):
++    cfg = RefMeanFlowConfig(estimator=est)
++    l_old = original_loss(z, t, r, v_g, cfg)
++    g_old = grad_of(l_old)
++    l_new, st = ref_meanflow_loss(u_fn, z, t, r, v_g, cfg)
++    g_new = grad_of(l_new)
++    check(f"reference path unchanged ({est})",
++          torch.allclose(l_old, l_new, rtol=1e-12, atol=0)
++          and torch.allclose(g_old, g_new, rtol=1e-10, atol=0)
++          and st["tangent_rel_vg"] == 0.0,
++          f"loss {float(l_old):.6g} vs {float(l_new):.6g}")
++
++# 3. central difference against the closed form ---------------------------------
++w = base_fn(z, t)
++for eps in (0.01, 0.025):
++    d_fd = central_difference(u_fn, z, t, r, w, eps)
++    d_ex = du_dt_exact(z, t, r, w)
++    rel = float((d_fd - d_ex).norm() / d_ex.norm())
++    check(f"central difference matches closed form (eps={eps})",
++          rel < 3 * (3 * eps) ** 2, f"rel {rel:.2e}")
++
++# 4. the loss wires the chosen tangent into the stencil and the JVP ---------------
++for est, tan in (("fd", "frozen"), ("fd", "boundary"), ("jvp", "frozen"),
++                 ("jvp", "boundary")):
++    cfg = RefMeanFlowConfig(estimator=est, fd_eps=0.025, tangent=tan)
++    with torch.no_grad():
++        w_man = base_fn(z, t) if tan == "frozen" else u_fn(z, t, t)
++    if est == "fd":
++        du = central_difference(u_fn, z, t, r, w_man, cfg.fd_eps)
++    else:
++        with torch.no_grad():
++            _, du = torch.func.jvp(u_fn, (z, t, r), (w_man, torch.ones_like(t),
++                                                      torch.zeros_like(r)))
++    delta = (t - r).clamp(0.0, 1.0).reshape(SH)
++    tgt = (v_g - delta * du).detach()          # first term stays v_g
++    l_man = weighted((u_fn(z, t, r) - tgt).pow(2).flatten(1).sum(1), cfg)
++    g_man = grad_of(l_man)
++    l_new, st = ref_meanflow_loss(u_fn, z, t, r, v_g, cfg, base_fn=base_fn)
++    g_new = grad_of(l_new)
++    rel_w = float(((w_man - v_g).flatten(1).norm(dim=1)
++                   / v_g.flatten(1).norm(dim=1)).mean())
++    check(f"{est}/{tan}: target, gradient and tangent stat",
++          torch.allclose(l_man, l_new, rtol=1e-12, atol=0)
++          and torch.allclose(g_man, g_new, rtol=1e-10, atol=0)
++          and abs(st["tangent_rel_vg"] - rel_w) < 1e-12,
++          f"tangent_rel_vg {st['tangent_rel_vg']:.3f}")
++
++# 5. tangent carries no gradient ---------------------------------------------------
++w_b = tangent_velocity(u_fn, None, z, t, v_g,
++                       RefMeanFlowConfig(tangent="boundary"))
++check("boundary tangent is detached", not w_b.requires_grad)
++
++# 6. stencil near the ends of [0, 1] -----------------------------------------------
++t_edge = torch.tensor([0.995, 0.003], dtype=DT)
++r_edge = torch.tensor([0.5, 0.0], dtype=DT)
++z_e = torch.randn(2, 2, 3, 3, dtype=DT)
++w_e = base_fn(z_e, t_edge)
++EVAL_T.clear()
++central_difference(u_fn, z_e, t_edge, r_edge, w_e, 0.05)
++t_seen = torch.cat(EVAL_T)
++check("stencil never evaluates outside [0, 1]",
++      float(t_seen.min()) >= 0.0 and float(t_seen.max()) <= 1.0,
++      f"t in [{float(t_seen.min()):.3f}, {float(t_seen.max()):.3f}]")
++
++
++def lin_fn(z, t, r):
++    # linear along the path, so even the asymmetric edge stencil is exact --
++    # which isolates the divisor: dividing by 2*eps instead of the actual span
++    # would be off by (ep + em) / 2eps
++    return theta * (0.3 * z + (t + 0.2 * (t - r)).reshape(SH))
++
++
++d_lin = central_difference(lin_fn, z_e, t_edge, r_edge, w_e, 0.05)
++d_lin_ex = theta.detach() * (0.3 * w_e + 1.2)
++rel_lin = float((d_lin - d_lin_ex).norm() / d_lin_ex.norm())
++check("edge stencil divides by the actual span", rel_lin < 1e-10,
++      f"rel {rel_lin:.1e}")
++
++# 7. sampler: caps, and unchanged at defaults -----------------------------------------
++N = 20000
++g = torch.Generator().manual_seed(7)
++cfg = RefMeanFlowConfig(max_delta=0.3, max_t=0.9, data_proportion=0.25)
++tc, rc, anc = sample_tr(N, cfg, "cpu", generator=g)
++d = tc - rc
++check("max_t and max_delta respected",
++      float(tc.max()) <= 0.9 and float(d.max()) <= 0.3 + 1e-7
++      and bool((rc[anc] == tc[anc]).all()),
++      f"t max {float(tc.max()):.3f}  delta max {float(d.max()):.4f}")
++check("anchor fraction unaffected by caps",
++      abs(float(anc.float().mean()) - 0.25) < 0.02,
++      f"{float(anc.float().mean()):.3f}")
++z7, t7, r7, v7 = batch(B=64)
++r7 = torch.maximum(r7, t7 - 0.1)           # cap 0.1 by hand
++_, st7 = ref_meanflow_loss(u_fn, z7, t7, r7, v7,
++                           RefMeanFlowConfig(estimator="fd", max_delta=0.1))
++exp7 = float(((t7 - r7) >= 0.1 - 1e-6).float().mean())
++check("frac_at_delta_cap stat", abs(st7["frac_at_delta_cap"] - exp7) < 1e-12
++      and st7["frac_at_delta_cap"] > 0, f"{st7['frac_at_delta_cap']:.3f}")
++print(f"        mass at delta cap: "
++      f"{float(((d > 0.3 - 1e-6) & ~anc).float().mean()):.3f} of all samples")
++
++g1 = torch.Generator().manual_seed(11)
++t_new, r_new, a_new = sample_tr(64, RefMeanFlowConfig(), "cpu", generator=g1)
++g2 = torch.Generator().manual_seed(11)
++n1 = torch.sigmoid(torch.randn(64, generator=g2) * 1.0 - 0.4)
++n2 = torch.sigmoid(torch.randn(64, generator=g2) * 1.0 - 0.4)
++t_old, r_old = torch.maximum(n1, n2), torch.minimum(n1, n2)
++a_old = torch.rand(64, generator=g2) < 0.75
++r_old = torch.where(a_old, t_old, r_old)
++check("sampler unchanged at defaults",
++      torch.equal(t_new, t_old) and torch.equal(r_new, r_old))
++
++# 8. config validation ------------------------------------------------------------------
++for kwargs in ({"tangent": "marginal"}, {"max_delta": 0.0}, {"max_t": 1.5},
++               {"fd_eps": 0.0}):
++    try:
++        RefMeanFlowConfig(**kwargs)
++        check(f"rejects {kwargs}", False)
++    except ValueError:
++        check(f"rejects {kwargs}", True)
++try:
++    ref_meanflow_loss(u_fn, z, t, r, v_g, RefMeanFlowConfig(tangent="frozen"))
++    check("frozen tangent without base_fn raises", False)
++except ValueError:
++    check("frozen tangent without base_fn raises", True)
++
++print("\nALL PASS" if not fails else f"\n{len(fails)} FAILED: {fails}")
++sys.exit(1 if fails else 0)
+diff --git a/transport/meanflow_ref.py b/transport/meanflow_ref.py
+index a42ce77..5f45dce 100644
+--- a/transport/meanflow_ref.py
++++ b/transport/meanflow_ref.py
+@@ -39,6 +39,19 @@ DEVIATIONS STILL PRESENT, deliberately, and to be justified individually:
+     prompt embedding rather than swapping in a null class id
+   - a LoRA adapter over a frozen pretrained model instead of training a DiT
+     from scratch, which is the whole point of Gate B
++
++OPTIONAL DEVIATIONS, all off by default so the reference path is unchanged:
++  - `tangent`: which velocity the z-tangent of du/dt uses. "boundary" is iMF's
++    u_theta(z_t, t, t) (arXiv 2512.02012, Eq. 12); "frozen" is the pretrained
++    field. Motivated by scripts/probe_target_quality.py: at t_center 0.5 the
++    reference target (total/cond) had correction cos 0.09-0.13 against the
++    integrated average velocity, and swapping the tangent alone (total/marg)
++    barely moved it. The tangent only matters combined with:
++  - `estimator="fd"` at eps ~0.025-0.05, which averages over the fast
++    components of SD3's time conditioning instead of differentiating them
++    (fd/marg: cos 0.55-0.88 for Delta <= 0.5, 0.45 at Delta = 0.8).
++  - `max_delta` / `max_t`: training-range caps, pending the probe's t-sweep
++    that separates interval length from the high-t region.
+ """
+ 
+ from __future__ import annotations
+@@ -77,6 +90,22 @@ class RefMeanFlowConfig:
+     cond_dropout_prob: float = 0.1
+     estimator: str = "jvp"
+     fd_eps: float = 1e-3
++    #: z-TANGENT of du/dt, for both estimators.
++    #:   "cond"      v_g (e - x0, guided). The reference. Default.
++    #:   "boundary"  u_theta(z_t, t, t) under no_grad. iMF's boundary-condition
++    #:               tangent: the network's own instantaneous velocity. Costs
++    #:               one no-grad adapter forward.
++    #:   "frozen"    the pretrained field v(z_t, t) under no_grad. What the
++    #:               target probe's marg rows measured; identical to
++    #:               "boundary" at initialisation, but does not inherit the
++    #:               adapter's r-independent drift later. Needs base_fn.
++    #: The regression target's FIRST term stays v_g either way, as in iMF.
++    tangent: str = "cond"
++    #: Training-range caps, applied in sample_tr before the anchor mask.
++    #: 1.0 = no cap = the reference. max_delta clamps r >= t - max_delta
++    #: (mass piles up AT the cap; the loss logs how much). max_t clamps t.
++    max_delta: float = 1.0
++    max_t: float = 1.0
+     #: GRADIENT CHECKPOINTING FORCES A DEVIATION FROM THE REFERENCE.
+     #: torch.utils.checkpoint wraps the forward in a custom autograd.Function
+     #: (_NoopSaveInputs) with no jvp rule, so forward-mode AD cannot pass
+@@ -98,15 +127,31 @@ class RefMeanFlowConfig:
+     #: before activations.
+     checkpoint_safe: bool = True
+ 
++    def __post_init__(self) -> None:
++        if self.tangent not in TANGENTS:
++            raise ValueError(f"tangent must be one of {TANGENTS}, "
++                             f"got {self.tangent!r}")
++        for name in ("max_delta", "max_t"):
++            val = getattr(self, name)
++            if not 0.0 < val <= 1.0:
++                raise ValueError(f"{name} must be in (0, 1], got {val}")
++        if self.fd_eps <= 0:
++            raise ValueError(f"fd_eps must be > 0, got {self.fd_eps}")
++
++
++TANGENTS = ("cond", "boundary", "frozen")
++
+ 
+ def sample_tr(batch: int, cfg: RefMeanFlowConfig, device,
+               generator: torch.Generator | None = None):
+     """Reference `sample_tr`: two logit-normal draws, sorted, then r := t on
+     the first `data_proportion` of the batch.
+ 
+-    Note what this is NOT: there is no curriculum, no max_delta, and no
+-    schedule. Delta = t - r spans its full range from the first step, and the
+-    r == t population is what keeps that stable.
++    Note what this is NOT: there is no curriculum and no schedule. Delta =
++    t - r spans its full range from the first step, and the r == t population
++    is what keeps that stable. The optional static caps (cfg.max_delta,
++    cfg.max_t) default to 1.0, where they are no-ops; when set they restrict
++    the range for the whole run, never as a function of step.
+     """
+     def draw():
+         n = torch.randn(batch, device=device, generator=generator)
+@@ -115,6 +160,13 @@ def sample_tr(batch: int, cfg: RefMeanFlowConfig, device,
+     a, b = draw(), draw()
+     t = torch.maximum(a, b)
+     r = torch.minimum(a, b)
++    # Caps (no-ops at the default 1.0). Before the anchor mask, so anchors
++    # stay exactly r == t.
++    if cfg.max_t < 1.0:
++        t = t.clamp(max=cfg.max_t)
++        r = torch.minimum(r, t)
++    if cfg.max_delta < 1.0:
++        r = torch.maximum(r, t - cfg.max_delta)
+ 
+     # STOCHASTIC, not a deterministic prefix. The reference uses
+     # `jnp.arange(bz) < int(bz * data_proportion)`, which is fine at its batch
+@@ -183,40 +235,77 @@ def cond_drop(v, v_g, cond, uncond, cfg: RefMeanFlowConfig, generator=None):
+     return (pe_in, po_in), v_g
+ 
+ 
+-def ref_meanflow_loss(u_fn, z_t, t, r, v_g, cfg: RefMeanFlowConfig):
++def tangent_velocity(fn, base_fn, z_t, t, v_g, cfg: RefMeanFlowConfig):
++    """The z-tangent for du/dt. Detached in every mode."""
++    if cfg.tangent == "cond":
++        return v_g
++    with torch.no_grad():
++        if cfg.tangent == "boundary":
++            w = fn(z_t, t, t)
++        else:  # "frozen"
++            if base_fn is None:
++                raise ValueError("tangent='frozen' needs base_fn(z, t)")
++            w = base_fn(z_t, t)
++    return w.detach().to(v_g.dtype)
++
++
++def central_difference(fn, z_t, t, r, w, eps: float):
++    """(u(z + e w, t + e, r) - u(z - e w, t - e, r)) / 2e, r held fixed.
++
++    The half-widths shrink near the ends of [0, 1] so no evaluation leaves the
++    trained time range; the divisor is the actual span. In the interior this
++    is exactly the reference's symmetric stencil.
++
++    KNOWN BIAS for interval samples with Delta < eps: the backward point has
++    t - e < r, and the interval embedding clamps h = t - r at 0. The target
++    term is multiplied by Delta < eps, so its weight is small, but it is not
++    zero.
++    """
++    ep = torch.clamp(1.0 - t, min=0.0, max=eps)
++    em = torch.clamp(t, min=0.0, max=eps)
++    sh = (-1,) + (1,) * (z_t.dim() - 1)
++    with torch.no_grad():
++        up = fn(z_t + ep.reshape(sh) * w, t + ep, r)
++        um = fn(z_t - em.reshape(sh) * w, t - em, r)
++    span = (ep + em).clamp(min=1e-12).reshape(sh)
++    return ((up - um) / span).detach()
++
++
++def ref_meanflow_loss(u_fn, z_t, t, r, v_g, cfg: RefMeanFlowConfig,
++                      base_fn=None):
+     """Reference `forward`, loss section.
+ 
+     u_fn(z, t, r) -> u, closing over the conditioning. It must take (t, r) and
+     internally condition on (t, h = t - r), matching the reference's
+     `u_fn(z_t, t, t - r, y)`.
+ 
+-    The JVP is taken with respect to (z, t, r) with tangents (v_g, 1, 0), and
+-    -- unlike our own module -- u comes OUT of that call and carries gradient,
+-    exactly as in the reference.
++    base_fn(z, t) -> frozen pretrained velocity, closing over the same
++    conditioning as u_fn. Only used by tangent='frozen'.
++
++    The JVP is taken with respect to (z, t, r) with tangents (w, 1, 0), where w
++    is v_g in the reference and otherwise per `cfg.tangent`. The target is
++    v_g - (t - r) * du/dt in every mode.
+     """
+     def fn(z_, t_, r_):
+         return u_fn(z_, t_, r_)
+ 
+     dt = torch.ones_like(t)
+     dr = torch.zeros_like(r)
++    w = tangent_velocity(fn, base_fn, z_t, t, v_g, cfg)
+ 
+     if cfg.estimator == "jvp":
+         if cfg.checkpoint_safe:
+             # du/dt under no_grad: forward-mode AD never meets the checkpoint
+             # machinery. u then comes from an ordinary grad-enabled forward.
+             with torch.no_grad(), math_attention():
+-                _, du_dt = torch.func.jvp(fn, (z_t, t, r), (v_g, dt, dr))
++                _, du_dt = torch.func.jvp(fn, (z_t, t, r), (w, dt, dr))
+             du_dt = du_dt.detach()
+             u = fn(z_t, t, r)
+         else:
+             with math_attention():
+-                u, du_dt = torch.func.jvp(fn, (z_t, t, r), (v_g, dt, dr))
++                u, du_dt = torch.func.jvp(fn, (z_t, t, r), (w, dt, dr))
+     else:
+-        e = cfg.fd_eps
+-        with torch.no_grad():
+-            up = fn(z_t + e * v_g, t + e * dt, r)
+-            um = fn(z_t - e * v_g, t - e * dt, r)
+-        du_dt = ((up - um) / (2 * e)).detach()
++        du_dt = central_difference(fn, z_t, t, r, w, cfg.fd_eps)
+         u = fn(z_t, t, r)
+ 
+     delta = (t - r).clamp(0.0, 1.0).reshape(-1, *([1] * (u.dim() - 1)))
+@@ -243,6 +332,16 @@ def ref_meanflow_loss(u_fn, z_t, t, r, v_g, cfg: RefMeanFlowConfig):
+             # It is a per-sample gradient normaliser, not a progress signal.
+             # Read sse_anchor and sse_interval instead.
+             "loss_is_saturated": bool(float(loss) > 0.99),
++            # 0.0 exactly for tangent='cond'. Nonzero otherwise, and the
++            # trainer-side guard checks that it is -- a tangent flag that
++            # never reached the loss would otherwise look normal.
++            "tangent_rel_vg": float(((w - v_g).flatten(1).norm(dim=1)
++                                     / v_g.flatten(1).norm(dim=1)
++                                     .clamp(min=1e-12)).mean()),
++            "delta_max": float((t - r).max()),
++            # clamping piles probability mass at the cap; 0.0 with no cap
++            "frac_at_delta_cap": float((((t - r) >= cfg.max_delta - 1e-6)
++                                        & ~anchor).float().mean()),
+         }
+         # The anchors are the diagnostic that matters: at r == t the target is
+         # exactly v_g, so this is plain flow matching and its loss should fall
