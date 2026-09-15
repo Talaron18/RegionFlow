@@ -192,22 +192,43 @@ class TransportAdapter(nn.Module):
         """
         dtype = self.model_dtype
         timestep = t.float() * self.cfg.num_train_timesteps
-        with torch.no_grad(), self.holder.scope(None):
-            if guidance <= 1.0 or negative_embeds is None:
-                return self.transformer(
-                    hidden_states=z.to(dtype),
-                    encoder_hidden_states=prompt_embeds,
-                    pooled_projections=pooled.to(dtype),
-                    timestep=timestep, return_dict=False,
-                )[0].float()
-            out = self.transformer(
-                hidden_states=torch.cat([z, z]).to(dtype),
-                encoder_hidden_states=torch.cat([negative_embeds, prompt_embeds]),
-                pooled_projections=torch.cat(
-                    [negative_pooled if negative_pooled is not None else pooled,
-                     pooled]).to(dtype),
-                timestep=timestep.repeat(2), return_dict=False,
-            )[0]
+        # Gradient checkpointing recomputes the forward pass to save
+        # activation memory for a BACKWARD that this call never takes -- the
+        # whole method runs under no_grad, so there is nothing to save memory
+        # for. It is not just waste: the transformer stays in .train() mode
+        # throughout the run (Trainer only calls .eval() for validation), so
+        # `self.training and self.gradient_checkpointing` still routes this
+        # frozen forward through checkpointing, and at least one installed
+        # SD3Transformer2DModel (diffusers==0.30.0.dev0, vendored for
+        # StableDiffusion3InstructPix2PixPipeline at
+        # /data/repos/UltraEdit/diffusers) hands a checkpointed block's tuple
+        # output straight to the next block's LayerNorm as `hidden_states`,
+        # raising `layer_norm(): argument 'input' ... must be Tensor, not
+        # tuple` -- a path stock diffusers presumably never exercised this
+        # way, since nothing here needs the recompute. Disabling it for the
+        # duration of this call sidesteps that bug and is a strict speed win
+        # regardless of which diffusers is installed.
+        gc_was = getattr(self.transformer, "gradient_checkpointing", False)
+        self.transformer.gradient_checkpointing = False
+        try:
+            with torch.no_grad(), self.holder.scope(None):
+                if guidance <= 1.0 or negative_embeds is None:
+                    return self.transformer(
+                        hidden_states=z.to(dtype),
+                        encoder_hidden_states=prompt_embeds,
+                        pooled_projections=pooled.to(dtype),
+                        timestep=timestep, return_dict=False,
+                    )[0].float()
+                out = self.transformer(
+                    hidden_states=torch.cat([z, z]).to(dtype),
+                    encoder_hidden_states=torch.cat([negative_embeds, prompt_embeds]),
+                    pooled_projections=torch.cat(
+                        [negative_pooled if negative_pooled is not None else pooled,
+                         pooled]).to(dtype),
+                    timestep=timestep.repeat(2), return_dict=False,
+                )[0]
+        finally:
+            self.transformer.gradient_checkpointing = gc_was
         v_un, v_c = out.float().chunk(2)
         return v_un + guidance * (v_c - v_un)
 
