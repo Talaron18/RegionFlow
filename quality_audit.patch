@@ -1,0 +1,56 @@
+--- a/bench/quality_audit.py
++++ b/bench/quality_audit.py
+@@ -127,6 +127,30 @@
+     return out_path
+ 
+ 
++def masks_for_case(case, rec):
++    """(target_mask, sibling_masks) in 512x512 bench frame, or (None, []).
++
++    Extracted so the blind multi-arm deck and the single-arm sheet cannot
++    drift apart. A second copy of this would be the mask-side version of the
++    duplicated outcome classifier that produced the 47-vs-43 disagreement.
++    """
++    H, W = case["coco_hw"]
++    anns = {a["id"]: a for a in rec["anns"]}
++
++    def m(i):
++        a = anns.get(int(i))
++        return None if a is None else apply_rect(
++            raster(a["segmentation"], W, H), case["rect"], (512, 512))
++
++    tmask = m(case["target_id"])
++    if tmask is None or not tmask.any():
++        return None, []
++    smasks = [x for x in (m(i["id"]) for i in case["instances"]
++                          if i["category"] == case["category"]
++                          and i["id"] != case["target_id"]) if x is not None]
++    return tmask, smasks
++
++
+ def stratified(recs, n, seed=0):
+     """Spread across outcome class x person/other.
+ 
+@@ -176,20 +200,9 @@
+         edit_path = Path(args.edits) / f"{r['id']}_{args.prompt_kind}.png"
+         if row is None or rec is None or not edit_path.exists():
+             continue
+-        H, W = case["coco_hw"]
+-        anns = {a["id"]: a for a in rec["anns"]}
+-
+-        def m(i):
+-            a = anns.get(int(i))
+-            return None if a is None else apply_rect(
+-                raster(a["segmentation"], W, H), case["rect"], (512, 512))
+-
+-        tmask = m(case["target_id"])
+-        if tmask is None or not tmask.any():
++        tmask, smasks = masks_for_case(case, rec)
++        if tmask is None:
+             continue
+-        smasks = [x for x in (m(i["id"]) for i in case["instances"]
+-                              if i["category"] == case["category"]
+-                              and i["id"] != case["target_id"]) if x is not None]
+ 
+         img = side_by_side(bench_image(row["input_image"]),
+                            Image.open(edit_path), tmask, smasks)

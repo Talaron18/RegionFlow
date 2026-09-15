@@ -1,0 +1,294 @@
+--- a/bench/run_gate_c.py
++++ b/bench/run_gate_c.py
+@@ -60,10 +60,29 @@
+ 
+ from frame_fit import apply_rect
+ from instance_bench import aggregate, instance_selectivity
++from off_instance import off_instance_change
++from off_instance import self_test as off_self_test
+ from refedit_siblings import bench_image, load_bench, load_coco, raster
+ 
+ PROMPT_COLS = {"full": "editing_instruction", "single": "edit_instruction_single"}
+ 
++# Checkpoints that load through the SAME UltraEdit pipeline class. RefEdit-SD3
++# is finetuned on UltraEdit-FREEFORM (the *_wo_mask script), so handing it a
++# mask is out of distribution and a null result from it would be
++# uninterpretable. `sd3-ultraedit-mask` is the same architecture actually
++# TRAINED with masks, and is the arm that answers "is localisation the
++# problem?".
++MODEL_REPOS = {
++    "refedit-sd3": "bpathir1/RefEdit-SD3",
++    "sd3-ultraedit-mask": "BleachNick/SD3_UltraEdit_w_mask",
++}
++
++# Mask arms. `white` is not decoration: it is the control that separates "the
++# pipeline behaves differently when mask_img is not None" from "the pipeline
++# uses the CONTENT of the mask". Without it, none -> oracle confounds those two
++# changes and neither branch of the reading key is safe.
++MASK_MODES = ("none", "white", "oracle", "sibling")
++
+ 
+ def outcome_class(r: dict) -> str:
+     """Describe every case, including ones `valid` discards.
+@@ -130,17 +149,21 @@
+ 
+     name = "none"
+ 
+-    def __call__(self, img, prompt, seed):
++    def __call__(self, img, prompt, seed, mask=None):
+         return img
+ 
+ 
+-class RefEditSD3:
+-    """bpathir1/RefEdit-SD3. Defaults are the repo's published inference call."""
++class SD3InstructPix2Pix:
++    """Any checkpoint loading through StableDiffusion3InstructPix2PixPipeline.
+ 
+-    name = "refedit-sd3"
++    The conditioning mask is NOT built here. It is built in `run()` next to the
++    target and sibling masks it is derived from, and passed in. One place, one
++    definition -- the alternative is a second mask convention living inside the
++    model, which is how polarity bugs survive.
++    """
+ 
+-    def __init__(self, steps=50, image_guidance=1.5, guidance=7.5,
+-                 device="cuda", dtype=None, mask_mode="none"):
++    def __init__(self, repo, name, steps=50, image_guidance=1.5, guidance=7.5,
++                 device="cuda", dtype=None):
+         import torch  # noqa: PLC0415
+         try:
+             from diffusers import StableDiffusion3InstructPix2PixPipeline  # noqa: PLC0415
+@@ -152,21 +175,14 @@
+                 "(training/RefEdit-SD3/UltraEdit in the refedit repo)."
+             ) from exc
+         self.torch = torch
++        self.name, self.repo = name, repo
+         self.steps, self.ig, self.g = steps, image_guidance, guidance
+         self.device = device
+-        # RefEdit's README passes mask_img=None; UltraEdit's passes a BLANK
+-        # WHITE mask for free-form editing. The two repos disagree and only one
+-        # gives sane output -- RefEdit-SD3 is trained by the *_wo_mask script so
+-        # None should be right, but smoke-test one case and LOOK at it.
+-        self.mask_mode = mask_mode
+         self.pipe = StableDiffusion3InstructPix2PixPipeline.from_pretrained(
+-            "bpathir1/RefEdit-SD3",
+-            torch_dtype=dtype or torch.float16).to(device)
++            repo, torch_dtype=dtype or torch.float16).to(device)
+ 
+-    def __call__(self, img, prompt, seed):
++    def __call__(self, img, prompt, seed, mask=None):
+         gen = self.torch.Generator(device=self.device).manual_seed(seed)
+-        mask = (None if self.mask_mode == "none"
+-                else Image.new("RGB", img.size, (255, 255, 255)))
+         return self.pipe(prompt, image=img, mask_img=mask,
+                          num_inference_steps=self.steps,
+                          image_guidance_scale=self.ig,
+@@ -177,13 +193,64 @@
+ def load_model(args):
+     if args.model == "none":
+         return IdentityModel()
+-    if args.model == "refedit-sd3":
+-        return RefEditSD3(steps=args.steps, image_guidance=args.image_guidance,
+-                          guidance=args.guidance, device=args.device,
+-                          mask_mode=args.mask_mode)
++    if args.model in MODEL_REPOS:
++        if args.model == "refedit-sd3" and args.mask_mode != "none":
++            print("  NOTE: RefEdit-SD3 is finetuned on UltraEdit-FREEFORM, so a "
++                  "mask is\n  out of distribution for it. Keep this arm as a "
++                  "secondary probe; the\n  primary mask arm is "
++                  "--model sd3-ultraedit-mask.")
++        return SD3InstructPix2Pix(
++            MODEL_REPOS[args.model], args.model, steps=args.steps,
++            image_guidance=args.image_guidance, guidance=args.guidance,
++            device=args.device)
+     raise SystemExit(f"unknown model {args.model!r}")
+ 
+ 
++def dilate(mask: np.ndarray, r: int) -> np.ndarray:
++    """Square dilation, matching off_instance._dilate. A tight COCO polygon may
++    not give a regenerating model room to make a coherent edit at the boundary;
++    the amount of room is a FROZEN choice, set once by looking at smoke-test
++    output and never touched after a score is seen."""
++    if r <= 0:
++        return mask
++    m = mask
++    for axis in (0, 1):
++        out = m.copy()
++        for s_ in range(1, r + 1):
++            out |= np.roll(m, s_, axis=axis)
++            out |= np.roll(m, -s_, axis=axis)
++        m = out
++    return m
++
++
++def cond_mask(mode: str, tmask, smasks, size, dilate_px: int):
++    """The conditioning image handed to `mask_img`.
++
++    POLARITY. UltraEdit's README seeds a BLANK WHITE mask for free-form
++    editing, i.e. white = editable. So the oracle mask is white INSIDE the
++    target and black outside. `self_test` asserts this, because an inverted
++    mask produces plausible-looking output and would be read as a finding.
++    """
++    if mode == "none":
++        return None
++    if mode == "white":
++        return Image.new("RGB", size, (255, 255, 255))
++    if mode == "oracle":
++        m = tmask
++    elif mode == "sibling":
++        # POSITIVE CONTROL. Point the mask at a sibling and mis-targeting
++        # should go to ~100%. If it does not, the model is ignoring the mask
++        # and BOTH branches of the oracle reading key are void. Largest sibling
++        # by area, deterministic.
++        if not smasks:
++            return None
++        m = max(smasks, key=lambda x: np.asarray(x).sum())
++    else:
++        raise SystemExit(f"unknown mask mode {mode!r}")
++    m = dilate(np.asarray(m) > 0, dilate_px)
++    return Image.fromarray((m * 255).astype(np.uint8)).convert("RGB")
++
++
+ def run(args):
+     blob = json.loads(Path(args.cases).read_text())
+     cases = blob["cases"]
+@@ -201,12 +268,17 @@
+         for line in out_path.read_text().splitlines():
+             if line.strip():
+                 r = json.loads(line)
+-                done.add((r["id"], r["prompt_kind"]))
++                # Keyed on the ARM too. Without mask_mode in the key, writing a
++                # new arm into an existing results file silently resumes over
++                # the completed one and reports it as finished.
++                done.add((r["id"], r["prompt_kind"],
++                          r.get("mask_mode", "none")))
+         print(f"resuming: {len(done)} case/prompt results already in {out_path}")
+ 
+     kinds = ["full"] + (["single"] if args.ablation else [])
+     model = load_model(args)
+-    print(f"model={model.name}  cases={len(cases)}  prompts={kinds}\n")
++    print(f"model={model.name}  cases={len(cases)}  prompts={kinds}  "
++          f"mask={args.mask_mode}\n")
+ 
+     img_dir = Path(args.save_images) if args.save_images else None
+     if img_dir:
+@@ -226,16 +298,27 @@
+             src_img = bench_image(row["input_image"])
+             src = np.asarray(src_img)
+ 
++            cmask = cond_mask(args.mask_mode, tmask, smasks, src_img.size,
++                              args.mask_dilate)
++            if args.mask_mode == "sibling" and cmask is None:
++                print(f"  {case['id']}: no sibling to point at, skipped")
++                continue
++
+             for kind in kinds:
+-                if (case["id"], kind) in done:
++                if (case["id"], kind, args.mask_mode) in done:
+                     continue
+                 prompt = row.get(PROMPT_COLS[kind]) or row["editing_instruction"]
++                # SAME seed as the mask=none run, so the arms pair case by case
++                # and the only thing that differs is the spatial condition.
+                 seed = case_seed(case["id"], args.seed)
+-                edited = model(src_img, prompt, seed)
++                edited = model(src_img, prompt, seed, cmask)
+                 if edited.size != (512, 512):
+                     edited = edited.resize((512, 512), Image.BILINEAR)
+-                res = instance_selectivity(src, np.asarray(edited.convert("RGB")),
+-                                           tmask, smasks)
++                out = np.asarray(edited.convert("RGB"))
++                res = instance_selectivity(src, out, tmask, smasks)
++                # ADDITIVE. Separate namespace, separate function, nothing in
++                # the frozen metric reads it. See off_instance.__doc__.
++                off = off_instance_change(src, out, tmask, smasks)
+                 eps = 1e-9
+                 rec = {"id": case["id"], "prompt_kind": kind, "prompt": prompt,
+                        "outcome": outcome_class(res),
+@@ -247,7 +330,8 @@
+                        "difficulty": case["difficulty"],
+                        "category": case["category"],
+                        "n_siblings": case["n_siblings"], "seed": seed,
+-                       "model": model.name,
++                       "model": model.name, "mask_mode": args.mask_mode,
++                       **off,
+                        **{k: (round(v, 6) if isinstance(v, float) else v)
+                           for k, v in res.items() if k != "invalid_reason"}}
+                 fh.write(json.dumps(rec) + "\n")
+@@ -319,6 +403,20 @@
+         print(f"    reference: ground truth 0.011 / excess -0.005   |   "
+               f"category-level 1.001 / excess +0.157")
+ 
++        # OFF-INSTANCE, over ALL cases -- this class is invisible to `valid`
++        # by construction, so gating it on validity would hide exactly what it
++        # was added to find.
++        oi = [r for r in rs if r.get("off_instance_bbox") is not None]
++        if oi:
++            ratio = np.array([r["off_instance_ratio"] for r in oi])
++            over = np.array([r["off_instance_over_target"] for r in oi])
++            print(f"    off-instance    ratio median {np.median(ratio):.2f}  "
++                  f"p90 {np.percentile(ratio, 90):.2f}   "
++                  f"over-target median {np.median(over):.2f}")
++            print(f"      cases with a hot spot louder than the target "
++                  f"(over-target > 1): {(over > 1).sum()}/{len(oi)}"
++                  f"  <- candidate third-mode failures; LOOK at the bbox crop")
++
+         for key, label in ((lambda r: r["difficulty"], "difficulty"),
+                            (lambda r: "person" if r["category"] == "person"
+                             else "other", "category")):
+@@ -458,7 +556,28 @@
+ 
+     m = IdentityModel()
+     img = Image.fromarray(src)
+-    assert np.array_equal(np.asarray(m(img, "anything", 0)), src)
++    assert np.array_equal(np.asarray(m(img, "anything", 0, None)), src)
++
++    # POLARITY. White = editable, per UltraEdit's README. An inverted mask
++    # yields plausible images and would be read as a model finding, so assert
++    # it here rather than discovering it three arms later.
++    cm = np.asarray(cond_mask("oracle", t, [s], (512, 512), 0))
++    assert cm[150, 150, 0] == 255, "oracle mask must be WHITE inside the target"
++    assert cm[10, 10, 0] == 0, "oracle mask must be BLACK outside the target"
++
++    # The sibling control must point somewhere ELSE than the target.
++    cm = np.asarray(cond_mask("sibling", t, [s], (512, 512), 0))
++    assert cm[150, 350, 0] == 255 and cm[150, 150, 0] == 0
++
++    # Dilation grows the mask and nothing else.
++    a = (np.asarray(cond_mask("oracle", t, [s], (512, 512), 0))[..., 0] > 0)
++    b = (np.asarray(cond_mask("oracle", t, [s], (512, 512), 8))[..., 0] > 0)
++    assert b.sum() > a.sum() and (a & ~b).sum() == 0
++
++    assert cond_mask("none", t, [s], (512, 512), 8) is None
++    assert cond_mask("sibling", t, [], (512, 512), 8) is None
++
++    off_self_test()
+     print("self-test OK")
+ 
+ 
+@@ -471,16 +590,22 @@
+     p.add_argument("--coco-annotations", default="/data/datasets/coco/annotations")
+     p.add_argument("--coco-splits", default="train2014")
+     p.add_argument("--coco-cache", default="/data/datasets/coco/desc")
+-    p.add_argument("--model", default="none", choices=("none", "refedit-sd3"))
++    p.add_argument("--model", default="none",
++                   choices=("none",) + tuple(MODEL_REPOS))
+     p.add_argument("--ablation", action="store_true",
+                    help="also run edit_instruction_single with the same seed")
+     p.add_argument("--steps", type=int, default=50)
+     p.add_argument("--image-guidance", type=float, default=1.5)
+     p.add_argument("--guidance", type=float, default=7.5)
+     p.add_argument("--device", default="cuda")
+-    p.add_argument("--mask-mode", default="none", choices=("none", "white"),
+-                   help="RefEdit's README uses None; UltraEdit's uses a blank "
+-                        "white mask for free-form. Smoke-test before committing")
++    p.add_argument("--mask-mode", default="none", choices=MASK_MODES,
++                   help="none: free-form (the completed Gate C run). white: "
++                        "blank mask, the mask-PRESENT-but-uninformative "
++                        "control. oracle: the target instance. sibling: "
++                        "positive control, should drive mis-targeting to ~100%%")
++    p.add_argument("--mask-dilate", type=int, default=8,
++                   help="FROZEN before scoring. Set it by looking at smoke-test "
++                        "output, record the value, never touch it again")
+     p.add_argument("--seed", type=int, default=0)
+     p.add_argument("--limit", type=int, default=None)
+     p.add_argument("--out", default="runs/gate_c/results.jsonl")
