@@ -292,7 +292,7 @@ def central_difference(fn, z_t, t, r, w, eps: float):
 
 
 def ref_meanflow_loss(u_fn, z_t, t, r, v_g, cfg: RefMeanFlowConfig,
-                      base_fn=None):
+                      base_fn=None, anchor_mask=None):
     """Reference `forward`, loss section.
 
     u_fn(z, t, r) -> u, closing over the conditioning. It must take (t, r) and
@@ -305,6 +305,14 @@ def ref_meanflow_loss(u_fn, z_t, t, r, v_g, cfg: RefMeanFlowConfig,
     The JVP is taken with respect to (z, t, r) with tangents (w, 1, 0), where w
     is v_g in the reference and otherwise per `cfg.tangent`. The target is
     v_g - (t - r) * du/dt in every mode.
+
+    anchor_mask: which samples are anchors, for `sse_anchor` / `sse_interval`
+    and `frac_anchor` in the returned stats. Defaults to the structural
+    inference `(t - r) < 1e-8`, which is correct for the reference sampler but
+    silently wrong under a curriculum whose anchors are not exactly r == t
+    (delta_curriculum.py's `anchor_mode="small_delta"`): every such anchor has
+    t - r > 0, so the inferred mask calls it an interval sample instead. Pass
+    the sampler's own boolean mask to avoid that.
     """
     def fn(z_, t_, r_):
         return u_fn(z_, t_, r_)
@@ -348,7 +356,7 @@ def ref_meanflow_loss(u_fn, z_t, t, r, v_g, cfg: RefMeanFlowConfig,
     loss = (per_sample / adp_wt.detach()).mean()
 
     with torch.no_grad():
-        anchor = (t - r) < 1e-8
+        anchor = (t - r) < 1e-8 if anchor_mask is None else anchor_mask
         stats = {
             "loss": float(loss),
             "sse": float(per_sample.mean()),

@@ -50,7 +50,6 @@ from transport.meanflow import (                    # noqa: E402
 )
 from transport.meanflow_ref import (                # noqa: E402
     RefMeanFlowConfig, cond_drop, guided_velocity, ref_meanflow_loss,
-    sample_tr,
 )
 from transport.sampling import sample, shifted_grid, uniform_grid  # noqa: E402
 from transport.train import (                       # noqa: E402
@@ -257,6 +256,35 @@ def cmd_train(args) -> int:
                             norm_p=args.norm_p)
     print(f"[meanflow] data_proportion = {ref.data_proportion} "
           f"(reference: 0.75)")
+
+    from delta_curriculum import (DeltaCurriculumConfig, assert_flag_arrived,
+                                  curriculum_stats, sample_tr_scheduled)
+
+    cur = DeltaCurriculumConfig(
+        enabled=args.curriculum,
+        cap_start=args.cap_start,
+        cap_end=args.cap_end,
+        warmup_frac=args.warmup_frac,
+        anchor_mode=args.anchor_mode,
+        anchor_width=args.anchor_width,
+    )
+    assert_flag_arrived(args, ref, [("data_proportion", "data_proportion")])
+    assert_flag_arrived(args, cur, [("cap_start", "cap_start"),
+                                    ("cap_end", "cap_end"),
+                                    ("warmup_frac", "warmup_frac"),
+                                    ("anchor_width", "anchor_width")])
+
+    # Dedicated RNG stream for (t, r). Without this, "small_delta" draws one
+    # extra torch.rand per step off the GLOBAL stream, so every subsequent
+    # `eps = torch.randn_like(x0)` differs from the other arms and the three
+    # runs stop being noise-matched from step 1. Keep noise on the global
+    # stream, schedule on this one.
+    tr_gen = torch.Generator(device=args.device).manual_seed(args.seed + 1)
+
+    print(f"[curriculum] enabled={cur.enabled} cap {cur.cap_start}->{cur.cap_end} "
+          f"warmup_frac={cur.warmup_frac} anchor_mode={cur.anchor_mode} "
+          f"anchor_width={cur.anchor_width}")
+    print(f"[args] {vars(args)}")
     # GUARD. Every target-shaping flag, read back from the config object the
     # loss will actually receive -- the P10 run is why this exists.
     import dataclasses
@@ -313,7 +341,8 @@ def cmd_train(args) -> int:
         npe = npe1.to(dev, mdt).expand(b, -1, -1)
         npo = npo1.to(dev, mdt).expand(b, -1)
 
-        t, r, _ = sample_tr(b, ref, dev)
+        t, r, anchor = sample_tr_scheduled(b, ref, dev, step, cfg.steps, cur,
+                                           generator=tr_gen)
         eps = torch.randn_like(x0)
         tt = t.reshape(-1, 1, 1, 1)
         z_t = (1 - tt) * x0 + tt * eps
@@ -329,7 +358,15 @@ def cmd_train(args) -> int:
         loss, stats = ref_meanflow_loss(
             lambda z_, t_, r_: model(z_, t_, r_, pe_in, po_in),
             z_t, t, r, v_g, ref,
-            base_fn=lambda z_, t_: model.base_velocity(z_, t_, pe_in, po_in))
+            base_fn=lambda z_, t_: model.base_velocity(z_, t_, pe_in, po_in),
+            anchor_mask=anchor)
+        # ref_meanflow_loss infers anchors from (t - r) < 1e-8. Under
+        # anchor_mode="small_delta" that is False for every anchor: frac_anchor
+        # reads ~0, the guard below kills the run at batch 50, and sse_anchor --
+        # the series this experiment exists to measure -- is never logged.
+        # The sampler knows which samples are anchors; use its mask.
+        stats["frac_anchor"] = float(anchor.float().mean())
+        stats.update(curriculum_stats(t, r, anchor, step, cfg.steps, cur))
         # GUARD, per batch: a cap that did not reach the sampler.
         if stats["delta_max"] > ref.max_delta + 1e-6:
             raise RuntimeError(f"delta {stats['delta_max']:.4f} exceeds "
@@ -643,6 +680,17 @@ def main() -> int:
     t.add_argument("--teacher-cfg", type=float, default=5.0)
     t.add_argument("--delta-start", type=float, default=0.05)
     t.add_argument("--delta-end", type=float, default=1.0)
+    t.add_argument("--curriculum", action="store_true",
+                   help="enable the Delta-ORDER curriculum (delta_curriculum.py). "
+                        "Off = the reference sampler, bit for bit.")
+    t.add_argument("--cap-start", type=float, default=0.05)
+    t.add_argument("--cap-end", type=float, default=0.5,
+                   help="the operating point Delta = 1/NFE, not a tuning knob. "
+                        "1.0 disables capping while leaving --anchor-mode live.")
+    t.add_argument("--warmup-frac", type=float, default=0.5)
+    t.add_argument("--anchor-mode", default="exact",
+                   choices=["exact", "small_delta"])
+    t.add_argument("--anchor-width", type=float, default=0.05)
     t.add_argument("--val-every", type=int, default=500,
                    help="steps between held-out validations; 0 disables")
     t.add_argument("--val-delta", type=float, default=0.5,
