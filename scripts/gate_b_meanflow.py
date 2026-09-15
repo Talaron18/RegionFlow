@@ -93,6 +93,14 @@ def build_adapter(model, device, rank, max_blocks=None, dtype="float32",
     return ad
 
 
+#: SD3's real context length: 77 (merged CLIP-L/CLIP-G) + 256 (T5, at the
+#: default max_sequence_length) = 333. Matches transport.data.CacheConfig's
+#: default, which precompute_cache.py's writer asserts against at cache-build
+#: time -- so a mismatch here means encode_null and the cache disagree, not
+#: that either one is wrong in isolation.
+SD3_CONTEXT_LENGTH = 333
+
+
 def encode_null(model_id, device):
     """The unconditional embedding for CFG, computed once.
 
@@ -102,6 +110,15 @@ def encode_null(model_id, device):
     deviation that changes the guidance target. Loads the encoders in
     bfloat16, encodes "", frees them; the transformer is loaded afterwards in
     float32, as in scripts/probe_field_stiffness.py.
+
+    max_sequence_length IS PINNED, not left at the pipeline default. Two
+    environments importing `diffusers` from different installs (stock vs. a
+    fork with a different default -- e.g. one pinned to a shorter T5 sequence
+    for instruction-editing speed) will tokenize the same empty string to
+    different lengths, and cond_drop's broadcast against the cached
+    prompt_embeds fails downstream with an opaque shape mismatch that gives no
+    hint it started here. Pinning removes the dependency on whichever
+    `diffusers` happens to resolve first on sys.path.
     """
     import gc
 
@@ -114,10 +131,20 @@ def encode_null(model_id, device):
     with torch.no_grad():
         pe, _, po, _ = pipe.encode_prompt(
             prompt="", prompt_2=None, prompt_3=None, device=device,
-            do_classifier_free_guidance=False)
+            do_classifier_free_guidance=False, max_sequence_length=256)
     del pipe
     gc.collect()
     torch.cuda.empty_cache()
+    if pe.shape[-2] != SD3_CONTEXT_LENGTH:
+        raise RuntimeError(
+            f"encode_null produced context length {pe.shape[-2]}, expected "
+            f"{SD3_CONTEXT_LENGTH}. The installed `diffusers` (check "
+            "`python -c 'import diffusers; print(diffusers.__file__)'`) is "
+            "not giving max_sequence_length=256 the length it asks for -- a "
+            "fork with a hardcoded T5 length would do this. The training "
+            "cache was built at context 333; regenerate it to match whatever "
+            "this environment actually produces, or fix the environment so "
+            "the two agree, before training with it.")
     return pe.float(), po.float()
 
 
