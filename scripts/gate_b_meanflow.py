@@ -111,55 +111,77 @@ def encode_null(model_id, device):
     bfloat16, encodes "", frees them; the transformer is loaded afterwards in
     float32, as in scripts/probe_field_stiffness.py.
 
-    max_sequence_length IS REQUESTED AT 256, not left at the pipeline
-    default, but ONLY IF the installed encode_prompt actually accepts that
-    parameter -- checked by introspecting its signature first, not assumed.
-    A fork's `encode_prompt` (e.g. one needed elsewhere for
-    StableDiffusion3InstructPix2PixPipeline and liable to shadow stock
-    diffusers on sys.path) can drop the parameter entirely, or control T5
-    length some other way, or both -- passing it blind either changes
-    nothing silently or raises TypeError. Either way the shape assertion
-    below is the thing that actually catches a mismatch, not the kwarg.
+    THE T5 BRANCH IS REPRODUCED BY HAND, not called through
+    pipe.encode_prompt. Confirmed by reading the actual installed source (the
+    UltraEdit-vendored diffusers==0.30.0.dev0 at
+    /data/repos/UltraEdit/diffusers, which `from diffusers import ...`
+    resolves to on this box and is liable to for any script, not just Gate
+    C's): this snapshot predates `max_sequence_length` as a T5 parameter.
+    `_get_t5_prompt_embeds` instead hardcodes
+    `max_length=self.tokenizer_max_length` -- the SAME attribute
+    `_get_clip_prompt_embeds` uses for CLIP's 77-token cap, visible in the T5
+    helper's own warning string, copy-pasted from the CLIP one: "CLIP can
+    only handle sequences up to {tokenizer_max_length} tokens", raised from
+    inside the T5 branch. Setting `pipe.tokenizer_max_length = 256` to widen
+    T5 would widen CLIP's cap along with it, past what CLIP's 77-position
+    embedding table supports.
+
+    So CLIP goes through the pipeline's own `_get_clip_prompt_embeds`,
+    untouched, exactly as `encode_prompt` calls it (two calls, one per CLIP
+    encoder, concatenated on the feature axis). T5 is tokenized and encoded
+    here directly at max_length=256, via `pipe.tokenizer_3` /
+    `pipe.text_encoder_3` -- copied verbatim from this installed version's
+    `_get_t5_prompt_embeds` (padding, truncation and dtype-cast identical),
+    with only `self.tokenizer_max_length` replaced by 256. The two are then
+    padded/concatenated exactly as `encode_prompt`'s own "prompt_embeds is
+    None" branch does. `do_classifier_free_guidance=False` in the original
+    call meant only that branch ever ran -- the CFG/negative-prompt branch
+    is not reproduced because encode_null never used it.
+
+    If this diffusers install changes again, this breaks by construction
+    (private methods, not the public API) -- which is the point: better an
+    AttributeError naming which private method moved than a silent
+    context-length mismatch two calls downstream in cond_drop.
     """
     import gc
-    import inspect
 
     import torch
+    import torch.nn.functional as tf
     from diffusers import StableDiffusion3Pipeline
 
     pipe = StableDiffusion3Pipeline.from_pretrained(
         model_id, torch_dtype=torch.bfloat16, transformer=None, vae=None,
     ).to(device)
-    encode_kwargs = dict(prompt="", prompt_2=None, prompt_3=None,
-                         device=device, do_classifier_free_guidance=False)
-    accepts_msl = "max_sequence_length" in inspect.signature(
-        pipe.encode_prompt).parameters
-    if accepts_msl:
-        encode_kwargs["max_sequence_length"] = 256
     with torch.no_grad():
-        pe, _, po, _ = pipe.encode_prompt(**encode_kwargs)
+        pe0, po0 = pipe._get_clip_prompt_embeds(
+            prompt=[""], device=device, num_images_per_prompt=1,
+            clip_skip=None, clip_model_index=0)
+        pe1, po1 = pipe._get_clip_prompt_embeds(
+            prompt=[""], device=device, num_images_per_prompt=1,
+            clip_skip=None, clip_model_index=1)
+        clip_pe = torch.cat([pe0, pe1], dim=-1)
+        po = torch.cat([po0, po1], dim=-1)
+
+        t5_in = pipe.tokenizer_3(
+            [""], padding="max_length", max_length=256, truncation=True,
+            add_special_tokens=True, return_tensors="pt")
+        t5_pe = pipe.text_encoder_3(t5_in.input_ids.to(device))[0]
+        t5_pe = t5_pe.to(dtype=pipe.text_encoder_3.dtype, device=device)
+
+        clip_pe = tf.pad(clip_pe, (0, t5_pe.shape[-1] - clip_pe.shape[-1]))
+        pe = torch.cat([clip_pe, t5_pe], dim=-2)
     del pipe
     gc.collect()
     torch.cuda.empty_cache()
     if pe.shape[-2] != SD3_CONTEXT_LENGTH:
         raise RuntimeError(
             f"encode_null produced context length {pe.shape[-2]}, expected "
-            f"{SD3_CONTEXT_LENGTH} (accepts_max_sequence_length="
-            f"{accepts_msl}). Run this and paste the output:\n"
-            "    python -c \"import diffusers, inspect; "
-            "print(diffusers.__file__, diffusers.__version__); "
-            "from diffusers import StableDiffusion3Pipeline; "
-            "print(inspect.signature(StableDiffusion3Pipeline.encode_prompt))\"\n"
-            "A fork (the UltraEdit one at /data/repos/UltraEdit/diffusers is "
-            "the known suspect on this box, needed for "
-            "StableDiffusion3InstructPix2PixPipeline in bench/run_gate_c.py "
-            "and liable to shadow stock diffusers for every script that "
-            "does `from diffusers import ...`, not just Gate C's) may "
-            "control T5 length through a differently-named parameter, a "
-            "tokenizer_3 attribute, or a hardcoded value with no override -- "
-            "the fix differs in each case. The training cache was built at "
-            "context 333; it and this environment's encode_null must agree "
-            "before training with it.")
+            f"{SD3_CONTEXT_LENGTH} even after bypassing "
+            "_get_t5_prompt_embeds. The installed diffusers must have "
+            "changed shape again -- re-read "
+            "StableDiffusion3Pipeline.encode_prompt and "
+            "._get_t5_prompt_embeds's source on this box before touching "
+            "this function further.")
     return pe.float(), po.float()
 
 

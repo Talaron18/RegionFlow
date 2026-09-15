@@ -72,7 +72,18 @@ def encode_text(pipe, text: str, device: str):
     calling with an unknown kwarg raises TypeError before any of that context
     length reasoning even applies. TripletCacheWriter.add still asserts the
     written shape against CacheConfig.context_length regardless, so a
-    mismatch this doesn't catch is caught there, at write time, per file.
+    mismatch this doesn't catch is caught there, at write time, per file --
+    a clean, immediate ValueError, unlike encode_null's old failure mode
+    (silent wrong shape, crashing two calls later inside cond_drop).
+
+    NOT YET UPGRADED to encode_null's bypass. On the one box this has
+    actually hit (diffusers==0.30.0.dev0, vendored at
+    /data/repos/UltraEdit/diffusers), `_get_t5_prompt_embeds` hardcodes T5's
+    length to the same `tokenizer_max_length` attribute CLIP uses, with no
+    parameter to override -- see encode_null's docstring for the full
+    finding and the direct tokenizer_3/text_encoder_3 workaround. If
+    rebuilding a cache ever hits the ValueError above on a box like that,
+    port that bypass here rather than re-deriving it.
     """
     import inspect
 
