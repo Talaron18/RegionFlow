@@ -61,20 +61,30 @@ def encode_image(pipe, img: np.ndarray, device: str):
 
 
 def encode_text(pipe, text: str, device: str):
-    """max_sequence_length is PINNED to 256, not left at the pipeline
+    """max_sequence_length is REQUESTED at 256, not left at the pipeline
     default -- see scripts/gate_b_meanflow.py::encode_null for why: a
     different `diffusers` install on sys.path can change that default and
     silently write a cache at a context length training's own encode_null
     does not reproduce, which then fails 40 steps into a run instead of here.
+
+    Only passed if the installed encode_prompt's signature actually accepts
+    it (checked, not assumed) -- a fork can drop the parameter entirely, and
+    calling with an unknown kwarg raises TypeError before any of that context
+    length reasoning even applies. TripletCacheWriter.add still asserts the
+    written shape against CacheConfig.context_length regardless, so a
+    mismatch this doesn't catch is caught there, at write time, per file.
     """
+    import inspect
+
     import torch
 
+    kwargs = dict(prompt=text, prompt_2=None, prompt_3=None, device=device,
+                 do_classifier_free_guidance=False)
+    if "max_sequence_length" in inspect.signature(
+            pipe.encode_prompt).parameters:
+        kwargs["max_sequence_length"] = 256
     with torch.no_grad():
-        pe, _, pooled, _ = pipe.encode_prompt(
-            prompt=text, prompt_2=None, prompt_3=None,
-            device=device, do_classifier_free_guidance=False,
-            max_sequence_length=256,
-        )
+        pe, _, pooled, _ = pipe.encode_prompt(**kwargs)
     return pe[0].float().cpu().numpy(), pooled[0].float().cpu().numpy()
 
 
