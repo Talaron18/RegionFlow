@@ -1,0 +1,200 @@
+[
+ {
+  "index": 3,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "surfboard",
+  "coco_image_id": 161814,
+  "instruction": "Change the surfboard to a guy.",
+  "instruction_single": "Change the surfboard to a guy.",
+  "shape_sim": 0.787,
+  "ncc_fit": 0.9999
+ },
+ {
+  "index": 4,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "person",
+  "coco_image_id": 194456,
+  "instruction": "Add a red shirt to the man surfing in the sea.",
+  "instruction_single": "Add a red shirt to the man.",
+  "shape_sim": 0.683,
+  "ncc_fit": 0.9999
+ },
+ {
+  "index": 9,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "stop sign",
+  "coco_image_id": 374357,
+  "instruction": "Remove the red stop sign.",
+  "instruction_single": "Remove the red stop sign.",
+  "shape_sim": 0.696,
+  "ncc_fit": 0.9999
+ },
+ {
+  "index": 21,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "umbrella",
+  "coco_image_id": 298287,
+  "instruction": "Change the color of the black umbrella to red.",
+  "instruction_single": "Change the color of the black umbrella to red.",
+  "shape_sim": 0.702,
+  "ncc_fit": 1.0
+ },
+ {
+  "index": 23,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "person",
+  "coco_image_id": 568420,
+  "instruction": "Add a red cap to the man with white T-shirt on the tennis court.",
+  "instruction_single": "Add a red cap to the man.",
+  "shape_sim": 0.695,
+  "ncc_fit": 0.9999
+ },
+ {
+  "index": 31,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "person",
+  "coco_image_id": 461222,
+  "instruction": "Remove the skateboarder in a plaid shirt performing a trick in a skate park.",
+  "instruction_single": "Remove the skateboarder.",
+  "shape_sim": 0.796,
+  "ncc_fit": 0.9999
+ },
+ {
+  "index": 40,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "person",
+  "coco_image_id": 468428,
+  "instruction": "Make the woman carrying the surfboard wear all pink.",
+  "instruction_single": "Make the woman wear all pink.",
+  "shape_sim": 0.727,
+  "ncc_fit": 0.9999
+ },
+ {
+  "index": 42,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "person",
+  "coco_image_id": 71256,
+  "instruction": "Remove the sunglasses from the man standing on the road wearing glasses.",
+  "instruction_single": "Remove the sunglasses from the man.",
+  "shape_sim": 0.814,
+  "ncc_fit": 1.0
+ },
+ {
+  "index": 54,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "person",
+  "coco_image_id": 105110,
+  "instruction": "Erase the pink frisbee the man is holding.",
+  "instruction_single": "Erase the pink frisbee the man is holding.",
+  "shape_sim": 0.855,
+  "ncc_fit": 0.9997
+ },
+ {
+  "index": 55,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "car",
+  "coco_image_id": 146857,
+  "instruction": "Change the small square green & silver car at the curb to a minicooper.",
+  "instruction_single": "Change the car to a minicooper.",
+  "shape_sim": 0.787,
+  "ncc_fit": 0.9999
+ },
+ {
+  "index": 58,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "person",
+  "coco_image_id": 85455,
+  "instruction": "Make the woman in a bathing suit surfing a wave on a yellow surf board wear a red bathing suit.",
+  "instruction_single": "Make the woman wear a red bathing suit.",
+  "shape_sim": 0.718,
+  "ncc_fit": 0.9998
+ },
+ {
+  "index": 63,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "stop sign",
+  "coco_image_id": 117961,
+  "instruction": "Remove the stop sign stationed at a four-way crossing.",
+  "instruction_single": "Remove the stop sign.",
+  "shape_sim": 0.718,
+  "ncc_fit": 1.0
+ },
+ {
+  "index": 65,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "horse",
+  "coco_image_id": 71441,
+  "instruction": "Add a party hat to the horse closest to the picture.",
+  "instruction_single": "Add a party hat to the horse.",
+  "shape_sim": 0.684,
+  "ncc_fit": 0.9999
+ },
+ {
+  "index": 80,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "person",
+  "coco_image_id": 400729,
+  "instruction": "Remove the man in a yellow shirt.",
+  "instruction_single": "Remove the man.",
+  "shape_sim": 0.664,
+  "ncc_fit": 0.9999
+ },
+ {
+  "index": 82,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "person",
+  "coco_image_id": 349208,
+  "instruction": "Add a water bottle to the surfer with the black wetsuit.",
+  "instruction_single": "Add a water bottle to the surfer.",
+  "shape_sim": 0.695,
+  "ncc_fit": 0.9999
+ },
+ {
+  "index": 87,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "person",
+  "coco_image_id": 57697,
+  "instruction": "Add a backpack to the woman posing for the picture.",
+  "instruction_single": "Add a backpack to the woman.",
+  "shape_sim": 0.671,
+  "ncc_fit": 1.0
+ },
+ {
+  "index": 92,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "person",
+  "coco_image_id": 430175,
+  "instruction": "Turn the man wearing surfing suit and holding surfboard into a silver statue.",
+  "instruction_single": "Turn the man into a silver statue.",
+  "shape_sim": 0.765,
+  "ncc_fit": 0.9999
+ },
+ {
+  "index": 99,
+  "reason": "no same-category sibling above the area floor",
+  "difficulty": "easy",
+  "recovered_category": "bench",
+  "coco_image_id": 450314,
+  "instruction": "Add a cat lying on the bench with lovely design on the beach.",
+  "instruction_single": "Add a cat on the beach.",
+  "shape_sim": 0.75,
+  "ncc_fit": 1.0
+ }
+]

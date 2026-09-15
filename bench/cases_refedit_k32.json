@@ -1,0 +1,196 @@
+{
+ "source": "RefEdit-Bench x COCO",
+ "n": 4,
+ "rejected": {
+  "no candidate registered": 10,
+  "recovered category absent from instruction": 5,
+  "no same-category sibling above the area floor": 1
+ },
+ "selection": {
+  "min_confirm_ncc": 0.95,
+  "min_mask_agree": 0.4,
+  "min_area_frac": 0.005,
+  "topk": 32
+ },
+ "cases": [
+  {
+   "id": "refedit-1",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Remove the giraffe right next to the lady holding a carrot.",
+   "instruction_single": "Remove the giraffe.",
+   "category": "giraffe",
+   "coco_image_id": 194161,
+   "target_id": "598665",
+   "instances": [
+    {
+     "id": "598665",
+     "category": "giraffe",
+     "mask_ref": "598665"
+    },
+    {
+     "id": "598779",
+     "category": "giraffe",
+     "mask_ref": "598779"
+    },
+    {
+     "id": "471520",
+     "category": "person",
+     "mask_ref": "471520"
+    }
+   ],
+   "n_siblings": 1,
+   "shape_sim": 0.8233,
+   "ncc_fit": 0.9999,
+   "mask_agreement": 0.4689,
+   "rect": [
+    0.0,
+    0.0,
+    375.0,
+    500.0
+   ],
+   "coco_hw": [
+    500,
+    375
+   ]
+  },
+  {
+   "id": "refedit-12",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Can the sandal colour teddy bear in between the other two teddys be a white teddy bear.",
+   "instruction_single": "Can the sandal color teddy bear be a white teddy bear.",
+   "category": "teddy bear",
+   "coco_image_id": 452783,
+   "target_id": "1996319",
+   "instances": [
+    {
+     "id": "1996319",
+     "category": "teddy bear",
+     "mask_ref": "1996319"
+    },
+    {
+     "id": "1161920",
+     "category": "teddy bear",
+     "mask_ref": "1161920"
+    },
+    {
+     "id": "1996132",
+     "category": "teddy bear",
+     "mask_ref": "1996132"
+    }
+   ],
+   "n_siblings": 2,
+   "shape_sim": 0.7784,
+   "ncc_fit": 0.9999,
+   "mask_agreement": 0.8462,
+   "rect": [
+    0.0,
+    0.0,
+    640.0,
+    422.5
+   ],
+   "coco_hw": [
+    424,
+    640
+   ]
+  },
+  {
+   "id": "refedit-14",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Remove the word Autism written on the white horse's back end.",
+   "instruction_single": "Remove the word Autism written on the white horse's back end.",
+   "category": "horse",
+   "coco_image_id": 287903,
+   "target_id": "55419",
+   "instances": [
+    {
+     "id": "55419",
+     "category": "horse",
+     "mask_ref": "55419"
+    },
+    {
+     "id": "56089",
+     "category": "horse",
+     "mask_ref": "56089"
+    },
+    {
+     "id": "132068",
+     "category": "car",
+     "mask_ref": "132068"
+    },
+    {
+     "id": "136504",
+     "category": "car",
+     "mask_ref": "136504"
+    },
+    {
+     "id": "141930",
+     "category": "car",
+     "mask_ref": "141930"
+    },
+    {
+     "id": "192659",
+     "category": "person",
+     "mask_ref": "192659"
+    },
+    {
+     "id": "214587",
+     "category": "person",
+     "mask_ref": "214587"
+    }
+   ],
+   "n_siblings": 1,
+   "shape_sim": 0.7879,
+   "ncc_fit": 0.9999,
+   "mask_agreement": 0.7565,
+   "rect": [
+    0.0,
+    0.0,
+    640.0,
+    640.0
+   ],
+   "coco_hw": [
+    640,
+    640
+   ]
+  },
+  {
+   "id": "refedit-17",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Replace the zebra with a cow.",
+   "instruction_single": "Replace the zebra with a cow.",
+   "category": "zebra",
+   "coco_image_id": 12756,
+   "target_id": "591191",
+   "instances": [
+    {
+     "id": "591191",
+     "category": "zebra",
+     "mask_ref": "591191"
+    },
+    {
+     "id": "2070513",
+     "category": "zebra",
+     "mask_ref": "2070513"
+    }
+   ],
+   "n_siblings": 1,
+   "shape_sim": 0.7843,
+   "ncc_fit": 0.9999,
+   "mask_agreement": 0.8383,
+   "rect": [
+    0.0,
+    0.0,
+    425.0,
+    640.0
+   ],
+   "coco_hw": [
+    640,
+    427
+   ]
+  }
+ ]
+}

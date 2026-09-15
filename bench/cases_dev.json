@@ -1,0 +1,545 @@
+{
+ "split": "dev",
+ "n": 9,
+ "rejected": {
+  "instruction names no multi-instance category": 93,
+  "edit region contains no instance": 24,
+  "no category with >=2 instances above area floor": 124,
+  "edit region spans several same-category instances": 16,
+  "_ambiguous instruction (resolved by mask)": 1
+ },
+ "selection": {
+  "min_area_frac": 0.005,
+  "min_siblings": 1,
+  "min_target_iou": 0.3
+ },
+ "cases": [
+  {
+   "id": "mb-17320",
+   "image_path": "magicbrush::17320",
+   "instruction": "change the green ball to blue",
+   "category": "sports ball",
+   "target_id": "300336",
+   "instances": [
+    {
+     "id": "10514",
+     "category": "dog",
+     "mask_ref": "10514"
+    },
+    {
+     "id": "300336",
+     "category": "sports ball",
+     "mask_ref": "300336"
+    },
+    {
+     "id": "304775",
+     "category": "sports ball",
+     "mask_ref": "304775"
+    },
+    {
+     "id": "306131",
+     "category": "sports ball",
+     "mask_ref": "306131"
+    }
+   ],
+   "n_siblings": 2,
+   "coco_image_id": 17320,
+   "geometry": "fitted_rect",
+   "rect": [
+    0.0,
+    0.0,
+    425.0,
+    425.0
+   ],
+   "edit_hw": [
+    1024,
+    1024
+   ],
+   "coco_hw": [
+    427,
+    640
+   ],
+   "coverage": 0.9907,
+   "sibling_coverage": 0.0,
+   "margin": 0.9907,
+   "precision": 0.8673,
+   "target_iou": 0.8602,
+   "ncc_fit": 0.9997,
+   "n_covered": 1
+  },
+  {
+   "id": "mb-147546",
+   "image_path": "magicbrush::147546",
+   "instruction": "remove bananas and add grapes",
+   "category": "banana",
+   "target_id": "1545647",
+   "instances": [
+    {
+     "id": "1542484",
+     "category": "banana",
+     "mask_ref": "1542484"
+    },
+    {
+     "id": "1545647",
+     "category": "banana",
+     "mask_ref": "1545647"
+    },
+    {
+     "id": "1547325",
+     "category": "banana",
+     "mask_ref": "1547325"
+    },
+    {
+     "id": "1912879",
+     "category": "orange",
+     "mask_ref": "1912879"
+    }
+   ],
+   "n_siblings": 2,
+   "coco_image_id": 147546,
+   "geometry": "fitted_rect",
+   "rect": [
+    160.0,
+    0.0,
+    480.0,
+    480.0
+   ],
+   "edit_hw": [
+    1024,
+    1024
+   ],
+   "coco_hw": [
+    480,
+    640
+   ],
+   "coverage": 1.0,
+   "sibling_coverage": 0.0,
+   "margin": 1.0,
+   "precision": 0.0362,
+   "target_iou": 0.0362,
+   "ncc_fit": 0.9999,
+   "n_covered": 1
+  },
+  {
+   "id": "mb-142400",
+   "image_path": "magicbrush::142400",
+   "instruction": "Make it a slice of pizza instead of the sandwich.",
+   "category": "sandwich",
+   "target_id": "308169",
+   "instances": [
+    {
+     "id": "308169",
+     "category": "sandwich",
+     "mask_ref": "308169"
+    },
+    {
+     "id": "1553145",
+     "category": "sandwich",
+     "mask_ref": "1553145"
+    },
+    {
+     "id": "1553631",
+     "category": "sandwich",
+     "mask_ref": "1553631"
+    },
+    {
+     "id": "1047712",
+     "category": "apple",
+     "mask_ref": "1047712"
+    },
+    {
+     "id": "1047939",
+     "category": "apple",
+     "mask_ref": "1047939"
+    },
+    {
+     "id": "1052231",
+     "category": "orange",
+     "mask_ref": "1052231"
+    },
+    {
+     "id": "1053893",
+     "category": "orange",
+     "mask_ref": "1053893"
+    },
+    {
+     "id": "1960081",
+     "category": "dining table",
+     "mask_ref": "1960081"
+    }
+   ],
+   "n_siblings": 2,
+   "coco_image_id": 142400,
+   "geometry": "fitted_rect",
+   "rect": [
+    0.0,
+    0.0,
+    480.0,
+    480.0
+   ],
+   "edit_hw": [
+    1024,
+    1024
+   ],
+   "coco_hw": [
+    480,
+    640
+   ],
+   "coverage": 0.9542,
+   "sibling_coverage": 0.0,
+   "margin": 0.9542,
+   "precision": 0.9265,
+   "target_iou": 0.8871,
+   "ncc_fit": 0.9999,
+   "n_covered": 1
+  },
+  {
+   "id": "mb-519172",
+   "image_path": "magicbrush::519172",
+   "instruction": "Can it be just a woman and a child?",
+   "category": "person",
+   "target_id": "1216872",
+   "instances": [
+    {
+     "id": "537018",
+     "category": "person",
+     "mask_ref": "537018"
+    },
+    {
+     "id": "540648",
+     "category": "person",
+     "mask_ref": "540648"
+    },
+    {
+     "id": "1216872",
+     "category": "person",
+     "mask_ref": "1216872"
+    },
+    {
+     "id": "1855779",
+     "category": "kite",
+     "mask_ref": "1855779"
+    }
+   ],
+   "n_siblings": 2,
+   "coco_image_id": 519172,
+   "geometry": "fitted_rect",
+   "rect": [
+    0.0,
+    222.5,
+    417.5,
+    417.5
+   ],
+   "edit_hw": [
+    1024,
+    1024
+   ],
+   "coco_hw": [
+    640,
+    418
+   ],
+   "coverage": 1.0,
+   "sibling_coverage": 0.0,
+   "margin": 1.0,
+   "precision": 0.2276,
+   "target_iou": 0.2276,
+   "ncc_fit": 0.9999,
+   "n_covered": 1
+  },
+  {
+   "id": "mb-403265",
+   "image_path": "magicbrush::403265",
+   "instruction": "let the baseball glove be red",
+   "category": "baseball glove",
+   "target_id": "634136",
+   "instances": [
+    {
+     "id": "634136",
+     "category": "baseball glove",
+     "mask_ref": "634136"
+    },
+    {
+     "id": "1858759",
+     "category": "baseball glove",
+     "mask_ref": "1858759"
+    }
+   ],
+   "n_siblings": 1,
+   "coco_image_id": 403265,
+   "geometry": "fitted_rect",
+   "rect": [
+    127.97,
+    0.0,
+    425.0,
+    425.0
+   ],
+   "edit_hw": [
+    1024,
+    1024
+   ],
+   "coco_hw": [
+    427,
+    640
+   ],
+   "coverage": 0.9762,
+   "sibling_coverage": 0.0675,
+   "margin": 0.9086,
+   "precision": 0.824,
+   "target_iou": 0.8078,
+   "ncc_fit": 0.9999,
+   "n_covered": 1
+  },
+  {
+   "id": "mb-205344",
+   "image_path": "magicbrush::205344",
+   "instruction": "let the kid sleep",
+   "category": "person",
+   "target_id": "1715000",
+   "instances": [
+    {
+     "id": "1576",
+     "category": "dog",
+     "mask_ref": "1576"
+    },
+    {
+     "id": "103068",
+     "category": "chair",
+     "mask_ref": "103068"
+    },
+    {
+     "id": "290763",
+     "category": "couch",
+     "mask_ref": "290763"
+    },
+    {
+     "id": "1604582",
+     "category": "couch",
+     "mask_ref": "1604582"
+    },
+    {
+     "id": "314353",
+     "category": "bed",
+     "mask_ref": "314353"
+    },
+    {
+     "id": "1715000",
+     "category": "person",
+     "mask_ref": "1715000"
+    },
+    {
+     "id": "1743775",
+     "category": "person",
+     "mask_ref": "1743775"
+    }
+   ],
+   "n_siblings": 1,
+   "coco_image_id": 205344,
+   "geometry": "fitted_rect",
+   "rect": [
+    118.4,
+    0.0,
+    476.8,
+    480.0
+   ],
+   "edit_hw": [
+    1024,
+    1024
+   ],
+   "coco_hw": [
+    480,
+    640
+   ],
+   "coverage": 0.7509,
+   "sibling_coverage": 0.0017,
+   "margin": 0.7493,
+   "precision": 0.4629,
+   "target_iou": 0.4013,
+   "ncc_fit": 0.9996,
+   "n_covered": 1
+  },
+  {
+   "id": "mb-311326",
+   "image_path": "magicbrush::311326",
+   "instruction": "Let the blood orange be swapped with an apple.",
+   "category": "orange",
+   "target_id": "1050617",
+   "instances": [
+    {
+     "id": "1050617",
+     "category": "orange",
+     "mask_ref": "1050617"
+    },
+    {
+     "id": "1051992",
+     "category": "orange",
+     "mask_ref": "1051992"
+    },
+    {
+     "id": "1052882",
+     "category": "orange",
+     "mask_ref": "1052882"
+    },
+    {
+     "id": "1053061",
+     "category": "orange",
+     "mask_ref": "1053061"
+    },
+    {
+     "id": "1555818",
+     "category": "orange",
+     "mask_ref": "1555818"
+    },
+    {
+     "id": "1557236",
+     "category": "orange",
+     "mask_ref": "1557236"
+    },
+    {
+     "id": "1558165",
+     "category": "orange",
+     "mask_ref": "1558165"
+    },
+    {
+     "id": "1558975",
+     "category": "orange",
+     "mask_ref": "1558975"
+    },
+    {
+     "id": "1911707",
+     "category": "orange",
+     "mask_ref": "1911707"
+    },
+    {
+     "id": "1912240",
+     "category": "orange",
+     "mask_ref": "1912240"
+    },
+    {
+     "id": "1912975",
+     "category": "orange",
+     "mask_ref": "1912975"
+    },
+    {
+     "id": "1913298",
+     "category": "orange",
+     "mask_ref": "1913298"
+    },
+    {
+     "id": "2113782",
+     "category": "orange",
+     "mask_ref": "2113782"
+    }
+   ],
+   "n_siblings": 12,
+   "coco_image_id": 311326,
+   "geometry": "fitted_rect",
+   "rect": [
+    0.0,
+    0.0,
+    612.0,
+    612.0
+   ],
+   "edit_hw": [
+    1024,
+    1024
+   ],
+   "coco_hw": [
+    612,
+    612
+   ],
+   "coverage": 0.9989,
+   "sibling_coverage": 0.0222,
+   "margin": 0.9767,
+   "precision": 0.9168,
+   "target_iou": 0.9159,
+   "ncc_fit": 0.9999,
+   "n_covered": 1
+  },
+  {
+   "id": "mb-357903",
+   "image_path": "magicbrush::357903",
+   "instruction": "Remove one of the pizzas.",
+   "category": "pizza",
+   "target_id": "1075550",
+   "instances": [
+    {
+     "id": "1073910",
+     "category": "pizza",
+     "mask_ref": "1073910"
+    },
+    {
+     "id": "1075550",
+     "category": "pizza",
+     "mask_ref": "1075550"
+    }
+   ],
+   "n_siblings": 1,
+   "coco_image_id": 357903,
+   "geometry": "fitted_rect",
+   "rect": [
+    0.0,
+    0.0,
+    480.0,
+    480.0
+   ],
+   "edit_hw": [
+    1024,
+    1024
+   ],
+   "coco_hw": [
+    640,
+    480
+   ],
+   "coverage": 0.9986,
+   "sibling_coverage": 0.0,
+   "margin": 0.9986,
+   "precision": 0.747,
+   "target_iou": 0.7462,
+   "ncc_fit": 0.9997,
+   "n_covered": 1
+  },
+  {
+   "id": "mb-206622",
+   "image_path": "magicbrush::206622",
+   "instruction": "Remove the car.",
+   "category": "car",
+   "target_id": "354272",
+   "instances": [
+    {
+     "id": "354272",
+     "category": "car",
+     "mask_ref": "354272"
+    },
+    {
+     "id": "358437",
+     "category": "car",
+     "mask_ref": "358437"
+    }
+   ],
+   "n_siblings": 1,
+   "coco_image_id": 206622,
+   "geometry": "fitted_rect",
+   "rect": [
+    65.95,
+    0.0,
+    433.2,
+    430.0
+   ],
+   "edit_hw": [
+    1024,
+    1024
+   ],
+   "coco_hw": [
+    432,
+    640
+   ],
+   "coverage": 0.9972,
+   "sibling_coverage": 0.0,
+   "margin": 0.9972,
+   "precision": 0.5372,
+   "target_iou": 0.5364,
+   "ncc_fit": 0.9999,
+   "n_covered": 1
+  }
+ ]
+}

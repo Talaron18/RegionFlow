@@ -134,7 +134,31 @@ def correction_metrics(c_model: torch.Tensor, c_true: torch.Tensor) -> dict:
         "corr_err_best": float((1 - cos ** 2).mean()),
         "corr_ratio": float((cm.norm(dim=1) / nt2.sqrt()).mean()),
     }
+    
+def scaling_metrics(u_hat, u_true, ref, e_base, a_applied=None) -> dict:
+    """Ceiling and cost of fixing the model by rescaling its correction.
 
+    u(a) = ref + a * (u_hat - ref). a=1 is the model; with ref=v_inst,
+    a=0 is the frozen-field baseline, so vs_base_at_a_opt lands on the same
+    axis as vs_base.
+
+    a_opt minimises the SUMMED sse over the batch -- the quantity e_model
+    reports -- not the mean of per-sample optima, which is a different and
+    unachievable number. Dots in float64: ~1e6-element reductions, and
+    float32 loses the tail.
+    """
+    cm = (u_hat - ref).flatten(1).double()
+    ct = (u_true - ref).flatten(1).double()
+    a_opt = float((cm * ct).sum()) / max(float(cm.pow(2).sum()), 1e-24)
+    e_opt = float(sse(ref + a_opt * (u_hat - ref), u_true).mean())
+    out = {"a_opt": a_opt, "sse_model_at_a_opt": e_opt,
+           "vs_base_at_a_opt": e_opt / max(e_base, 1e-12)}
+    if a_applied is not None:
+        e_a = float(sse(ref + a_applied * (u_hat - ref), u_true).mean())
+        out.update({"a_applied": a_applied, "sse_model_scaled": e_a,
+                    "vs_base_scaled": e_a / max(e_base, 1e-12),
+                    "excess_over_base_scaled": e_a - e_base})
+    return out
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -153,7 +177,17 @@ def main() -> int:
     ap.add_argument("--model",
                     default="stabilityai/stable-diffusion-3-medium-diffusers")
     ap.add_argument("--out", default="runs/interval_field.json")
+    ap.add_argument("--corr-scale", default=None,
+                    help="python expr in tc/t/d giving the scale applied to "
+                         "the model's correction, e.g. '0.62' or '0.37/tc'. "
+                         "Trusted input: eval'd with empty builtins.")
+    ap.add_argument("--corr-ref", choices=("v_inst", "model_r0"),
+                    default="v_inst",
+                    help="origin the correction is rescaled about. v_inst "
+                         "makes a=0 the frozen-field baseline.")
     args = ap.parse_args()
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
 
     from diffusers import SD3Transformer2DModel
 
@@ -257,6 +291,26 @@ def main() -> int:
                 (u_hat - u_hat_r0).flatten(1), (u_true - v_inst).flatten(1),
                 dim=1)
             cm = correction_metrics(u_hat - u_hat_r0, u_true - v_inst)
+            # --- rescale ceiling ------------------------------------------
+            # Two references answer different questions. v_inst: a=0 is the
+            # baseline, so this is the ceiling of the whole a(t) programme --
+            # and it also absorbs the r-independent drift (u_hat_r0 - v_inst),
+            # the thing that shows up as positive excess at Delta=0.05.
+            # model_r0 rescales only the learned r-dependence and leaves that
+            # drift in place. If the two a_opt disagree, the drift is doing
+            # real damage and no single scale fixes both.
+            a_app = None
+            if args.corr_scale is not None:
+                a_app = float(eval(args.corr_scale, {"__builtins__": {}},
+                                   {"tc": args.t_center,
+                                    "t": args.t_center + d / 2, "d": d}))
+            with torch.no_grad():
+                ref = v_inst if args.corr_ref == "v_inst" else u_hat_r0
+                alt = u_hat_r0 if args.corr_ref == "v_inst" else v_inst
+                sm = scaling_metrics(u_hat, u_true, ref, e_base, a_app)
+                sm["corr_ref"] = args.corr_ref
+                sm["a_opt_alt_ref"] = scaling_metrics(
+                    u_hat, u_true, alt, e_base)["a_opt"]
             rows.append({
                 "delta": d, "sse_model": e_model, "sse_zero": e_zero,
                 "sse_base_instantaneous": e_base,
@@ -269,7 +323,7 @@ def main() -> int:
                 "D_r_model": dr_model,
                 "D_r_ratio": dr_model / max(dr_true, 1e-12),
                 "cos_correction": float(corr.mean()),
-                **cm,
+                **cm,**sm
             })
             rr = rows[-1]
             print(f"  d={d:<5} model {e_model:>10.4g}  base {e_base:>10.4g}"
@@ -279,7 +333,9 @@ def main() -> int:
                   f"{100*rr['D_r_true']:>5.1f}%"
                   f"  cos {rr['cos_correction']:>+6.3f}"
                   f"  corr_err {rr['corr_err']:>6.3f}"
-                  f" (best@cos {rr['corr_err_best']:>6.3f})")
+                  f" (best@cos {rr['corr_err_best']:>6.3f})"
+                  f"  a_opt {rr['a_opt']:>5.2f}"
+                  f" -> m/b {rr['vs_base_at_a_opt']:>6.3f}")
 
         results[name] = {"step": sd.get("step"),
                          "interval_kind": adapter.cfg.interval_kind,
@@ -327,7 +383,15 @@ def main() -> int:
     for name, res in results.items():
         print(f"{name:<30}" + "".join(f"{r['corr_err_best']:>10.3f}"
                                       for r in res["rows"]))
-
+    print(f"\nbest model/base reachable by rescaling about "
+        f"{args.corr_ref} (and the scale that does it):")
+    for name, res in results.items():
+        print(f"{name:<30}" + "".join(f"{r['vs_base_at_a_opt']:>10.3f}"
+                                      for r in res["rows"]))
+        print(f"{'  a_opt':<30}" + "".join(f"{r['a_opt']:>10.2f}"
+                                           for r in res["rows"]))
+        print(f"{'  a_opt (other ref)':<30}"
+              + "".join(f"{r['a_opt_alt_ref']:>10.2f}" for r in res["rows"]))
     print("\n--- excess over base: sse_model - sse_base ---")
     print("A value that is CONSTANT across Delta means the adapter added a")
     print("Delta-INDEPENDENT perturbation and learned nothing about intervals.")

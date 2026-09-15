@@ -1,0 +1,553 @@
+{
+ "source": "RefEdit-Bench x COCO",
+ "n": 11,
+ "rejected": {
+  "no candidate registered": 2,
+  "recovered category absent from instruction": 4,
+  "no same-category sibling above the area floor": 3
+ },
+ "selection": {
+  "min_confirm_ncc": 0.95,
+  "min_mask_agree": 0.4,
+  "min_area_frac": 0.005,
+  "topk": 8
+ },
+ "cases": [
+  {
+   "id": "refedit-0",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Change the color of the boat with bicycles and people to white.",
+   "instruction_single": "Change the color of the boat to white.",
+   "category": "boat",
+   "coco_image_id": 555631,
+   "target_id": "175806",
+   "instances": [
+    {
+     "id": "175806",
+     "category": "boat",
+     "mask_ref": "175806"
+    },
+    {
+     "id": "250673",
+     "category": "boat",
+     "mask_ref": "250673"
+    },
+    {
+     "id": "124720",
+     "category": "bicycle",
+     "mask_ref": "124720"
+    },
+    {
+     "id": "201717",
+     "category": "person",
+     "mask_ref": "201717"
+    },
+    {
+     "id": "208004",
+     "category": "person",
+     "mask_ref": "208004"
+    },
+    {
+     "id": "226044",
+     "category": "person",
+     "mask_ref": "226044"
+    }
+   ],
+   "n_siblings": 1,
+   "shape_sim": 0.7219,
+   "ncc_fit": 0.9999,
+   "mask_agreement": 0.6717,
+   "rect": [
+    0.0,
+    0.0,
+    640.0,
+    425.0
+   ],
+   "coco_hw": [
+    427,
+    640
+   ]
+  },
+  {
+   "id": "refedit-5",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Remove the woman in a black shirt holding pizza.",
+   "instruction_single": "Remove the woman.",
+   "category": "person",
+   "coco_image_id": 289662,
+   "target_id": "1732320",
+   "instances": [
+    {
+     "id": "1732320",
+     "category": "person",
+     "mask_ref": "1732320"
+    },
+    {
+     "id": "431535",
+     "category": "person",
+     "mask_ref": "431535"
+    },
+    {
+     "id": "381751",
+     "category": "chair",
+     "mask_ref": "381751"
+    },
+    {
+     "id": "386301",
+     "category": "chair",
+     "mask_ref": "386301"
+    },
+    {
+     "id": "684315",
+     "category": "cup",
+     "mask_ref": "684315"
+    },
+    {
+     "id": "1076563",
+     "category": "pizza",
+     "mask_ref": "1076563"
+    },
+    {
+     "id": "1091027",
+     "category": "dining table",
+     "mask_ref": "1091027"
+    },
+    {
+     "id": "1142697",
+     "category": "book",
+     "mask_ref": "1142697"
+    }
+   ],
+   "n_siblings": 1,
+   "shape_sim": 0.7105,
+   "ncc_fit": 0.9999,
+   "mask_agreement": 0.7065,
+   "rect": [
+    0.0,
+    0.0,
+    640.0,
+    480.0
+   ],
+   "coco_hw": [
+    480,
+    640
+   ]
+  },
+  {
+   "id": "refedit-6",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Change the truck to black.",
+   "instruction_single": "Change the truck to black.",
+   "category": "truck",
+   "coco_image_id": 267762,
+   "target_id": "398600",
+   "instances": [
+    {
+     "id": "398600",
+     "category": "truck",
+     "mask_ref": "398600"
+    },
+    {
+     "id": "1368514",
+     "category": "truck",
+     "mask_ref": "1368514"
+    }
+   ],
+   "n_siblings": 1,
+   "shape_sim": 0.8286,
+   "ncc_fit": 0.9995,
+   "mask_agreement": 0.897,
+   "rect": [
+    0.0,
+    0.0,
+    640.0,
+    480.0
+   ],
+   "coco_hw": [
+    480,
+    640
+   ]
+  },
+  {
+   "id": "refedit-7",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Let the man with longer curly hair, wearing a loose tie be a woman.",
+   "instruction_single": "Let the man be a woman.",
+   "category": "person",
+   "coco_image_id": 175798,
+   "target_id": "511964",
+   "instances": [
+    {
+     "id": "511964",
+     "category": "person",
+     "mask_ref": "511964"
+    },
+    {
+     "id": "520653",
+     "category": "person",
+     "mask_ref": "520653"
+    },
+    {
+     "id": "524711",
+     "category": "person",
+     "mask_ref": "524711"
+    },
+    {
+     "id": "1726483",
+     "category": "person",
+     "mask_ref": "1726483"
+    },
+    {
+     "id": "296510",
+     "category": "tie",
+     "mask_ref": "296510"
+    },
+    {
+     "id": "1167970",
+     "category": "backpack",
+     "mask_ref": "1167970"
+    }
+   ],
+   "n_siblings": 3,
+   "shape_sim": 0.9141,
+   "ncc_fit": 1.0,
+   "mask_agreement": 0.8922,
+   "rect": [
+    0.0,
+    0.0,
+    640.0,
+    425.0
+   ],
+   "coco_hw": [
+    427,
+    640
+   ]
+  },
+  {
+   "id": "refedit-11",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Change the airplane ascending into the sky to descending into the airport.",
+   "instruction_single": "Change the airplane ascending into the sky to descending into the airport.",
+   "category": "airplane",
+   "coco_image_id": 72728,
+   "target_id": "158482",
+   "instances": [
+    {
+     "id": "158482",
+     "category": "airplane",
+     "mask_ref": "158482"
+    },
+    {
+     "id": "1363568",
+     "category": "airplane",
+     "mask_ref": "1363568"
+    }
+   ],
+   "n_siblings": 1,
+   "shape_sim": 0.747,
+   "ncc_fit": 0.9998,
+   "mask_agreement": 0.7278,
+   "rect": [
+    0.0,
+    0.0,
+    640.0,
+    425.0
+   ],
+   "coco_hw": [
+    425,
+    640
+   ]
+  },
+  {
+   "id": "refedit-12",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Can the sandal colour teddy bear in between the other two teddys be a white teddy bear.",
+   "instruction_single": "Can the sandal color teddy bear be a white teddy bear.",
+   "category": "teddy bear",
+   "coco_image_id": 452783,
+   "target_id": "1996319",
+   "instances": [
+    {
+     "id": "1996319",
+     "category": "teddy bear",
+     "mask_ref": "1996319"
+    },
+    {
+     "id": "1161920",
+     "category": "teddy bear",
+     "mask_ref": "1161920"
+    },
+    {
+     "id": "1996132",
+     "category": "teddy bear",
+     "mask_ref": "1996132"
+    }
+   ],
+   "n_siblings": 2,
+   "shape_sim": 0.7784,
+   "ncc_fit": 0.9999,
+   "mask_agreement": 0.8462,
+   "rect": [
+    0.0,
+    0.0,
+    640.0,
+    422.5
+   ],
+   "coco_hw": [
+    424,
+    640
+   ]
+  },
+  {
+   "id": "refedit-13",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Change the young boy to a young girl.",
+   "instruction_single": "Change the young boy to a young girl.",
+   "category": "person",
+   "coco_image_id": 38850,
+   "target_id": "442348",
+   "instances": [
+    {
+     "id": "442348",
+     "category": "person",
+     "mask_ref": "442348"
+    },
+    {
+     "id": "427623",
+     "category": "person",
+     "mask_ref": "427623"
+    },
+    {
+     "id": "1744816",
+     "category": "person",
+     "mask_ref": "1744816"
+    },
+    {
+     "id": "640782",
+     "category": "skateboard",
+     "mask_ref": "640782"
+    }
+   ],
+   "n_siblings": 2,
+   "shape_sim": 0.7974,
+   "ncc_fit": 0.9999,
+   "mask_agreement": 0.6916,
+   "rect": [
+    0.0,
+    0.0,
+    640.0,
+    425.0
+   ],
+   "coco_hw": [
+    426,
+    640
+   ]
+  },
+  {
+   "id": "refedit-14",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Remove the word Autism written on the white horse's back end.",
+   "instruction_single": "Remove the word Autism written on the white horse's back end.",
+   "category": "horse",
+   "coco_image_id": 287903,
+   "target_id": "55419",
+   "instances": [
+    {
+     "id": "55419",
+     "category": "horse",
+     "mask_ref": "55419"
+    },
+    {
+     "id": "56089",
+     "category": "horse",
+     "mask_ref": "56089"
+    },
+    {
+     "id": "132068",
+     "category": "car",
+     "mask_ref": "132068"
+    },
+    {
+     "id": "136504",
+     "category": "car",
+     "mask_ref": "136504"
+    },
+    {
+     "id": "141930",
+     "category": "car",
+     "mask_ref": "141930"
+    },
+    {
+     "id": "192659",
+     "category": "person",
+     "mask_ref": "192659"
+    },
+    {
+     "id": "214587",
+     "category": "person",
+     "mask_ref": "214587"
+    }
+   ],
+   "n_siblings": 1,
+   "shape_sim": 0.7879,
+   "ncc_fit": 0.9999,
+   "mask_agreement": 0.7565,
+   "rect": [
+    0.0,
+    0.0,
+    640.0,
+    640.0
+   ],
+   "coco_hw": [
+    640,
+    640
+   ]
+  },
+  {
+   "id": "refedit-16",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Add a thick gold chain to the lady in white shirt talking on cell phone.",
+   "instruction_single": "Add a thick gold chain to the lady.",
+   "category": "person",
+   "coco_image_id": 190796,
+   "target_id": "428775",
+   "instances": [
+    {
+     "id": "428775",
+     "category": "person",
+     "mask_ref": "428775"
+    },
+    {
+     "id": "2157943",
+     "category": "person",
+     "mask_ref": "2157943"
+    },
+    {
+     "id": "2165374",
+     "category": "person",
+     "mask_ref": "2165374"
+    },
+    {
+     "id": "2167099",
+     "category": "person",
+     "mask_ref": "2167099"
+    }
+   ],
+   "n_siblings": 3,
+   "shape_sim": 0.8947,
+   "ncc_fit": 1.0,
+   "mask_agreement": 0.9327,
+   "rect": [
+    0.0,
+    0.0,
+    295.24,
+    442.0
+   ],
+   "coco_hw": [
+    442,
+    296
+   ]
+  },
+  {
+   "id": "refedit-17",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Replace the zebra with a cow.",
+   "instruction_single": "Replace the zebra with a cow.",
+   "category": "zebra",
+   "coco_image_id": 12756,
+   "target_id": "591191",
+   "instances": [
+    {
+     "id": "591191",
+     "category": "zebra",
+     "mask_ref": "591191"
+    },
+    {
+     "id": "2070513",
+     "category": "zebra",
+     "mask_ref": "2070513"
+    }
+   ],
+   "n_siblings": 1,
+   "shape_sim": 0.7843,
+   "ncc_fit": 0.9999,
+   "mask_agreement": 0.8383,
+   "rect": [
+    0.0,
+    0.0,
+    425.0,
+    640.0
+   ],
+   "coco_hw": [
+    640,
+    427
+   ]
+  },
+  {
+   "id": "refedit-19",
+   "source": "RefEdit-Bench",
+   "difficulty": "easy",
+   "instruction": "Add sunglass to the lady in black dress.",
+   "instruction_single": "Add sunglass to the lady.",
+   "category": "person",
+   "coco_image_id": 289971,
+   "target_id": "209158",
+   "instances": [
+    {
+     "id": "209158",
+     "category": "person",
+     "mask_ref": "209158"
+    },
+    {
+     "id": "210012",
+     "category": "person",
+     "mask_ref": "210012"
+    },
+    {
+     "id": "1084971",
+     "category": "cake",
+     "mask_ref": "1084971"
+    },
+    {
+     "id": "1097537",
+     "category": "tv",
+     "mask_ref": "1097537"
+    },
+    {
+     "id": "1498513",
+     "category": "wine glass",
+     "mask_ref": "1498513"
+    },
+    {
+     "id": "1616548",
+     "category": "dining table",
+     "mask_ref": "1616548"
+    }
+   ],
+   "n_siblings": 1,
+   "shape_sim": 0.8178,
+   "ncc_fit": 1.0,
+   "mask_agreement": 0.776,
+   "rect": [
+    0.0,
+    0.0,
+    612.0,
+    612.0
+   ],
+   "coco_hw": [
+    612,
+    612
+   ]
+  }
+ ]
+}
