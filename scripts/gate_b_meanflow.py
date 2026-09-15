@@ -322,7 +322,8 @@ def cmd_train(args) -> int:
           f"(reference: 0.75)")
 
     from delta_curriculum import (DeltaCurriculumConfig, assert_flag_arrived,
-                                  curriculum_stats, sample_tr_scheduled)
+                                  curriculum_stats, delta_cap,
+                                  sample_tr_scheduled)
 
     cur = DeltaCurriculumConfig(
         enabled=args.curriculum,
@@ -331,12 +332,28 @@ def cmd_train(args) -> int:
         warmup_frac=args.warmup_frac,
         anchor_mode=args.anchor_mode,
         anchor_width=args.anchor_width,
+        # ALWAYS, not only when enabled: curriculum-off has to be THIS run's
+        # baseline (sample_tr with its caps), not the uncapped reference.
+        hard_max=args.max_delta,
     )
+    # Fail here, not at step 0 inside loss_fn_ref's per-batch guard. A cap
+    # above --max-delta is silently a no-op curriculum once delta_cap clamps
+    # it -- the schedule would flatten to a constant and the run would look
+    # normal while testing nothing.
+    if max(args.cap_start, args.cap_end) > args.max_delta + 1e-9:
+        raise SystemExit(
+            f"--cap-start {args.cap_start} / --cap-end {args.cap_end} exceed "
+            f"--max-delta {args.max_delta}. The cap is bounded by max_delta, "
+            "so the schedule would flatten against that ceiling and the "
+            "curriculum would be a no-op at the wide end. Set the caps at or "
+            "below --max-delta (for a 'no cap, anchors only' arm, pass "
+            f"--cap-start {args.max_delta} --cap-end {args.max_delta}).")
     assert_flag_arrived(args, ref, [("data_proportion", "data_proportion")])
     assert_flag_arrived(args, cur, [("cap_start", "cap_start"),
                                     ("cap_end", "cap_end"),
                                     ("warmup_frac", "warmup_frac"),
-                                    ("anchor_width", "anchor_width")])
+                                    ("anchor_width", "anchor_width"),
+                                    ("max_delta", "hard_max")])
 
     # Dedicated RNG stream for (t, r). Without this, "small_delta" draws one
     # extra torch.rand per step off the GLOBAL stream, so every subsequent
@@ -347,7 +364,8 @@ def cmd_train(args) -> int:
 
     print(f"[curriculum] enabled={cur.enabled} cap {cur.cap_start}->{cur.cap_end} "
           f"warmup_frac={cur.warmup_frac} anchor_mode={cur.anchor_mode} "
-          f"anchor_width={cur.anchor_width}")
+          f"anchor_width={cur.anchor_width} hard_max={cur.hard_max} "
+          f"(cap at step 0 = {delta_cap(0, args.steps, cur):.4f})")
     print(f"[args] {vars(args)}")
     # GUARD. Every target-shaping flag, read back from the config object the
     # loss will actually receive -- the P10 run is why this exists.

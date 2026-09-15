@@ -19,9 +19,27 @@ early") is satisfied for free -- but their O2 predicts that our wide-Delta
 samples are actively corrupting the effective v the adapter induces, and the
 anchor SSE climb is what that looks like from inside our training loop.
 
-    PREDICTION: cap Delta small and the anchor-SSE climb flattens.
+    PREDICTION, in the form this can actually test: reaching Delta 0.5
+    GRADUALLY leaves a different adapter than starting there.
     If it climbs identically, the mechanism is something else and one 2 h run
     has closed a loose end that has been open since Stage 1B.
+
+THE LEVEL FORM IS ALREADY FALSIFIED AT 0.5, and saying so is what keeps this
+honest. The Stage 1C distill run that produced the climb was itself trained
+at Delta <= 0.5 (STAGE1C_REPORT Sec.2.1), so "cap Delta small and the climb
+flattens" is refuted at that level by the run already in hand. A1 ends at
+exactly the condition that produced the climb and differs only in the path
+taken there. Testing the LEVEL would need cap_end < 0.5, which changes NFE
+and is the one thing this design forbids.
+
+What keeps A1 worth two hours anyway: the climb runs 0.14 -> 339 by step
+1000, and A1's cap over that window is 0.05 -> ~0.16. So it does suppress
+wide-Delta samples during precisely the window in which the climb was
+observed, and only converges to the falsified condition afterwards. A null
+result is therefore stronger than "order does not matter" -- it says that
+withholding wide Delta while the climb happens does not prevent it, which
+points away from Kim et al.'s O2 as the mechanism rather than merely
+failing to confirm it.
 
 Their acceleration half -- p_acc(t) timestep sampling and alpha(t) weighting on
 L_v -- does NOT transfer. We are not learning v. Implementing it would be half
@@ -88,6 +106,17 @@ class DeltaCurriculumConfig:
     anchor_mode: str = "exact"
     anchor_width: float = 0.05
 
+    #: Hard ceiling from --max-delta. The curriculum caps WITHIN this; it
+    #: never raises Delta above what the run is configured to allow.
+    #:
+    #: Wire this to args.max_delta ALWAYS, not just when enabled. The whole
+    #: point of `enabled=False` is to be the run's baseline, and the run's
+    #: baseline is `meanflow_ref.sample_tr` WITH its caps applied -- not the
+    #: uncapped reference paper. Leaving this at 1.0 while the run asks for
+    #: --max-delta 0.5 is what made the A0 control draw Delta 0.5923 and trip
+    #: loss_fn_ref's per-batch guard on the first call.
+    hard_max: float = 1.0
+
 
 def delta_cap(step: int, total_steps: int, cfg: DeltaCurriculumConfig) -> float:
     """Geometric widening, then hold.
@@ -98,14 +127,18 @@ def delta_cap(step: int, total_steps: int, cfg: DeltaCurriculumConfig) -> float:
     stiff -- ||du/dt|| is ~15x ||u||, so the correction term (t-r)*du/dt
     overtakes v at Delta ~ 0.07 -- which is exactly why the early phase has to
     sit below that and the widening has to be multiplicative.
+
+    Every return is bounded by cfg.hard_max, including the disabled one, so
+    this function can never widen Delta past what --max-delta allows.
     """
     if not cfg.enabled:
-        return 1.0
+        return cfg.hard_max
     n = max(1, int(total_steps * cfg.warmup_frac))
     if step >= n:
-        return cfg.cap_end
+        return min(cfg.cap_end, cfg.hard_max)
     frac = step / n
-    return float(cfg.cap_start * (cfg.cap_end / cfg.cap_start) ** frac)
+    return min(float(cfg.cap_start * (cfg.cap_end / cfg.cap_start) ** frac),
+               cfg.hard_max)
 
 
 # ---------------------------------------------------------------- sampler --
@@ -119,8 +152,15 @@ def sample_tr_scheduled(batch, cfg, device, step, total_steps,
 
     Deviation from the reference, stated rather than buried: after the
     reference's two logit-normal draws and sort, r is raised to t - cap when
-    the drawn interval exceeds the cap. t is never touched. At cap >= 1.0 no r
-    is raised and the function IS the reference.
+    the drawn interval exceeds the cap. t is never touched by the cap. At
+    cap >= 1.0 no r is raised and the function IS the reference.
+
+    cfg.max_t and cfg.hard_max (= cfg.max_delta) are applied exactly as
+    `meanflow_ref.sample_tr` applies them -- same operations, same order,
+    both BEFORE the anchor mask so anchors stay exactly r == t. That
+    equivalence is the whole basis for A0-with-the-curriculum-off being a
+    reproduction of the existing baseline rather than a new condition, so it
+    is asserted in self_test rather than assumed.
     """
     import torch  # noqa: PLC0415  -- keeps this module importable for tests
 
@@ -131,6 +171,13 @@ def sample_tr_scheduled(batch, cfg, device, step, total_steps,
     a, b = draw(), draw()
     t = torch.maximum(a, b)
     r = torch.minimum(a, b)
+
+    # The static max_t cap, copied from sample_tr. A no-op at the default
+    # 1.0, which is why dropping it went unnoticed -- unlike max_delta, whose
+    # absence the A0 control found on its first batch.
+    if cfg.max_t < 1.0:
+        t = t.clamp(max=cfg.max_t)
+        r = torch.minimum(r, t)
 
     cap = delta_cap(step, total_steps, cur)
     if cap < 1.0:
@@ -266,7 +313,27 @@ def self_test() -> None:
     assert st["delta_cap_applied"] == on.cap_start
     assert st["delta_max"] <= on.cap_start + 1e-6
 
-    # 8. assert_flag_arrived CATCHES the exact P10 bug.
+    # 8. DISABLED IS THE RUN'S BASELINE, NOT THE PAPER'S. With hard_max wired
+    #    to --max-delta, curriculum-off must reproduce sample_tr under the
+    #    SAME cap, bit for bit -- this is what makes A0 a reproduction of the
+    #    Stage 1C baseline rather than a new condition. Δ 0.5923 on the A0
+    #    control's first batch is what this case exists to prevent.
+    capped_ref = _RefStub(max_delta=0.5)
+    off_capped = DeltaCurriculumConfig(enabled=False, hard_max=0.5)
+    g1 = torch.Generator(device=dev).manual_seed(23)
+    tC, rC, aC = sample_tr_scheduled(N, capped_ref, dev, 0, TOT, off_capped, g1)
+    g2 = torch.Generator(device=dev).manual_seed(23)
+    tD, rD, aD = _reference_sample_tr(N, capped_ref, dev, g2)
+    assert torch.equal(tC, tD) and torch.equal(rC, rD) and torch.equal(aC, aD)
+    assert float((tC - rC).max()) <= 0.5 + 1e-6, float((tC - rC).max())
+    # and the cap never widens Delta past hard_max at ANY point of an
+    # enabled schedule either, including one whose cap_end exceeds it
+    over = DeltaCurriculumConfig(enabled=True, cap_start=1.0, cap_end=1.0,
+                                 hard_max=0.5)
+    for s in (0, TOT // 2, TOT):
+        assert delta_cap(s, TOT, over) <= 0.5 + 1e-9
+
+    # 9. assert_flag_arrived CATCHES the exact P10 bug.
     class Args:  # the CLI said 0.10 ...
         data_proportion = 0.10
 
@@ -290,12 +357,22 @@ class _RefStub:
     p_std: float = 1.0
     stochastic_anchor: bool = True
     data_proportion: float = 0.75
+    #: The static caps. Mirrored here because sample_tr_scheduled reads
+    #: max_t, and because the self-test compares against a sample_tr that
+    #: applies both.
+    max_t: float = 1.0
+    max_delta: float = 1.0
 
 
 def _reference_sample_tr(batch, cfg, device, generator):
     """meanflow_ref.sample_tr, inlined ONLY so the self-test can prove
     equivalence without importing the project. Not for production use --
-    production imports the real one."""
+    production imports the real one.
+
+    Includes sample_tr's two static caps. Without them this stub could only
+    ever prove equivalence in the uncapped case, which is not the case any
+    real run is configured for.
+    """
     import torch  # noqa: PLC0415
 
     def draw():
@@ -303,6 +380,11 @@ def _reference_sample_tr(batch, cfg, device, generator):
         return torch.sigmoid(n * cfg.p_std + cfg.p_mean)
     a, b = draw(), draw()
     t, r = torch.maximum(a, b), torch.minimum(a, b)
+    if cfg.max_t < 1.0:
+        t = t.clamp(max=cfg.max_t)
+        r = torch.minimum(r, t)
+    if cfg.max_delta < 1.0:
+        r = torch.maximum(r, t - cfg.max_delta)
     if cfg.stochastic_anchor:
         anchor = (torch.rand(batch, device=device, generator=generator)
                   < cfg.data_proportion)
