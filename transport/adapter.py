@@ -45,6 +45,7 @@ null result, so `mode` has no default.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 
 import torch
@@ -52,6 +53,48 @@ import torch.nn as nn
 
 from .conditioning import MaskEncoder, make_interval_embedding
 from .gating import GateHolder, adapter_parameters, inject_lora
+
+
+@contextlib.contextmanager
+def no_checkpoint_without_grad(transformer):
+    """Disable gradient checkpointing for the duration of a no-grad forward.
+
+    THE RULE: checkpointing trades recompute for activation memory during a
+    BACKWARD. With grad disabled there is no backward, nothing is stored, and
+    the recompute buys nothing -- so it should be off. diffusers gates it on
+    `self.training and self.gradient_checkpointing` only, and the transformer
+    stays in .train() for the whole run (Trainer calls .eval() for validation
+    alone), so every no-grad forward taken during a training step goes through
+    checkpointing regardless.
+
+    This module makes a LOT of those: central_difference's two probes, the
+    checkpoint_safe jvp, tangent='boundary', guided_velocity's CFG pair, and
+    base_velocity in every mode. The grad-enabled trainable forward is one
+    call among them and the only one that wants checkpointing at all.
+
+    It is also where one installed SD3Transformer2DModel breaks
+    (diffusers==0.30.0.dev0, vendored for
+    StableDiffusion3InstructPix2PixPipeline at
+    /data/repos/UltraEdit/diffusers): its checkpointed branch assigns a
+    JointTransformerBlock's tuple return to `hidden_states` without
+    unpacking, so the next block's LayerNorm gets a tuple and raises
+    `layer_norm(): argument 'input' ... must be Tensor, not tuple`. Note what
+    that means: the bug is in the checkpointed branch as such, NOT in the
+    no-grad part. This context manager keeps every no-grad forward out of it,
+    which is correct on its own terms -- but the trainable forward still
+    enters that branch and still breaks there, and no change on this side of
+    the import fixes that. Use --no-grad-checkpointing (fd estimator only),
+    or an install whose checkpointed branch unpacks.
+    """
+    if torch.is_grad_enabled():
+        yield
+        return
+    was = getattr(transformer, "gradient_checkpointing", False)
+    transformer.gradient_checkpointing = False
+    try:
+        yield
+    finally:
+        transformer.gradient_checkpointing = was
 
 
 @dataclass
@@ -158,7 +201,8 @@ class TransportAdapter(nn.Module):
             negative_embeds = negative_embeds.to(dtype)
 
         if guidance <= 1.0 or negative_embeds is None:
-            with self.holder.scope(gate):
+            with self.holder.scope(gate), \
+                    no_checkpoint_without_grad(self.transformer):
                 out = self.transformer(
                     hidden_states=z_in.to(dtype),
                     encoder_hidden_states=prompt_embeds,
@@ -173,7 +217,8 @@ class TransportAdapter(nn.Module):
         batch_z = torch.cat([z_in, z_in]).to(dtype)
         neg_pooled = (negative_pooled if negative_pooled is not None
                       else pooled_in).to(dtype)
-        with self.holder.scope(torch.cat([gate, gate])):
+        with self.holder.scope(torch.cat([gate, gate])), \
+                no_checkpoint_without_grad(self.transformer):
             out = self.transformer(
                 hidden_states=batch_z,
                 encoder_hidden_states=torch.cat([negative_embeds, prompt_embeds]),
@@ -192,43 +237,27 @@ class TransportAdapter(nn.Module):
         """
         dtype = self.model_dtype
         timestep = t.float() * self.cfg.num_train_timesteps
-        # Gradient checkpointing recomputes the forward pass to save
-        # activation memory for a BACKWARD that this call never takes -- the
-        # whole method runs under no_grad, so there is nothing to save memory
-        # for. It is not just waste: the transformer stays in .train() mode
-        # throughout the run (Trainer only calls .eval() for validation), so
-        # `self.training and self.gradient_checkpointing` still routes this
-        # frozen forward through checkpointing, and at least one installed
-        # SD3Transformer2DModel (diffusers==0.30.0.dev0, vendored for
-        # StableDiffusion3InstructPix2PixPipeline at
-        # /data/repos/UltraEdit/diffusers) hands a checkpointed block's tuple
-        # output straight to the next block's LayerNorm as `hidden_states`,
-        # raising `layer_norm(): argument 'input' ... must be Tensor, not
-        # tuple` -- a path stock diffusers presumably never exercised this
-        # way, since nothing here needs the recompute. Disabling it for the
-        # duration of this call sidesteps that bug and is a strict speed win
-        # regardless of which diffusers is installed.
-        gc_was = getattr(self.transformer, "gradient_checkpointing", False)
-        self.transformer.gradient_checkpointing = False
-        try:
-            with torch.no_grad(), self.holder.scope(None):
-                if guidance <= 1.0 or negative_embeds is None:
-                    return self.transformer(
-                        hidden_states=z.to(dtype),
-                        encoder_hidden_states=prompt_embeds,
-                        pooled_projections=pooled.to(dtype),
-                        timestep=timestep, return_dict=False,
-                    )[0].float()
-                out = self.transformer(
-                    hidden_states=torch.cat([z, z]).to(dtype),
-                    encoder_hidden_states=torch.cat([negative_embeds, prompt_embeds]),
-                    pooled_projections=torch.cat(
-                        [negative_pooled if negative_pooled is not None else pooled,
-                         pooled]).to(dtype),
-                    timestep=timestep.repeat(2), return_dict=False,
-                )[0]
-        finally:
-            self.transformer.gradient_checkpointing = gc_was
+        # no_grad first, so no_checkpoint_without_grad reads grad as already
+        # disabled and takes its disabling branch. This call is never part of
+        # a backward -- it is the frozen teacher -- so checkpointing it only
+        # ever bought recompute nobody uses.
+        with torch.no_grad(), no_checkpoint_without_grad(self.transformer), \
+                self.holder.scope(None):
+            if guidance <= 1.0 or negative_embeds is None:
+                return self.transformer(
+                    hidden_states=z.to(dtype),
+                    encoder_hidden_states=prompt_embeds,
+                    pooled_projections=pooled.to(dtype),
+                    timestep=timestep, return_dict=False,
+                )[0].float()
+            out = self.transformer(
+                hidden_states=torch.cat([z, z]).to(dtype),
+                encoder_hidden_states=torch.cat([negative_embeds, prompt_embeds]),
+                pooled_projections=torch.cat(
+                    [negative_pooled if negative_pooled is not None else pooled,
+                     pooled]).to(dtype),
+                timestep=timestep.repeat(2), return_dict=False,
+            )[0]
         v_un, v_c = out.float().chunk(2)
         return v_un + guidance * (v_c - v_un)
 
