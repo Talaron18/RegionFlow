@@ -61,12 +61,19 @@ def encode_image(pipe, img: np.ndarray, device: str):
 
 
 def encode_text(pipe, text: str, device: str):
+    """max_sequence_length is PINNED to 256, not left at the pipeline
+    default -- see scripts/gate_b_meanflow.py::encode_null for why: a
+    different `diffusers` install on sys.path can change that default and
+    silently write a cache at a context length training's own encode_null
+    does not reproduce, which then fails 40 steps into a run instead of here.
+    """
     import torch
 
     with torch.no_grad():
         pe, _, pooled, _ = pipe.encode_prompt(
             prompt=text, prompt_2=None, prompt_3=None,
             device=device, do_classifier_free_guidance=False,
+            max_sequence_length=256,
         )
     return pe[0].float().cpu().numpy(), pooled[0].float().cpu().numpy()
 

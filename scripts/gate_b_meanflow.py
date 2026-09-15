@@ -50,7 +50,6 @@ from transport.meanflow import (                    # noqa: E402
 )
 from transport.meanflow_ref import (                # noqa: E402
     RefMeanFlowConfig, cond_drop, guided_velocity, ref_meanflow_loss,
-    sample_tr,
 )
 from transport.sampling import sample, shifted_grid, uniform_grid  # noqa: E402
 from transport.train import (                       # noqa: E402
@@ -94,6 +93,14 @@ def build_adapter(model, device, rank, max_blocks=None, dtype="float32",
     return ad
 
 
+#: SD3's real context length: 77 (merged CLIP-L/CLIP-G) + 256 (T5, at the
+#: default max_sequence_length) = 333. Matches transport.data.CacheConfig's
+#: default, which precompute_cache.py's writer asserts against at cache-build
+#: time -- so a mismatch here means encode_null and the cache disagree, not
+#: that either one is wrong in isolation.
+SD3_CONTEXT_LENGTH = 333
+
+
 def encode_null(model_id, device):
     """The unconditional embedding for CFG, computed once.
 
@@ -103,6 +110,15 @@ def encode_null(model_id, device):
     deviation that changes the guidance target. Loads the encoders in
     bfloat16, encodes "", frees them; the transformer is loaded afterwards in
     float32, as in scripts/probe_field_stiffness.py.
+
+    max_sequence_length IS PINNED, not left at the pipeline default. Two
+    environments importing `diffusers` from different installs (stock vs. a
+    fork with a different default -- e.g. one pinned to a shorter T5 sequence
+    for instruction-editing speed) will tokenize the same empty string to
+    different lengths, and cond_drop's broadcast against the cached
+    prompt_embeds fails downstream with an opaque shape mismatch that gives no
+    hint it started here. Pinning removes the dependency on whichever
+    `diffusers` happens to resolve first on sys.path.
     """
     import gc
 
@@ -115,10 +131,20 @@ def encode_null(model_id, device):
     with torch.no_grad():
         pe, _, po, _ = pipe.encode_prompt(
             prompt="", prompt_2=None, prompt_3=None, device=device,
-            do_classifier_free_guidance=False)
+            do_classifier_free_guidance=False, max_sequence_length=256)
     del pipe
     gc.collect()
     torch.cuda.empty_cache()
+    if pe.shape[-2] != SD3_CONTEXT_LENGTH:
+        raise RuntimeError(
+            f"encode_null produced context length {pe.shape[-2]}, expected "
+            f"{SD3_CONTEXT_LENGTH}. The installed `diffusers` (check "
+            "`python -c 'import diffusers; print(diffusers.__file__)'`) is "
+            "not giving max_sequence_length=256 the length it asks for -- a "
+            "fork with a hardcoded T5 length would do this. The training "
+            "cache was built at context 333; regenerate it to match whatever "
+            "this environment actually produces, or fix the environment so "
+            "the two agree, before training with it.")
     return pe.float(), po.float()
 
 
@@ -257,6 +283,35 @@ def cmd_train(args) -> int:
                             norm_p=args.norm_p)
     print(f"[meanflow] data_proportion = {ref.data_proportion} "
           f"(reference: 0.75)")
+
+    from delta_curriculum import (DeltaCurriculumConfig, assert_flag_arrived,
+                                  curriculum_stats, sample_tr_scheduled)
+
+    cur = DeltaCurriculumConfig(
+        enabled=args.curriculum,
+        cap_start=args.cap_start,
+        cap_end=args.cap_end,
+        warmup_frac=args.warmup_frac,
+        anchor_mode=args.anchor_mode,
+        anchor_width=args.anchor_width,
+    )
+    assert_flag_arrived(args, ref, [("data_proportion", "data_proportion")])
+    assert_flag_arrived(args, cur, [("cap_start", "cap_start"),
+                                    ("cap_end", "cap_end"),
+                                    ("warmup_frac", "warmup_frac"),
+                                    ("anchor_width", "anchor_width")])
+
+    # Dedicated RNG stream for (t, r). Without this, "small_delta" draws one
+    # extra torch.rand per step off the GLOBAL stream, so every subsequent
+    # `eps = torch.randn_like(x0)` differs from the other arms and the three
+    # runs stop being noise-matched from step 1. Keep noise on the global
+    # stream, schedule on this one.
+    tr_gen = torch.Generator(device=args.device).manual_seed(args.seed + 1)
+
+    print(f"[curriculum] enabled={cur.enabled} cap {cur.cap_start}->{cur.cap_end} "
+          f"warmup_frac={cur.warmup_frac} anchor_mode={cur.anchor_mode} "
+          f"anchor_width={cur.anchor_width}")
+    print(f"[args] {vars(args)}")
     # GUARD. Every target-shaping flag, read back from the config object the
     # loss will actually receive -- the P10 run is why this exists.
     import dataclasses
@@ -313,7 +368,8 @@ def cmd_train(args) -> int:
         npe = npe1.to(dev, mdt).expand(b, -1, -1)
         npo = npo1.to(dev, mdt).expand(b, -1)
 
-        t, r, _ = sample_tr(b, ref, dev)
+        t, r, anchor = sample_tr_scheduled(b, ref, dev, step, cfg.steps, cur,
+                                           generator=tr_gen)
         eps = torch.randn_like(x0)
         tt = t.reshape(-1, 1, 1, 1)
         z_t = (1 - tt) * x0 + tt * eps
@@ -329,7 +385,15 @@ def cmd_train(args) -> int:
         loss, stats = ref_meanflow_loss(
             lambda z_, t_, r_: model(z_, t_, r_, pe_in, po_in),
             z_t, t, r, v_g, ref,
-            base_fn=lambda z_, t_: model.base_velocity(z_, t_, pe_in, po_in))
+            base_fn=lambda z_, t_: model.base_velocity(z_, t_, pe_in, po_in),
+            anchor_mask=anchor)
+        # ref_meanflow_loss infers anchors from (t - r) < 1e-8. Under
+        # anchor_mode="small_delta" that is False for every anchor: frac_anchor
+        # reads ~0, the guard below kills the run at batch 50, and sse_anchor --
+        # the series this experiment exists to measure -- is never logged.
+        # The sampler knows which samples are anchors; use its mask.
+        stats["frac_anchor"] = float(anchor.float().mean())
+        stats.update(curriculum_stats(t, r, anchor, step, cfg.steps, cur))
         # GUARD, per batch: a cap that did not reach the sampler.
         if stats["delta_max"] > ref.max_delta + 1e-6:
             raise RuntimeError(f"delta {stats['delta_max']:.4f} exceeds "
@@ -643,6 +707,17 @@ def main() -> int:
     t.add_argument("--teacher-cfg", type=float, default=5.0)
     t.add_argument("--delta-start", type=float, default=0.05)
     t.add_argument("--delta-end", type=float, default=1.0)
+    t.add_argument("--curriculum", action="store_true",
+                   help="enable the Delta-ORDER curriculum (delta_curriculum.py). "
+                        "Off = the reference sampler, bit for bit.")
+    t.add_argument("--cap-start", type=float, default=0.05)
+    t.add_argument("--cap-end", type=float, default=0.5,
+                   help="the operating point Delta = 1/NFE, not a tuning knob. "
+                        "1.0 disables capping while leaving --anchor-mode live.")
+    t.add_argument("--warmup-frac", type=float, default=0.5)
+    t.add_argument("--anchor-mode", default="exact",
+                   choices=["exact", "small_delta"])
+    t.add_argument("--anchor-width", type=float, default=0.05)
     t.add_argument("--val-every", type=int, default=500,
                    help="steps between held-out validations; 0 disables")
     t.add_argument("--val-delta", type=float, default=0.5,
