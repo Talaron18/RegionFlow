@@ -251,7 +251,7 @@ def siliconflow_judge(model: str = "Qwen/Qwen3.6-35B-A3B"):
 
     import requests  # noqa: PLC0415
 
-    api_key = os.environ["SILICONFLOW_API_KEY"]
+    api_key = "fill your own api-key"
 
     def fn(panel: Image.Image, prompt: str) -> str:
         buf = io.BytesIO()
@@ -267,10 +267,10 @@ def siliconflow_judge(model: str = "Qwen/Qwen3.6-35B-A3B"):
                      "image_url": {"url": f"data:image/png;base64,{b64}"}},
                     {"type": "text", "text": prompt},
                 ]}],
-                "max_tokens": 150,
+                "max_tokens": 600,
                 "enable_thinking": False,
             },
-            timeout=60,
+            timeout=120,
         )
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
