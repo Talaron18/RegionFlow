@@ -235,8 +235,22 @@ def run_bench(adapter, loader, tcfg, loss_fn, args) -> int:
 
 
 def cmd_train(args) -> int:
+    import diffusers
     import torch
     from torch.utils.data import DataLoader
+
+    # PROVENANCE, printed before anything else can fail. STAGE1C Sec.5 found
+    # two boxes disagreeing on sse_base by 6.1% -- larger than effects being
+    # measured -- and concluded that rows from different boxes must not share
+    # a table. `import diffusers` is the part of this environment that has
+    # moved most: which copy resolves first on sys.path decides the SD3
+    # pipeline's text-encoder context length AND whether its transformer's
+    # checkpointed branch unpacks, both of which have already broken runs
+    # here. An arm-to-arm comparison is only valid if this line reads the
+    # same for every arm, so it goes in every run's stdout rather than being
+    # reconstructed afterwards from which warnings happened to fire.
+    print(f"[env] torch {torch.__version__}  "
+          f"diffusers {diffusers.__version__}  from {diffusers.__file__}")
 
     torch.manual_seed(args.seed)
     ds = torch_dataset(TripletCache(args.cache))
