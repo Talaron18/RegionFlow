@@ -73,6 +73,10 @@ USAGE
     ANTHROPIC_API_KEY=... python bench/edit_quality_vlm.py --build \\
         --results runs/gate_c/refedit_sd3.jsonl --edits runs/gate_c/edits \\
         --out runs/gate_c/vlm_quality.jsonl
+    SILICONFLOW_API_KEY=... python bench/edit_quality_vlm.py --build \\
+        --judge-module edit_quality_vlm:siliconflow_judge \\
+        --results runs/gate_c/refedit_sd3.jsonl --edits runs/gate_c/edits \\
+        --out runs/gate_c/vlm_quality.jsonl
     python bench/edit_quality_vlm.py --score runs/gate_c/vlm_quality.jsonl
 """
 
@@ -208,6 +212,50 @@ def claude_judge(model: str = "claude-opus-5"):
                 {"type": "text", "text": prompt},
             ]}])
         return "".join(b.text for b in msg.content if b.type == "text")
+
+    return fn
+
+
+def siliconflow_judge(model: str = "zai-org/GLM-4.6V"):
+    """SiliconFlow-hosted VLM judge, OpenAI-compatible chat/completions.
+
+    Budget substitute for claude_judge -- NOT a claim of parity with
+    RefEdit-Bench's own GPT-4o judge, see module docstring. Needs
+    SILICONFLOW_API_KEY in the environment. `model` must be one that
+    accepts image input: SiliconFlow's chat/completions endpoint has two
+    separate model enums, text-only and VLM (ChatCompletionVLMRequest in
+    their OpenAPI spec), and a text-only model given an image silently
+    ignores it rather than erroring -- confirmed against their published
+    enum before picking a default here, not assumed from a model name.
+    """
+    import base64
+    import io
+    import os
+
+    import requests  # noqa: PLC0415
+
+    api_key = os.environ["SILICONFLOW_API_KEY"]
+
+    def fn(panel: Image.Image, prompt: str) -> str:
+        buf = io.BytesIO()
+        panel.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        resp = requests.post(
+            "https://api.siliconflow.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": [
+                    {"type": "image_url",
+                     "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                    {"type": "text", "text": prompt},
+                ]}],
+                "max_tokens": 100,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
 
     return fn
 
