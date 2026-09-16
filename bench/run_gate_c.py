@@ -67,14 +67,19 @@ from refedit_siblings import bench_image, load_bench, load_coco, raster
 PROMPT_COLS = {"full": "editing_instruction", "single": "edit_instruction_single"}
 
 # Checkpoints that load through the SAME UltraEdit pipeline class. RefEdit-SD3
-# is finetuned on UltraEdit-FREEFORM (the *_wo_mask script), so handing it a
-# mask is out of distribution and a null result from it would be
-# uninterpretable. `sd3-ultraedit-mask` is the same architecture actually
-# TRAINED with masks, and is the arm that answers "is localisation the
-# problem?".
+# is finetuned on UltraEdit-FREEFORM, so handing it a mask is out of
+# distribution and a null result from it would be uninterpretable.
+# `sd3-ultraedit-mask` is the same architecture actually TRAINED with masks,
+# and is the arm that answers "is localisation the problem?".
+# `sd3-ultraedit-freeform` is UltraEdit's OWN free-form checkpoint (same
+# family as RefEdit-SD3's base, not a RefEdit finetune) -- the matched
+# within-family partner for `sd3-ultraedit-mask`, so `none -> oracle`
+# (currently crossing checkpoints, RefEdit-SD3 vs the mask checkpoint) has a
+# same-checkpoint comparison available: freeform -> oracle.
 MODEL_REPOS = {
     "refedit-sd3": "bpathir1/RefEdit-SD3",
     "sd3-ultraedit-mask": "BleachNick/SD3_UltraEdit_w_mask",
+    "sd3-ultraedit-freeform": "BleachNick/SD3_UltraEdit_freeform",
 }
 
 # Mask arms. `white` is not decoration: it is the control that separates "the
@@ -223,7 +228,7 @@ def load_model(args):
             "channel block, not an optional argument, so there is no\n"
             "no-mask arm for this checkpoint. --mask-mode white IS the\n"
             "no-spatial-information control. For a no-mask baseline use\n"
-            "UltraEdit's free-form (*_wo_mask) checkpoint instead.")
+            "--model sd3-ultraedit-freeform instead.")
     if args.model in MODEL_REPOS:
         if args.model == "refedit-sd3" and args.mask_mode != "none":
             print("  NOTE: RefEdit-SD3 is finetuned on UltraEdit-FREEFORM, so a "
