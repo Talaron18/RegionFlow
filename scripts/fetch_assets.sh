@@ -121,6 +121,17 @@ echo "NOTE: the paper describes MAG-Bench but a public release is not"
 echo "      confirmed. If it is absent, PIE-Bench alone is enough for Stage 0"
 echo "      — it has more cases and better annotations. Email the authors."
 
+say "RefEdit-Bench (Gate C: 151 hard RefEdit-Bench x COCO cases)"
+# HF repo is bpathir1/RefEdit, not RefEdit-Bench -- that name is only the
+# LOCAL directory bench/run_gate_c.py's --bench default expects
+# (.../RefEdit-Bench/data/test-00000-of-00001.parquet). Confirmed against
+# github.com/bimsarapathiraja/refedit's own README, since huggingface.co
+# itself is not fetchable from every environment this script runs in.
+if ! have "$DATA/datasets/RefEdit-Bench/data/test-00000-of-00001.parquet"; then
+  $HF_CLI download bpathir1/RefEdit --repo-type dataset \
+    --local-dir "$DATA/datasets/RefEdit-Bench"
+fi
+
 if [ "$STAGE" = "stage2" ] || [ "$STAGE" = "all" ]; then
   say "MagicBrush (10K editing triplets, for stages 2-3 only)"
   $HF_CLI download osunlp/MagicBrush --repo-type dataset \
