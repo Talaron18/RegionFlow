@@ -216,17 +216,34 @@ def claude_judge(model: str = "claude-opus-5"):
     return fn
 
 
-def siliconflow_judge(model: str = "zai-org/GLM-4.6V"):
+def siliconflow_judge(model: str = "Qwen/Qwen3.6-35B-A3B"):
     """SiliconFlow-hosted VLM judge, OpenAI-compatible chat/completions.
 
     Budget substitute for claude_judge -- NOT a claim of parity with
     RefEdit-Bench's own GPT-4o judge, see module docstring. Needs
-    SILICONFLOW_API_KEY in the environment. `model` must be one that
-    accepts image input: SiliconFlow's chat/completions endpoint has two
-    separate model enums, text-only and VLM (ChatCompletionVLMRequest in
-    their OpenAPI spec), and a text-only model given an image silently
-    ignores it rather than erroring -- confirmed against their published
-    enum before picking a default here, not assumed from a model name.
+    SILICONFLOW_API_KEY in the environment.
+
+    `model` must actually process the image, not just accept the request
+    without erroring. SiliconFlow's OpenAPI spec lists a separate VLM model
+    enum (ChatCompletionVLMRequest) as the source of truth for this, but it
+    is stale in practice -- zai-org/GLM-4.6V is IN that enum and came back
+    "Model disabled" (code 30003), while Qwen/Qwen3.6-35B-A3B, moonshotai/
+    Kimi-K3 and deepseek-ai/DeepSeek-V4-Flash-Vision-Exp are NOT in the
+    published enum (all three post-date this doc snapshot) and all three
+    correctly read a solid-color test image passed as an inline base64
+    image_url. Do not trust the enum alone for a new model -- verify with a
+    real image first (a 64x64 solid-color PNG, asked "what color is this,
+    one word" is enough) before pointing --judge-module at it, since a
+    text-only model given an image silently ignores it rather than erroring
+    and would produce plausible-looking scores from the instruction text
+    alone.
+
+    enable_thinking=False cuts reasoning-token overhead for models that
+    honor it (confirmed: Qwen3.6-35B-A3B goes to 2 completion tokens for a
+    trivial answer; Kimi-K3 still spends ~24 regardless). Some
+    reasoning-only models (zai-org/GLM-5.3-Flash) 400 on this flag entirely
+    ("model always thinks, use thinking_budget low/high/max instead") --
+    drop the flag from the payload if you point `model` at one of those.
     """
     import base64
     import io
@@ -250,7 +267,8 @@ def siliconflow_judge(model: str = "zai-org/GLM-4.6V"):
                      "image_url": {"url": f"data:image/png;base64,{b64}"}},
                     {"type": "text", "text": prompt},
                 ]}],
-                "max_tokens": 100,
+                "max_tokens": 150,
+                "enable_thinking": False,
             },
             timeout=60,
         )
