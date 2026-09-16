@@ -60,7 +60,7 @@ from PIL import Image
 
 from frame_fit import apply_rect
 from instance_bench import aggregate, instance_selectivity
-from off_instance import off_instance_change
+from off_instance import OFF_INSTANCE_EDIT_RATIO, off_instance_change
 from off_instance import self_test as off_self_test
 from refedit_siblings import bench_image, load_bench, load_coco, raster
 
@@ -88,10 +88,22 @@ def outcome_class(r: dict) -> str:
     """Describe every case, including ones `valid` discards.
 
     Uses only COMPARISONS between quantities already computed -- no new
-    threshold, so nothing here is tunable and nothing is being relaxed.
+    threshold beyond OFF_INSTANCE_EDIT_RATIO, which is frozen and imported,
+    not invented here.
 
-      no_change     nothing on either instance exceeds background: the model
-                    returned ~the source. Genuinely unmeasurable.
+      no_tracked_change  nothing on target, sibling OR the off-instance peak
+                    exceeds its own floor: the model returned ~the source, or
+                    close enough that nothing measurable happened anywhere
+                    this pipeline looks. Genuinely unmeasurable. Named
+                    "no_tracked_change", not "no_change" -- see below.
+      off_instance_edit  target and sibling both sit at background, but
+                    off_instance_peak clears OFF_INSTANCE_EDIT_RATIO x
+                    off_instance_ambient: something compact happened, just
+                    outside every mask this benchmark tracks. THE THIRD
+                    FAILURE MODE (off_instance.py's module docstring): all 12
+                    of the blind audit's metric/human disagreements were this
+                    class misread as inaction, because nothing here used to
+                    look outside target+siblings at all.
       mis_targeted  the SIBLING changed more than the target: the model
                     resolved the referring expression to the wrong instance.
                     The requested edit did not happen. `valid` currently reads
@@ -99,10 +111,21 @@ def outcome_class(r: dict) -> str:
                     every reported leakage number in the model's favour.
       measurable    the target moved more than any sibling; the ratio means
                     what it is supposed to mean.
+
+    RENAME, bundled with the off_instance_edit split because it is the same
+    insight stated twice: "no_change" claimed the model did nothing. It
+    claimed that about cases where the model demonstrably did something,
+    just not anywhere tracked. "no_tracked_change" is the honest name for the
+    bucket regardless of whether off_instance_edit ever fires -- it was never
+    really a claim about the model, only about what this pipeline looks at.
     """
     tgt, sib, bg = r["target_change"], r["sibling_change"], r["background_change"]
     if max(tgt, sib) <= bg:
-        return "no_change"
+        oi_peak = r.get("off_instance_peak", 0.0)
+        oi_ambient = r.get("off_instance_ambient", 0.0)
+        if oi_peak > OFF_INSTANCE_EDIT_RATIO * (oi_ambient + 1e-9):
+            return "off_instance_edit"
+        return "no_tracked_change"
     if sib > tgt:
         return "mis_targeted"
     return "measurable"
@@ -332,12 +355,17 @@ def run(args):
                     edited = edited.resize((512, 512), Image.BILINEAR)
                 out = np.asarray(edited.convert("RGB"))
                 res = instance_selectivity(src, out, tmask, smasks)
-                # ADDITIVE. Separate namespace, separate function, nothing in
-                # the frozen metric reads it. See off_instance.__doc__.
+                # ADDITIVE to instance_selectivity itself: separate namespace,
+                # separate function, nothing in the FROZEN metric reads it.
+                # See off_instance.__doc__. But outcome_class DOES need both
+                # dicts together -- computed off before outcome_class, not
+                # after, so off_instance_edit can actually fire. A version of
+                # this that called outcome_class(res) before off existed
+                # would silently never classify anything as off_instance_edit.
                 off = off_instance_change(src, out, tmask, smasks)
                 eps = 1e-9
                 rec = {"id": case["id"], "prompt_kind": kind, "prompt": prompt,
-                       "outcome": outcome_class(res),
+                       "outcome": outcome_class({**res, **off}),
                        "target_over_bg": round(
                            res["target_change"] / (res["background_change"] + eps), 3),
                        "signal_over_bg": round(
@@ -432,6 +460,14 @@ def report(out_path: Path, args):
             print(f"      cases with a hot spot louder than the target "
                   f"(over-target > 1): {(over > 1).sum()}/{len(oi)}"
                   f"  <- candidate third-mode failures; LOOK at the bbox crop")
+        n_off_edit = sum(1 for r in rs
+                         if r.get("outcome", outcome_class(r)) == "off_instance_edit")
+        if n_off_edit:
+            print(f"    off_instance_edit: {n_off_edit}/{n} ({n_off_edit / n:.0%})"
+                  " -- classified as a real edit, landing entirely outside "
+                  "every tracked mask.\n      These used to read as "
+                  "no_tracked_change (model did nothing). LOOK before trusting "
+                  "the count.")
 
         for key, label in ((lambda r: r["difficulty"], "difficulty"),
                            (lambda r: "person" if r["category"] == "person"
@@ -563,8 +599,28 @@ def self_test():
     assert case_seed("refedit-1", 0) != case_seed("refedit-2", 0)
     assert case_seed("refedit-1", 0) != case_seed("refedit-1", 1)
 
+    # RENAMED from "no_change": both of these read no signal on target or
+    # sibling, but only the second has an off-instance hot spot -- refedit-49
+    # (the parking meter, not the car), reconstructed as a synthetic case
+    # rather than fit to it, since the real jsonl lives off this machine.
     assert outcome_class({"target_change": 0.0, "sibling_change": 0.0,
-                          "background_change": 0.0}) == "no_change"
+                          "background_change": 0.0}) == "no_tracked_change"
+    assert outcome_class({"target_change": 0.005, "sibling_change": 0.004,
+                          "background_change": 0.005,
+                          "off_instance_peak": 0.5,
+                          "off_instance_ambient": 0.02}) == "off_instance_edit"
+    # A dict missing the off_instance_* keys entirely (e.g. instance_selectivity's
+    # own bare output, or a pre-rename jsonl row) must default to the old
+    # behaviour, not KeyError.
+    assert outcome_class({"target_change": 0.0, "sibling_change": 0.0,
+                          "background_change": 0.0}) == "no_tracked_change"
+    # Below OFF_INSTANCE_EDIT_RATIO -- self_test's own control-4/5 territory --
+    # must stay no_tracked_change, or every clean edit with target near zero
+    # would misfire as off_instance_edit.
+    assert outcome_class({"target_change": 0.005, "sibling_change": 0.004,
+                          "background_change": 0.005,
+                          "off_instance_peak": 0.03,
+                          "off_instance_ambient": 0.02}) == "no_tracked_change"
     assert outcome_class({"target_change": 0.03, "sibling_change": 0.38,
                           "background_change": 0.056}) == "mis_targeted"
     assert outcome_class({"target_change": 0.21, "sibling_change": 0.02,

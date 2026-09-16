@@ -14,6 +14,15 @@ The model edited OUTSIDE every mask the benchmark tracks, so target, siblings
 and their comparison all stayed quiet. `no_change` fired and the case was read
 as model inaction when it was metric blindness.
 
+`run_gate_c.outcome_class` now reads `off_instance_peak` / `off_instance_ambient`
+(OFF_INSTANCE_EDIT_RATIO below) and SPLITS what used to be one bucket into
+`no_tracked_change` (genuinely nothing happened) and `off_instance_edit` (something
+happened, just not anywhere tracked) -- so the four cases above no longer read
+as inaction anywhere in the pipeline, not just in this module's own output.
+`instance_selectivity` itself, and everything in gate_c_note.md Sec.9, stays
+untouched; only outcome_class's classification of the no-tracked-signal bucket
+changed.
+
 WHY `background_change` CANNOT SEE IT. `background_change` is the MEAN over
 everything outside the instance set. RefEdit-SD3 regenerates the whole frame,
 so its ambient change is ~0.06 everywhere. A localised edit on one 64px object
@@ -78,6 +87,25 @@ WINDOW = 64
 STRIDE = 16
 PURITY = 0.90
 DILATE = 8
+
+# OFF_INSTANCE_EDIT_RATIO = 10.0. The threshold run_gate_c.outcome_class uses
+# to promote a case out of "no_tracked_change" into "off_instance_edit": a
+# peak more than 10x the off-instance ambient. Not a fresh number -- it
+# reuses instance_selectivity's own K=10 "how far above the noise floor
+# counts as real" convention (the same K the `valid` gate applies to
+# target_change vs background_change), applied here to off_instance_peak vs
+# off_instance_ambient instead. The self-test below already brackets it from
+# both sides at this window/stride/purity: the genuine off-instance edit
+# (control 3) reads > 20, and the false-positive controls -- clean target
+# edit (4), boundary bleed (5) -- read < 2. 10 sits in the gap with margin on
+# both sides.
+#
+# NOT calibrated against the 12 known metric/human disagreements from the
+# blind audit -- that data lives in runs/gate_c/, off this machine. Check
+# this threshold against runs/gate_c/blind_key.json's 12 disagreement cases
+# before trusting it on a real scoring run; if it misses any of them, that
+# is a finding about this constant, not about the model being scored.
+OFF_INSTANCE_EDIT_RATIO = 10.0
 
 
 def _dilate(mask: np.ndarray, r: int) -> np.ndarray:

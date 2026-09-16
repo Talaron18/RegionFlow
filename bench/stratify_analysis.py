@@ -226,16 +226,28 @@ def main():
     recs = [json.loads(l) for l in Path(args.results).read_text().splitlines()
             if l.strip()]
     # Must match run_gate_c.outcome_class EXACTLY, including the order of the
-    # tests: no_change is checked FIRST. Classifying mis_targeted first moves
-    # cases where everything is tiny AND sib > tgt into the wrong bucket, and
-    # the two scripts then disagree on the headline rate.
+    # tests: no_tracked_change (formerly no_change) is checked FIRST.
+    # Classifying mis_targeted first moves cases where everything is tiny AND
+    # sib > tgt into the wrong bucket, and the two scripts then disagree on
+    # the headline rate -- the exact 47-vs-43 failure mode compare_arms.py's
+    # docstring records. This fallback is the second copy that failure mode
+    # warns about; it exists only for a cwd where the import fails, and it
+    # has to be kept current by hand for exactly that reason.
     try:
         from run_gate_c import outcome_class  # noqa: PLC0415
     except ImportError:
+        from off_instance import OFF_INSTANCE_EDIT_RATIO  # noqa: PLC0415
+
         def outcome_class(r):
-            if max(r["target_change"], r["sibling_change"]) <= r["background_change"]:
-                return "no_change"
-            return "mis_targeted" if r["sibling_change"] > r["target_change"] else "measurable"
+            tgt, sib = r["target_change"], r["sibling_change"]
+            bg = r["background_change"]
+            if max(tgt, sib) <= bg:
+                oi_peak = r.get("off_instance_peak", 0.0)
+                oi_amb = r.get("off_instance_ambient", 0.0)
+                if oi_peak > OFF_INSTANCE_EDIT_RATIO * (oi_amb + 1e-9):
+                    return "off_instance_edit"
+                return "no_tracked_change"
+            return "mis_targeted" if sib > tgt else "measurable"
     for r in recs:
         r.setdefault("outcome", outcome_class(r))
     report(recs, args)

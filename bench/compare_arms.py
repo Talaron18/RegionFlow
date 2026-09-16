@@ -122,13 +122,19 @@ def main() -> None:
 
     # ------------------------------------------------------------ outcomes --
     print("\nOUTCOMES (all cases; `valid` discards the worst failures)")
-    hdr = f"  {'arm':<10} {'mis':>12} {'no_tracked':>12} {'measurable':>12} {'valid':>10}"
+    # off_inst is the count `outcome_class` now carves out of what used to be
+    # `no_change`: a real edit, landing entirely outside every tracked mask.
+    # It is disjoint from no_tracked -- outcome_class returns exactly one
+    # string per case -- so the five columns still sum to len(ids).
+    hdr = (f"  {'arm':<10} {'mis':>12} {'no_tracked':>12} {'off_inst':>12}"
+          f" {'measurable':>12} {'valid':>10}")
     print(hdr)
     for n, a in arms.items():
         oc = collections.Counter(a[i].get("outcome", outcome_class(a[i])) for i in ids)
         nv = sum(1 for i in ids if a[i]["valid"])
         print(f"  {n:<10} {oc['mis_targeted']:>5} ({oc['mis_targeted']/len(ids):>4.0%})"
-              f" {oc['no_change']:>5} ({oc['no_change']/len(ids):>4.0%})"
+              f" {oc['no_tracked_change']:>5} ({oc['no_tracked_change']/len(ids):>4.0%})"
+              f" {oc['off_instance_edit']:>5} ({oc['off_instance_edit']/len(ids):>4.0%})"
               f" {oc['measurable']:>5} ({oc['measurable']/len(ids):>4.0%})"
               f" {nv:>4} ({nv/len(ids):>4.0%})")
 

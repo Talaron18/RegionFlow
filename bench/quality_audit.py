@@ -247,7 +247,7 @@ def score(path: Path):
 
     print("\n  quality BY the metric's outcome class")
     print(f"    {'outcome':<13} {'n':>3}  " + "".join(f"{k:>11}" for k in VERDICTS))
-    for oc in ("measurable", "mis_targeted", "no_change"):
+    for oc in ("measurable", "mis_targeted", "no_tracked_change", "off_instance_edit"):
         rs = [e for e in done if e["outcome"] == oc]
         if not rs:
             continue
@@ -285,7 +285,8 @@ def self_test():
     # the interior of the target must be UNMODIFIED on both panels
     assert arr[200, 200, 0] == 90 and arr[200, 200 + 516, 0] == 160
 
-    recs = [{"id": f"r-{i}", "outcome": ["measurable", "mis_targeted", "no_change"][i % 3],
+    recs = [{"id": f"r-{i}",
+             "outcome": ["measurable", "mis_targeted", "no_tracked_change"][i % 3],
              "category": "person" if i % 2 else "car"} for i in range(30)]
     sel = stratified(recs, 12, seed=0)
     assert len(sel) == 12 and len({r["id"] for r in sel}) == 12
