@@ -185,6 +185,17 @@ def main() -> int:
                     default="v_inst",
                     help="origin the correction is rescaled about. v_inst "
                          "makes a=0 the frozen-field baseline.")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="drives BOTH RNG streams, which STAGE1C Sec.6 "
+                         "flagged as hard-coded and un-held-out: the numpy "
+                         "sample-selection RNG uses --seed directly, the "
+                         "torch noise RNG uses --seed + 1234. The +1234 "
+                         "offset is chosen so the default --seed 0 "
+                         "reproduces the exact hard-coded values (0 and "
+                         "1234) every number in STAGE1C was measured "
+                         "against -- pass a different --seed to check "
+                         "whether a result is seed-sensitive, per the scope "
+                         "limit 'held out in t and Delta but not in data.'")
     args = ap.parse_args()
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
@@ -193,7 +204,8 @@ def main() -> int:
 
     cache = TripletCache(args.cache)
     n = min(args.samples, len(cache))
-    idx = np.random.default_rng(0).choice(len(cache), size=n, replace=False)
+    idx = np.random.default_rng(args.seed).choice(len(cache), size=n,
+                                                   replace=False)
     x0 = torch.stack([torch.from_numpy(cache[int(j)]["z_tgt"]) for j in idx])
     pe = torch.stack([torch.from_numpy(cache[int(j)]["prompt_embeds"])
                       for j in idx])
@@ -213,7 +225,7 @@ def main() -> int:
     x0 = x0.to(args.device).float()
     pe = pe.to(args.device, adapter.model_dtype)
     po = po.to(args.device, adapter.model_dtype)
-    g = torch.Generator(device=args.device).manual_seed(1234)
+    g = torch.Generator(device=args.device).manual_seed(args.seed + 1234)
     eps = torch.randn(x0.shape, device=args.device, generator=g)
 
     results = {}
@@ -250,8 +262,25 @@ def main() -> int:
 
         rows = []
         for d in args.deltas:
-            t = torch.full((n,), args.t_center + d / 2, device=args.device)
-            r = torch.full((n,), args.t_center - d / 2, device=args.device)
+            t_val = args.t_center + d / 2
+            r_val = args.t_center - d / 2
+            # DOMAIN GUARD. true_average_velocity integrates from r with no
+            # clamp. STAGE1C Sec.2.3: t_center=0.20/Delta=0.5 silently
+            # queried r=-0.05, and its mirror t_center=0.80/Delta=0.5
+            # queried t=1.05 (cos -0.056, D_r_true 68%) -- both read as real
+            # cells and had to be caught by hand, after the fact, by
+            # checking "r = t_c - Delta/2 >= 0 and t = t_c + Delta/2 <= 1
+            # before reading any cell." Automate that check instead of
+            # relying on it being done by hand every time: skip the cell,
+            # print why, and do not let a query outside where the
+            # trajectory is even defined reach `rows`.
+            if r_val < -1e-6 or t_val > 1 + 1e-6:
+                print(f"  d={d:<5} SKIPPED: r={r_val:.3f} t={t_val:.3f} at "
+                      f"t_center={args.t_center} is outside [0, 1] -- "
+                      "true_average_velocity's integration domain")
+                continue
+            t = torch.full((n,), t_val, device=args.device)
+            r = torch.full((n,), r_val, device=args.device)
             tt = t.reshape(-1, 1, 1, 1)
             z_t = (1 - tt) * x0 + tt * eps
 
@@ -345,11 +374,25 @@ def main() -> int:
     Path(args.out).write_text(json.dumps(
         {"config": vars(args), "results": results}, indent=1, default=str))
 
+    # present_deltas, not args.deltas: the domain guard above can now skip a
+    # (t_center, Delta) cell outside [0, 1], so a header built from the
+    # REQUESTED deltas could show more columns than a row actually has.
+    # Every checkpoint sees the same guard at the same t_center, so the
+    # surviving set is identical across results -- take it from whichever
+    # ran first.
+    first = next(iter(results.values()))
+    present_deltas = [r["delta"] for r in first["rows"]]
+    if len(present_deltas) < len(args.deltas):
+        print(f"\n[domain] {len(args.deltas) - len(present_deltas)} of "
+              f"{len(args.deltas)} requested deltas were skipped at "
+              f"t_center={args.t_center} (see [domain] SKIPPED lines above); "
+              f"tables below cover only {present_deltas}")
+
     print("\n" + "=" * 78)
     print("model/base < 1 means the learned interval field beats simply reusing")
     print("the instantaneous velocity. The largest Delta where that holds is")
     print("the Gate B answer.\n")
-    hdr = f"{'ckpt':<30}" + "".join(f"{'d=' + str(d):>10}" for d in args.deltas)
+    hdr = f"{'ckpt':<30}" + "".join(f"{'d=' + str(d):>10}" for d in present_deltas)
     print(hdr)
     for name, res in results.items():
         print(f"{name:<30}" + "".join(f"{r['vs_base']:>10.3f}"
@@ -357,8 +400,7 @@ def main() -> int:
     print("(model/base; < 1.0 beats doing nothing)")
 
     print("\n--- D_r: has the adapter acquired the interval dimension? ---")
-    print(f"{'':<30}" + "".join(f"{'d=' + str(d):>10}" for d in args.deltas))
-    first = next(iter(results.values()))
+    print(f"{'':<30}" + "".join(f"{'d=' + str(d):>10}" for d in present_deltas))
     print(f"{'TRUE (target)':<30}"
           + "".join(f"{100*r['D_r_true']:>9.1f}%" for r in first["rows"]))
     for name, res in results.items():
