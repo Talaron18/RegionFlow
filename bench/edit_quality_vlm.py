@@ -251,7 +251,21 @@ def siliconflow_judge(model: str = "Qwen/Qwen3.6-35B-A3B"):
 
     import requests  # noqa: PLC0415
 
-    api_key = "fill your own api-key"
+    # bench/.env, SILICONFLOW_API_KEY=... -- gitignored (.gitignore's ".env"
+    # line has no leading slash, so it matches at any depth, this path
+    # included). Falls back to an already-exported env var if the file is
+    # absent, so either way of setting the key keeps working.
+    env_path = Path(__file__).parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            if k.strip() == "SILICONFLOW_API_KEY":
+                os.environ.setdefault("SILICONFLOW_API_KEY", v.strip().strip('"\''))
+                break
+    api_key = os.environ["SILICONFLOW_API_KEY"]
 
     def fn(panel: Image.Image, prompt: str) -> str:
         buf = io.BytesIO()
