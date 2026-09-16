@@ -9,7 +9,12 @@ reimplementation (Stage 2) needs rented GPUs.
 
 ```bash
 # host prerequisites: docker, nvidia-container-toolkit
-cp docker/.env.example .env      # then set HF_TOKEN and DATA_DIR
+#
+# .env goes in docker/, NOT the repo root -- Compose v2 takes the project
+# directory from the compose file's location, so a root-level .env is
+# silently ignored when you pass -f docker/compose.yml and DATA_DIR falls
+# back to the literal default. See SETUP.md step 4 for the full story.
+cp docker/.env.example docker/.env      # then set HF_TOKEN and DATA_DIR
 export UID=$(id -u) GID=$(id -g)
 
 docker compose -f docker/compose.yml build
@@ -17,8 +22,8 @@ docker compose -f docker/compose.yml run --rm dev python docker/smoke_test.py
 ```
 
 SD3-Medium is gated. Accept the licence on Hugging Face and put the token in
-`.env` before the first model download, or diffusers fails with a 401 that
-looks like a network error.
+`docker/.env` before the first model download, or diffusers fails with a 401
+that looks like a network error.
 
 ## What the smoke test is really checking
 
