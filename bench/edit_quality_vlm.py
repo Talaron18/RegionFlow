@@ -326,23 +326,42 @@ def siliconflow_judge(model: str = "Qwen/Qwen3.6-35B-A3B"):
         buf = io.BytesIO()
         panel.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode()
-        resp = requests.post(
-            "https://api.siliconflow.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": [
-                    {"type": "image_url",
-                     "image_url": {"url": f"data:image/png;base64,{b64}"}},
-                    {"type": "text", "text": prompt},
-                ]}],
-                "max_tokens": 600,
-                "enable_thinking": False,
-            },
-            timeout=120,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": [
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                {"type": "text", "text": prompt},
+            ]}],
+            "max_tokens": 600,
+            "enable_thinking": False,
+            # A scorer that samples is not a scorer -- two calls on the
+            # IDENTICAL panel+prompt returned 4.3 and 0.0 Overall before
+            # this was set (refedit-144, temperature defaults to 0.7 per
+            # SiliconFlow's own docs). 0.0 asks for the argmax response,
+            # not "less random"; if this model still varies at 0.0 that is
+            # itself a finding, not something to raise further.
+            "temperature": 0.0,
+        }
+        last_exc = None
+        for attempt in range(4):
+            try:
+                resp = requests.post(
+                    "https://api.siliconflow.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json=payload, timeout=120,
+                )
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"]["content"]
+            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout) as exc:
+                # Transient network failure, not a judge/parsing problem --
+                # retry with backoff. A 4xx/5xx from raise_for_status is a
+                # real API error and propagates immediately, uncaught here.
+                last_exc = exc
+                if attempt < 3:
+                    time.sleep(2 ** attempt)
+        raise last_exc
 
     return fn
 
