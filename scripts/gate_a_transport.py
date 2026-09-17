@@ -102,7 +102,8 @@ def cmd_train(args) -> int:
         raise RuntimeError("adapter is inert; training would be a no-op")
 
     pf = PairFlowConfig(mask_dropout=args.mask_dropout,
-                        cond_dropout=args.cond_dropout)
+                        cond_dropout=args.cond_dropout,
+                        sigma0=args.sigma0)
 
     def loss_fn(model, batch, step, cfg):
         dev, mdt = args.device, model.model_dtype
@@ -270,9 +271,17 @@ def cmd_eval(args) -> int:
         labels = ["source", f"VAE recon  dE={vae_pt.dE:.1f} st={vae_pt.struct:.2f}"]
         pts = []
         for a in STRENGTHS:
+            # Re-seeded FRESH for every `a`, not one generator advancing
+            # across the sweep -- the sweep is only meaningful if every
+            # strength queries the SAME sampled mode (same eps) and only
+            # `a` itself varies. An advancing generator would silently
+            # compare different modes at different strengths.
+            gen = (torch.Generator(device=args.device).manual_seed(args.eval_seed)
+                  if args.sigma0 > 0 else None)
             z_e = apply_transport(adapter, z.float(), m, pe, pooled,
                                   strength=a, steps=args.steps_readout,
-                                  pin_background=not args.no_pin)
+                                  pin_background=not args.no_pin,
+                                  sigma0=args.sigma0, generator=gen)
             edited = helper.decode_latent(z_e)
             p = evaluate_point(name, a, recon, edited, mask)
             p.extra["vs_source_dE"] = evaluate_point(name, a, img, edited, mask).dE
@@ -371,6 +380,13 @@ def main() -> int:
     t.add_argument("--max-blocks", type=int, default=None)
     t.add_argument("--mask-dropout", type=float, default=0.1)
     t.add_argument("--cond-dropout", type=float, default=0.1)
+    t.add_argument("--sigma0", type=float, default=0.0,
+                   help="Direction A (GATE_A_REOPENING_PLAN.md SS8): "
+                        "mask-gated noise at the s=0 query point, "
+                        "sigma(s)=sigma0*(1-s). 0.0 (default) is the "
+                        "original deterministic pairflow, byte-identical. "
+                        "Start small (e.g. 0.1-0.3 relative to latent "
+                        "scale) and sweep -- not validated at any value yet.")
     t.add_argument("--log-every", type=int, default=25)
     t.add_argument("--ckpt-every", type=int, default=500,
                    help="numbered snapshots land every 5x this")
@@ -408,6 +424,25 @@ def main() -> int:
                         "Measures whether the model localises on its own, "
                         "which is a separate result from edit quality and is "
                         "NOT comparable with Stage 0's pinned numbers.")
+    e.add_argument("--sigma0", type=float, default=0.0,
+                   help="sample WITH Direction A's mode-selecting noise "
+                        "(GATE_A_REOPENING_PLAN.md SS8) instead of querying "
+                        "at z_src exactly. 0.0 (default) keeps this sweep "
+                        "continuous with Stage 0's deterministic methodology "
+                        "-- if the checkpoint was TRAINED with sigma0>0, "
+                        "that means evaluating it slightly off its own "
+                        "training distribution (see apply_transport's "
+                        "docstring); use this flag to check that gap "
+                        "directly, or to preview stochastic samples, but "
+                        "the sweep's oracle-relative verdict is the "
+                        "sigma0=0 run for comparability. Direction A's "
+                        "PRIMARY evaluation is the Gate C scoreboard, "
+                        "sampled with sigma0>0 -- not yet wired here, see "
+                        "the reopening plan.")
+    e.add_argument("--eval-seed", type=int, default=0,
+                   help="generator seed for --sigma0 sampling; re-seeded "
+                        "fresh for every strength in the sweep so all "
+                        "points compare the same sampled mode")
     e.add_argument("--i-looked-at-the-images", action="store_true")
     e.add_argument("--device", default="cuda")
     e.add_argument("--model", default=common["model"])

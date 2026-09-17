@@ -23,6 +23,15 @@ train u_theta(z_s, s, c, M) ~ v, and read the edit out in one step at s = 0:
 which is literally z + Delta z. Noise never enters. The source is never
 destroyed to make room for the edit -- it is displaced.
 
+DIRECTION A (GATE_A_REOPENING_PLAN.md SS7-8), sigma0 > 0 in PairFlowConfig:
+this is Gate A's own reopening after the above was diagnosed as multimodal-
+target collapse (MSE learns E[v|z,c,M], and at s=0 every plausible edit
+mode shares the identical query point, so nothing disambiguates them). Adds
+mask-gated noise AT the query point specifically -- see sample_path's own
+docstring for why sigma(0)=0 (the conventional stochastic-interpolant
+choice) would fix nothing here. sigma0=0.0 (default) reproduces the
+paragraph above exactly; noise stays opt-in.
+
 WHAT MAKES THIS A FALSIFICATION AND NOT A DEMO. The comparison is not "does it
 produce nice images". It is corr(dE, struct) on the SAME three objects, the
 SAME two colour directions and the SAME strength sweep as Stage 0, with
@@ -69,11 +78,20 @@ class PairFlowConfig:
     #: inference; also a clean ablation of how much of the displacement is
     #: coming from the instruction versus from the mask.
     cond_dropout: float = 0.1
+    #: Direction A (GATE_A_REOPENING_PLAN.md SS8): sigma(0) in the stochastic
+    #: interpolant z_s = (1-s)*z_src + s*z_tgt + sigma(s)*eps, sigma(s) =
+    #: sigma0*(1-s). 0.0 (default) is byte-identical to the original
+    #: deterministic pairflow -- see sample_path's own docstring for why
+    #: sigma0 has to be > 0 at s=0 specifically, not just somewhere on the
+    #: path, for this to do anything at the one-step readout.
+    sigma0: float = 0.0
 
 
 def sample_path(
     z_src: torch.Tensor,
     z_tgt: torch.Tensor,
+    mask: torch.Tensor | None = None,
+    sigma0: float = 0.0,
     generator: torch.Generator | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Uniform s along the straight path. Returns (z_s, s, v).
@@ -83,12 +101,49 @@ def sample_path(
     here and no reason to prefer any point on the path. Copying that choice
     across would over-sample s ~ 0.5 and starve s = 0, which is the only point
     the one-step readout ever evaluates.
+
+    sigma0 > 0 -- DIRECTION A (GATE_A_REOPENING_PLAN.md SS7-8). The module
+    docstring's "noise never enters" was true of the ORIGINAL deterministic
+    formulation and is exactly what Gate A's own reopening plan diagnoses as
+    the bug: the one-step readout queries u(z_src, 0, c, M), and at s=0 the
+    conditioning is IDENTICAL for every plausible edit mode -- there is
+    nothing at the query point to select which one. Standard stochastic
+    interpolants take sigma(0)=sigma(1)=0 so the endpoints stay exact; doing
+    that here would change nothing at s=0, the only point ever read out.
+    This uses sigma(s) = sigma0*(1-s) instead: sigma(0)=sigma0>0 (mode
+    selection AT the query point), sigma(1)=0 (z_1=z_tgt stays exact, same
+    as before).
+
+    Folds into a NOISED EFFECTIVE SOURCE rather than a separate noise term:
+
+        z_src' = z_src + sigma0*eps*mask
+        z_s    = (1-s)*z_src' + s*z_tgt        (this function's existing
+        v      = z_tgt - z_src'                 formula, z_src -> z_src')
+
+    which is why this is a substitution into the existing code path rather
+    than new machinery. MASK-GATED so the noise never touches the
+    background: outside the mask z_src'=z_src exactly and v=0 exactly as
+    before, preserving PairFlowConfig's "leave the background alone"
+    property and this module's own inside/outside loss split unchanged.
+    sigma0=0.0 (the default) makes z_src'=z_src identically -- BYTE-IDENTICAL
+    to the pre-Direction-A behaviour, not merely close to it (see self_test).
     """
     b = z_src.shape[0]
     s = torch.rand(b, device=z_src.device, generator=generator)
     s_ = s.reshape(-1, 1, 1, 1)
-    z_s = (1 - s_) * z_src + s_ * z_tgt
-    v = z_tgt - z_src
+
+    z_src_eff = z_src
+    if sigma0 > 0:
+        if mask is None:
+            raise ValueError(
+                "sigma0 > 0 requires mask (the noise is mask-gated so it "
+                "never touches the background -- see docstring)")
+        eps = torch.randn(z_src.shape, device=z_src.device,
+                          generator=generator, dtype=z_src.dtype)
+        z_src_eff = z_src + sigma0 * eps * mask
+
+    z_s = (1 - s_) * z_src_eff + s_ * z_tgt
+    v = z_tgt - z_src_eff
     return z_s, s, v
 
 
@@ -108,7 +163,8 @@ def pairflow_loss(
     satisfy the signature; in pair mode the gate ignores it (gate = 1), which
     is the whole reason that mode exists.
     """
-    z_s, s, v = sample_path(z_src, z_tgt, generator)
+    z_s, s, v = sample_path(z_src, z_tgt, mask=mask, sigma0=cfg.sigma0,
+                            generator=generator)
 
     m = mask
     if cfg.mask_dropout > 0:
@@ -212,8 +268,22 @@ def apply_transport(
     strength: float = 1.0,
     steps: int = 1,
     pin_background: bool = True,
+    sigma0: float = 0.0,
+    generator: torch.Generator | None = None,
 ) -> torch.Tensor:
     """z_src -> z_edit. steps=1 is the headline; steps>1 integrates the path.
+
+    sigma0 > 0 -- DIRECTION A sampling (GATE_A_REOPENING_PLAN.md SS8). The
+    query starts at z_src + sigma0*eps*mask (matching training's z_src',
+    mask-gated so the background is never perturbed), not at z_src itself.
+    Sample fresh eps each call for a genuinely different mode each time;
+    pass `generator` for a reproducible draw (same generator + same inputs
+    -> same edit). A model TRAINED with sigma0>0 and then EVALUATED at
+    sigma0=0 queries it at z_src exactly, which training never actually saw
+    as a fixed point (only as eps's average) -- mildly off-distribution.
+    Use sigma0=0 at eval only for continuity with Stage 0's existing
+    deterministic sweep methodology; Direction A's primary evaluation
+    samples WITH sigma0>0 (see the reopening plan's evaluation track).
 
     pin_background=True applies the displacement ONLY inside the mask:
 
@@ -237,6 +307,10 @@ def apply_transport(
     readout is an approximation that should be reported as such.
     """
     z = z_src.clone()
+    if sigma0 > 0:
+        eps = torch.randn(z_src.shape, device=z_src.device,
+                          generator=generator, dtype=z_src.dtype)
+        z = z + sigma0 * eps * mask
     b = z.shape[0]
     m = mask if pin_background else torch.ones_like(mask)
     grid = torch.linspace(0.0, strength, steps + 1, device=z.device)
@@ -245,3 +319,122 @@ def apply_transport(
         u = model(z, s, s, prompt_embeds, pooled, mask=mask)
         z = z + float(grid[i + 1] - grid[i]) * u * m
     return z
+
+
+# --------------------------------------------------------------- self-test --
+
+def _fake_pair_model(u_value: torch.Tensor):
+    """A model stub that always returns u_value, ignoring its inputs -- for
+    exercising apply_transport's integration/masking logic without a real
+    TransportAdapter (which needs a loaded SD3 transformer)."""
+    def fn(z, s, r, prompt_embeds, pooled, mask=None):
+        return u_value
+    return fn
+
+
+def self_test() -> None:
+    """sample_path's sigma0 math and apply_transport's sigma0 sampling,
+    CPU-only, no model weights needed. Run BEFORE trusting Direction A's
+    training run, same discipline as bench/off_instance.py and
+    bench/edit_quality_vlm.py -- this module had no self-test before
+    Direction A added non-trivial new logic to it.
+    """
+    torch.manual_seed(0)
+    B, C, H, W = 2, 4, 8, 8
+    z_src = torch.randn(B, C, H, W)
+    z_tgt = torch.randn(B, C, H, W)
+    mask = torch.zeros(B, 1, H, W)
+    mask[:, :, 2:6, 2:6] = 1.0  # a block in the middle, rest is background
+
+    # sigma0=0.0 must be BYTE-IDENTICAL to the pre-Direction-A formula --
+    # this is the backward-compatibility guarantee every existing Gate A
+    # run and checkpoint depends on.
+    gen = torch.Generator().manual_seed(1)
+    z_s0, s0, v0 = sample_path(z_src, z_tgt, mask=mask, sigma0=0.0, generator=gen)
+    gen2 = torch.Generator().manual_seed(1)
+    s_ref = torch.rand(B, generator=gen2).reshape(-1, 1, 1, 1)
+    assert torch.allclose(z_s0, (1 - s_ref) * z_src + s_ref * z_tgt)
+    assert torch.equal(v0, z_tgt - z_src)
+
+    # sigma0 > 0 requires a mask -- noise with nothing to gate it is exactly
+    # the "noise enters everywhere" failure mode this design explicitly
+    # avoids; refuse rather than silently un-gate it.
+    try:
+        sample_path(z_src, z_tgt, mask=None, sigma0=0.5)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("sigma0 > 0 without a mask must raise")
+
+    # sigma0 > 0: outside the mask, z_s and v must be UNCHANGED from the
+    # sigma0=0 case -- the noise must never touch the background, or
+    # PairFlowConfig's "leave the background alone" property breaks.
+    gen = torch.Generator().manual_seed(2)
+    z_s1, s1, v1 = sample_path(z_src, z_tgt, mask=mask, sigma0=0.8, generator=gen)
+    out = (mask < 0.5).expand_as(v1)
+    gen = torch.Generator().manual_seed(2)
+    z_s0b, _, v0b = sample_path(z_src, z_tgt, mask=mask, sigma0=0.0, generator=gen)
+    assert torch.allclose(v1[out], v0b[out]), "background v must be untouched"
+    # inside the mask, v must actually have moved (the whole point of sigma0).
+    ins = (mask >= 0.5).expand_as(v1)
+    assert not torch.allclose(v1[ins], v0b[ins]), \
+        "sigma0>0 did not change anything inside the mask"
+
+    # v is constant across s (same invariant as the sigma0=0 case) -- the
+    # noise depends on the fixed per-example eps, not on s itself.
+    gen = torch.Generator().manual_seed(3)
+    _, _, v_a = sample_path(z_src, z_tgt, mask=mask, sigma0=0.5, generator=gen)
+    gen = torch.Generator().manual_seed(3)
+    # same generator seed -> same eps -> same v, independent of how many
+    # times s itself is redrawn from it beforehand doesn't apply here since
+    # s and eps are drawn in a fixed order inside sample_path; re-deriving
+    # the call must reproduce identically.
+    _, _, v_b = sample_path(z_src, z_tgt, mask=mask, sigma0=0.5, generator=gen)
+    assert torch.equal(v_a, v_b)
+
+    # apply_transport: at strength=0, sigma0=0 must return z_src EXACTLY
+    # (the "do nothing" baseline every eval sweep's a=0 point relies on).
+    u_stub = torch.ones(B, C, H, W)
+    z_out = apply_transport(_fake_pair_model(u_stub), z_src, mask,
+                            prompt_embeds=None, pooled=None,
+                            strength=0.0, steps=4, sigma0=0.0)
+    assert torch.equal(z_out, z_src)
+
+    # apply_transport: at strength=0, sigma0>0 must perturb ONLY inside the
+    # mask -- the background must still read back exactly z_src, even
+    # though the query point itself was noised.
+    gen = torch.Generator().manual_seed(4)
+    z_out2 = apply_transport(_fake_pair_model(u_stub), z_src, mask,
+                             prompt_embeds=None, pooled=None,
+                             strength=0.0, steps=4, sigma0=0.6, generator=gen)
+    assert torch.allclose(z_out2[out], z_src[out]), \
+        "sigma0>0 leaked noise into the background"
+    assert not torch.allclose(z_out2[ins], z_src[ins]), \
+        "sigma0>0 did not perturb the masked query point"
+
+    # Same generator -> same sampled edit (reproducibility); different
+    # generator -> a different one (genuine stochasticity, the whole point).
+    gen_a = torch.Generator().manual_seed(5)
+    z_a = apply_transport(_fake_pair_model(u_stub), z_src, mask,
+                          prompt_embeds=None, pooled=None,
+                          strength=1.0, steps=1, sigma0=0.6, generator=gen_a)
+    gen_b = torch.Generator().manual_seed(5)
+    z_b = apply_transport(_fake_pair_model(u_stub), z_src, mask,
+                          prompt_embeds=None, pooled=None,
+                          strength=1.0, steps=1, sigma0=0.6, generator=gen_b)
+    assert torch.equal(z_a, z_b)
+    gen_c = torch.Generator().manual_seed(6)
+    z_c = apply_transport(_fake_pair_model(u_stub), z_src, mask,
+                          prompt_embeds=None, pooled=None,
+                          strength=1.0, steps=1, sigma0=0.6, generator=gen_c)
+    assert not torch.equal(z_a, z_c)
+
+    print("pairflow self-test OK")
+
+
+if __name__ == "__main__":
+    import sys
+    if "--self-test" in sys.argv:
+        self_test()
+    else:
+        print(__doc__)

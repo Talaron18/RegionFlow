@@ -355,3 +355,108 @@ colour artifact, and the probe that was meant to settle it came back
 statistically real but small, with its most informative half (same-source)
 unavailable in this cache. Proceed toward Direction A; don't claim the
 mechanism is established.
+
+---
+
+## 8. Direction A, concrete design — σ(0) > 0, decided
+
+Implemented, not just scoped: `transport/pairflow.py`'s `sample_path` /
+`pairflow_loss` / `apply_transport` and `scripts/gate_a_transport.py`'s
+`train`/`eval` CLIs now carry a `sigma0` parameter end to end. Self-tested
+(`python transport/pairflow.py --self-test`, CPU-only, no model weights)
+and both CLIs' `--help` confirmed. Nothing here has been trained yet —
+that's the GPU step, still to run.
+
+### The substitution
+
+`sigma(s) = σ0·(1−s)` — `σ(0) = σ0 > 0` (the fix), `σ(1) = 0` (endpoint
+stays exact, `z_1 = z_tgt`). This folds into a **noised effective source**
+rather than a separate noise term added on top of the existing formula:
+
+```
+z_src' = z_src + σ0·ε·M            (mask-gated: ε ~ N(0,I), M the edit mask)
+z_s    = (1−s)·z_src' + s·z_tgt    (unchanged formula, z_src → z_src')
+v      = z_tgt − z_src'            (unchanged formula, z_src → z_src')
+```
+
+Two consequences of doing it this way rather than adding an explicit
+`σ(s)ε` term to `z_s` and a separate `σ'(s)ε` term to `v`:
+
+- **`σ0 = 0.0` is byte-identical to the original deterministic pairflow**,
+  not merely close to it — `z_src' = z_src` exactly, so every existing
+  checkpoint, every existing eval number, and the whole Stage-0-comparable
+  methodology stay reproducible with the new code unchanged. Checked in
+  `self_test()`, not asserted.
+- **Mask-gated, so the background is untouched.** Outside the mask
+  `z_src' = z_src` and `v = 0` exactly as before, preserving
+  `PairFlowConfig`'s existing "leave the background alone" property and its
+  inside/outside loss split without modification.
+
+### Training (`sample_path` / `pairflow_loss`)
+
+One line changed in the training loop's effect, nothing structural:
+`PairFlowConfig.sigma0` (default `0.0`) threads into `sample_path`, which
+now takes `mask` (it didn't before — added, since the noise has to be
+gated by something). `pairflow_loss` passes the same `mask` it already
+had. `--sigma0` is a new flag on `gate_a_transport.py train`.
+
+Not yet decided, because it needs real data, not code: **the value of
+`σ0` itself.** Start small and sweep — the ambiguity probe's own effect
+size (median gap 0.056, moderate-not-large) argues against reaching for a
+large value first. No self-test can validate a hyperparameter; this is a
+GPU decision, guided by `move_ratio`/`cos`/`rel_in` (already instrumented
+in `pairflow_loss`'s stats dict) at each candidate `σ0`.
+
+### Inference (`apply_transport`)
+
+The query point starts at `z_src' = z_src + σ0·ε·M` (fresh `ε` per call,
+mask-gated, matching training exactly), not at `z_src`. `--sigma0` and
+`--eval-seed` are new flags on `gate_a_transport.py eval`; the sweep
+re-seeds fresh for every strength `a` rather than letting one generator
+advance across it, so the whole strength sweep for a case compares the
+*same* sampled mode and only `a` varies — an advancing generator would
+have silently compared different modes at different strengths, which
+would have corrupted the oracle-relative-structure sweep without erroring.
+
+**One asymmetry worth stating plainly, not discovering later:** a
+checkpoint *trained* with `σ0 > 0` and then *evaluated* with `σ0 = 0`
+queries it at `z_src` exactly — a point training never actually saw fixed
+(only its average over `ε`). That's mild covariate shift, not a bug, but
+it means the existing Stage-0-style deterministic sweep (`--sigma0 0.0`,
+the default, kept for continuity) is evaluating the model slightly off its
+own training distribution once `σ0 > 0` training is used. Use it for
+continuity checking, not as Direction A's verdict.
+
+### The two evaluation tracks, and which is primary
+
+1. **Existing decoupling sweep** (`bench/decoupling.py`, oracle-relative
+   structure, `STAGE0_IDS`, the pre-registered `|corr| < 0.5` threshold) —
+   kept for continuity, run at `--sigma0 0.0` by default. Useful as a
+   sanity check that Direction A training hasn't broken the deterministic
+   path, **not** as the mechanism's verdict — it's 3 cases, same
+   provenance problem this whole reopening exists to fix.
+2. **Gate C scoreboard** (151 cases, the `mis_targeted` classifier, the
+   GLM-5.3-Flash judge at ρ = 0.717, `off_instance`) — **the primary
+   evaluation**, per §4's original plan. **Not wired yet.** Needs a new
+   arm: a `run_gate_c.py`-compatible model wrapper that loads a Direction A
+   checkpoint (`TransportAdapter` + `apply_transport`) and calls it with
+   `sigma0 > 0` per case, the same way `MODEL_REPOS`' existing entries wrap
+   `SD3_UltraEdit_w_mask` etc. That wrapper is the next concrete piece of
+   work once a checkpoint exists to score — not before, since writing it
+   against an untrained model would be guessing at the interface.
+
+### What's left, in order
+
+1. Pick a first `σ0` (small; start the sweep once a candidate is chosen —
+   not decided here).
+2. Train (`gate_a_transport.py train --sigma0 <value> ...`), on the
+   existing MagicBrush cache — no new data needed.
+3. Sanity-check with the existing decoupling sweep at `--sigma0 0.0`
+   (continuity) and `--sigma0 <value>` (does sampling actually look
+   different / more plausible on the 3 Stage 0 cases — `--i-looked-at-the-
+   images` still applies, this project's automated verdicts have been
+   wrong every time they fired).
+4. Write the Gate C scoreboard arm wrapper (§8 point 2 above).
+5. Score on the full 151-case Gate C scoreboard. This is the number that
+   answers the actual question — not the 3-case sweep, not the ambiguity
+   probe, this.
