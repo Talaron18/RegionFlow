@@ -86,7 +86,32 @@ def cmd_train(args) -> int:
                         num_workers=4, drop_last=True, pin_memory=True)
 
     adapter = build_adapter(args.model, args.device, args.rank, args.max_blocks)
-    enable_memory_savers(adapter.transformer)
+    # Gradient checkpointing trades ~30-40% step time for activation memory,
+    # same as gate_b_meanflow.py's own dial -- but Gate A never needs
+    # forward-mode AD (pairflow_loss has no JVP estimator at all), so unlike
+    # Gate B this is a pure memory/speed dial with no --estimator jvp
+    # constraint to respect.
+    #
+    # It is also where this diffusers install breaks: diffusers==0.30.0.dev0
+    # (vendored for StableDiffusion3InstructPix2PixPipeline) has a
+    # checkpointed branch in transformer_sd3.py that assigns a
+    # JointTransformerBlock's tuple return to hidden_states without
+    # unpacking, so the NEXT block's LayerNorm gets a tuple and raises
+    # "layer_norm(): argument 'input' ... must be Tensor, not tuple" -- on
+    # the grad-ENABLED trainable forward itself, not just a no-grad probe
+    # (see transport/adapter.py::no_checkpoint_without_grad's docstring,
+    # which documents this exact error). Not caused by sigma0 or anything
+    # else in Direction A -- this fires on ANY gradient-checkpointed
+    # training step against this install. --no-grad-checkpointing is the
+    # workaround; patching the vendored diffusers source to unpack the
+    # tuple is the permanent fix.
+    if args.grad_checkpointing:
+        enable_memory_savers(adapter.transformer)
+    else:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        print("[train] gradient checkpointing OFF -- if this OOMs, lower "
+              "--batch and raise --accum by the same factor")
 
     # Structural guarantee, checked before a single gradient step.
     b = next(iter(loader))
@@ -380,6 +405,13 @@ def main() -> int:
     t.add_argument("--max-blocks", type=int, default=None)
     t.add_argument("--mask-dropout", type=float, default=0.1)
     t.add_argument("--cond-dropout", type=float, default=0.1)
+    t.add_argument("--grad-checkpointing", action="store_true", default=True)
+    t.add_argument("--no-grad-checkpointing", dest="grad_checkpointing",
+                   action="store_false",
+                   help="faster, more activation memory. Also the "
+                        "workaround for this diffusers install's "
+                        "checkpointed-branch tuple bug -- see cmd_train's "
+                        "own comment for the exact error and why")
     t.add_argument("--sigma0", type=float, default=0.0,
                    help="Direction A (GATE_A_REOPENING_PLAN.md SS8): "
                         "mask-gated noise at the s=0 query point, "
