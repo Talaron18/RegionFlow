@@ -284,14 +284,74 @@ n=3 supports. Either way, it's a real test of the claim instead of an
 assertion of it — the cheap decisive step Gate A never had. See
 `ambiguity_probe.py` below.
 
+### Result: run against the real cache
+
+The **same-source** side of the contrast came back empty — this cache has
+at most one turn-1 edit per source image (`precompute_cache.py`'s own
+`turns=(1,)` restriction), so no source image recurs across sessions with
+a different instruction. That's a finding about the cache, not the
+hypothesis: the intended contrast can't be run as designed against this
+data. `ambiguity_probe.py` fell back to a substitute null — random
+unrelated pairs (different instruction, any source) — so same-instruction
+had something to be measured against.
+
+| grouping | n | mean | median | p10 | p90 |
+|---|---|---|---|---|---|
+| same-instruction, different source | 177 | +0.177 | +0.165 | +0.047 | +0.352 |
+| unrelated (different instruction) | 177 | +0.127 | +0.108 | +0.036 | +0.262 |
+
+Median gap +0.056, Mann-Whitney U p = 2.1×10⁻⁵. **Statistically real, but
+small, and reads as a genuinely mixed result — not the clean confirmation
+either direction was hoping for.**
+
+- The gap is real: same-instruction pairs *are* more aligned than
+  unrelated ones, at p < 0.0001. The instruction is not directionally
+  inert.
+- The gap is small relative to the spread within each group (p10–p90 spans
+  ~0.2–0.3 in both), roughly a medium effect size, not a large one — same-
+  instruction pairs are nowhere close to aligned in any strong sense.
+- **Both medians are low in absolute terms** (0.165 and 0.108, both far
+  below 1.0). Even pairs sharing the exact same instruction string, across
+  different source images, average close to orthogonal. That's *consistent
+  with* substantial latent ambiguity in `v` given `(z,c,M)` — but it isn't
+  proof of it, because this substitute null can't separate "the instruction
+  underdetermines the edit" from "different source images produce
+  different displacement vectors for reasons that have nothing to do with
+  ambiguity" (different objects, different masks, different scene
+  content). The same-source contrast this probe was actually designed to
+  run would have isolated that; it wasn't available here.
+- **A new observation the unrelated-pairs baseline surfaced on its own:**
+  cosine 0.108 between *fully unrelated* edits is well above the ~0
+  a high-dimensional random-vector null would predict (65536-dim latents:
+  expected cosine noise floor is on the order of 1/√65536 ≈ 0.004). That
+  means most displacement vectors — regardless of instruction — already
+  share a fair amount of common structure, plausibly generic (mask
+  size/shape statistics, VAE latent-space geometry, "how much a masked
+  region typically shifts") rather than semantic. This dilutes both groups
+  similarly, but it means the same-instruction signal is smaller relative
+  to structure that has nothing to do with meaning than the raw 0.165
+  figure suggests on its own, and it's worth accounting for — e.g.
+  normalising out a generic/mean displacement component — before reading
+  too much into any single-instruction cosine number in future work.
+
+**Read on the hypothesis:** weak-to-moderate support for real ambiguity,
+not a decisive confirmation. Enough to proceed toward Direction A (with the
+`σ(0) > 0` fix) rather than abandon the reopening, but not enough to
+declare the mean-collapse mechanism established — it remains a
+well-supported hypothesis, which given Gate A's own n=3 provenance is the
+honest place to leave it before the retrain, not after.
+
 ### What to keep, what to drop
 
 **Keep:** the WHERE/WHAT unification (§2 above) as a genuinely good frame.
-The mode-selection diagnosis, with the `s=0` refinement. The probe, in its
-controlled (contrast) form, as the immediate next step.
+The mode-selection diagnosis, with the `s=0` refinement. The probe's result
+— weak-to-moderate, real support for ambiguity, not proof of it — as the
+actual current evidence base, in place of the original n=3.
 
 **Drop:** the Gate B cosine claim. Any confidence that the mechanism is
 established as fact rather than hypothesis — Gate A's failure rests on 3
 cases scored with a metric (`struct`) later shown to be substantially a
-colour artifact, which is precisely why the probe comes before the retrain,
-not after.
+colour artifact, and the probe that was meant to settle it came back
+statistically real but small, with its most informative half (same-source)
+unavailable in this cache. Proceed toward Direction A; don't claim the
+mechanism is established.
