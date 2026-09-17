@@ -294,7 +294,7 @@ def claude_judge(model: str = "claude-opus-5"):
     return fn
 
 
-def siliconflow_judge(model: str = "Qwen/Qwen3.6-35B-A3B"):
+def siliconflow_judge(model: str = "zai-org/GLM-5.3-Flash"):
     """SiliconFlow-hosted VLM judge, OpenAI-compatible chat/completions.
 
     Budget substitute for claude_judge -- NOT a claim of parity with
@@ -316,12 +316,22 @@ def siliconflow_judge(model: str = "Qwen/Qwen3.6-35B-A3B"):
     and would produce plausible-looking scores from the instruction text
     alone.
 
-    enable_thinking=False cuts reasoning-token overhead for models that
-    honor it (confirmed: Qwen3.6-35B-A3B goes to 2 completion tokens for a
-    trivial answer; Kimi-K3 still spends ~24 regardless). Some
-    reasoning-only models (zai-org/GLM-5.3-Flash) 400 on this flag entirely
-    ("model always thinks, use thinking_budget low/high/max instead") --
-    drop the flag from the payload if you point `model` at one of those.
+    Default is GLM-5.3-Flash, switched from Qwen3.6-35B-A3B after extensive
+    calibration work on Qwen (crop_to_target, temperature=0.0, a
+    closing-commit instruction, an outline-authority instruction -- see
+    GATE_C_REPORT.md SS5) got Spearman rho only to ~0.3 against the 40 human
+    blind verdicts, with several residual failure modes (apparent
+    fabrication, imprecise credit) that did not look prompt-fixable.
+    GLM-5.3-Flash is a REASONING-ONLY model: it 400s on enable_thinking=False
+    ("model always thinks, use thinking_budget low/high/max instead"), so
+    the payload below uses thinking_budget="low" instead. If you point
+    `model` back at Qwen3.6-35B-A3B or another non-reasoning-only model,
+    swap that back for enable_thinking=False (confirmed: Qwen3.6-35B-A3B
+    goes to 2 completion tokens for a trivial answer with it; Kimi-K3 still
+    spends ~24 regardless of the flag). Re-run the same calibration check
+    (GATE_C_REPORT.md SS5's re-test scripts) against this model before
+    trusting it any further than Qwen was trusted -- switching models is not
+    itself validation.
     """
     import base64
     import io
@@ -356,8 +366,12 @@ def siliconflow_judge(model: str = "Qwen/Qwen3.6-35B-A3B"):
                  "image_url": {"url": f"data:image/png;base64,{b64}"}},
                 {"type": "text", "text": prompt},
             ]}],
-            "max_tokens": 600,
-            "enable_thinking": False,
+            "max_tokens": 800,
+            # GLM-5.3-Flash cannot disable thinking (400s on
+            # enable_thinking=False, "model always thinks"); "low" keeps the
+            # reasoning trace short so it doesn't eat the whole max_tokens
+            # budget the way the pre-fix Qwen run did at max_tokens=150.
+            "thinking_budget": "low",
             # A scorer that samples is not a scorer -- two calls on the
             # IDENTICAL panel+prompt returned 4.3 and 0.0 Overall before
             # this was set (refedit-144, temperature defaults to 0.7 per
