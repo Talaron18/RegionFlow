@@ -473,26 +473,64 @@ than bimodal.
 
 **The specific failure this section was chasing is mostly gone.** Only 2 of
 39 cases score ≥9.0 in this run (`refedit-134` at 9.22, `refedit-83` at
-9.08), down from 5 of 22 `no_edit` cases alone in the partial run — a drop
-from a ~23% high-scoring `no_edit` rate to at most 2/39 ≈ 5% overall, and
-possibly lower still since neither of the two remaining outliers is
-confirmed `no_edit` here (that needs the same `blind_key`/`blind_ledger`
-join used for the aggregate table above, not done in this pass).
+9.08), down from 5 of 22 `no_edit` cases alone in the partial run.
 `refedit-172` — the compound-reference case flagged earlier as a
 *structural* limit of cropping, expected to persist across judges — now
 scores **0.0**, not 9.5. Whether that is the outline-authority fix, the
 model switch, or both is not separated here; it is no longer a live
-concern either way. `refedit-134` is worth a second look on its own
-merits regardless of verdict, since it is also the case that earlier hit
-the 400 "parameter invalid" bug during scoring — this run confirms it now
-scores cleanly, but not what it scores *correctly*.
+concern either way.
 
-**Net effect on the consequence stated above: reversed.** This is no
-longer just "better correlation" — it is a judge that orders all four
-verdict classes correctly and has largely resolved its worst failure mode.
-Extending it to `white`/`oracle` at n=151 is now defensible in a way it
-was not at ρ=0.527; that extension has not been run yet (this section
-still covers `none` only), and doing it is the natural next step (§11).
+### Diagnosing the 2 remaining high scorers: one is not a failure, one is a new mechanism
+
+Rebuilt the exact cropped panel each judge call saw and captured the raw
+SC/PQ text (not just the parsed score), same method as before, and joined
+both against `blind_key.json`/`blind_ledger.json` for the human verdict.
+
+**`refedit-134` is not a judge failure.** Human verdict: **clean**.
+Instruction "Add a cap to the man with a black sweater" — the edit adds a
+cap that reads as genuinely well-integrated (pose, lighting, shading all
+consistent). SC=9.5, and the raw text describes exactly what happened in
+the crop. This is the judge being right, not a residual bug — the earlier
+framing of "2 unresolved high scorers" overcounted by one. (Separately:
+the automated metric marked this case `valid: False`, leakage_ratio
+0.373, while a human called it clean — a metric/human disagreement worth
+noting but orthogonal to the VLM judge.)
+
+**`refedit-83` is a real false positive, and it is a new mechanism.**
+Human verdict: **degraded**. Instruction: "Change the woman in a
+checkered shirt to a woman in a plain blue shirt." The edit did change the
+shirt to blue — but it also replaced the woman's face, hair, and
+expression with a different person's. SC scored this **10.0**
+("perfectly aligns with the instruction... preserving the surrounding
+context and the person's pose") and PQ scored it high too (naturalness
+8.5) — both prompts check whether the *instructed* attribute changed and
+whether the pixels look artifact-free, and neither asks whether the
+edited instance is still recognizably *the same individual* apart from
+the requested change. An attribute-edit instruction that swaps identity
+along the way currently reads as a clean success by this rubric.
+
+This is a different mechanism from every prior failure diagnosed in this
+section (outline override, fabrication, imprecise credit, cropped-context
+loss) — none of those were about identity preservation specifically. It
+is one case. Per this project's own standard, one case does not license a
+prompt change (a `refedit-119`-style "add an instruction" fix here would
+be curve-fitting a rubric to n=1). Not acted on. **Watch for the same
+pattern** — instructed attribute correct, but the subject's identity
+drifted — when `white`/`oracle` are scored; if it recurs, that is the
+threshold to add an identity-preservation check to `PQ_PROMPT`, mirroring
+how the outline-authority sentence was added only after `refedit-119` and
+`refedit-170` both showed the same override.
+
+**Net effect on the consequence stated above: reversed, with one caveat
+now named.** This is no longer just "better correlation" — it is a judge
+that orders all four verdict classes correctly and has resolved its worst
+failure mode down to one confirmed miss in 39 cases, with that miss's
+mechanism identified rather than mysterious. Extending it to `white`/
+`oracle` at n=151 is now defensible in a way it was not at ρ=0.527; that
+extension has not been run yet (this section still covers `none` only),
+and doing it is the natural next step (§11) — watching for identity-drift
+false positives in that run is now a specific, not just general, thing
+to check.
 
 ### One discrepancy, not resolved
 
@@ -506,15 +544,18 @@ single-object instructions. Flagged, not interpreted.
 
 - **The current judge (GLM-5.3-Flash) is now calibrated on the full
   backfilled `none` set: ρ = 0.717 (n=39), all four verdict classes
-  correctly ordered on both mean and median, high-scoring-`no_edit` down
-  to at most 2/39 cases.** This is a real improvement over the n=36
-  partial run (ρ=0.527) and over Qwen (ρ=0.170 → 0.333), not just a
-  larger sample of the same result. It is still calibrated on `none`
-  only — `white`/`oracle`/`sibling`/`freeform` have not been VLM-judged
-  at all — and the two remaining high-scoring outliers (`refedit-134`,
-  `refedit-83`) have not been diagnosed by verdict class. Treat every
-  number in this section as this judge's own read on the `none` arm,
-  now reasonably well-validated there, but not yet extended.
+  correctly ordered on both mean and median, and only 1 confirmed false
+  positive (`refedit-83`, of the 2 candidates — `refedit-134` turned out
+  to be a correctly-scored clean edit).** This is a real improvement over
+  the n=36 partial run (ρ=0.527) and over Qwen (ρ=0.170 → 0.333), not
+  just a larger sample of the same result. It is still calibrated on
+  `none` only — `white`/`oracle`/`sibling`/`freeform` have not been
+  VLM-judged at all. The one confirmed miss has a named mechanism
+  (identity drift on an attribute-edit instruction, not checked by either
+  SC_PROMPT or PQ_PROMPT) rather than being unexplained, but it rests on
+  n=1 and was not acted on for that reason — see the diagnosis above.
+  Treat every number in this section as this judge's own read on the
+  `none` arm, now reasonably well-validated there, but not yet extended.
 - **Judge substitution is unvalidated against GPT-4o**, separately from the
   calibration limit above. Everything in this section is GLM-5.3-Flash's
   reading, not a reproduction of RefEdit-Bench's own published numbers.
@@ -746,14 +787,17 @@ works; routing is not enough.
    Whichever way this goes, every `off_instance_edit` count in §3/§6 should
    be treated as provisional until it does.
 3. ~~Backfill the 4 missing cases~~ — done: GLM-5.3-Flash, n=39/40, ρ=0.717,
-   all four verdict classes correctly ordered, high-scoring `no_edit` down
-   to at most 2/39. Judge is now reasonably well-calibrated on `none`.
-   Remaining before extending: diagnose the 2 residual high scorers
-   (`refedit-134`, `refedit-83`) by verdict class — same raw-text +
-   cropped-panel method as before — then run `white`/`oracle`/`sibling`/
-   `freeform` through the judge. That last step is the one still not done;
-   it is what would turn §9's quality claim (currently 40 audited cases
-   only) into a full-151 comparison.
+   all four verdict classes correctly ordered. ~~Diagnose the 2 residual
+   high scorers~~ — done: `refedit-134` is a correctly-scored clean edit,
+   not a miss; `refedit-83` is a real false positive with a named
+   mechanism (identity drift on an attribute-edit instruction — SC/PQ
+   check the instructed attribute and pixel artifacts, not whether the
+   subject is still recognizably the same individual). Not prompt-fixed
+   on n=1; watch for recurrence when `white`/`oracle` are scored. Judge is
+   now reasonably well-calibrated on `none`. What's left: run `white`/
+   `oracle`/`sibling`/`freeform` through the judge. That's the one step
+   not done; it's what would turn §9's quality claim (currently 40
+   audited cases only) into a full-151 comparison.
 4. ~~Δ-order curriculum~~ — done, two seeds each, see `DELTA_CURRICULUM_REPORT.md`.
    Headline: A1 (Δ-order curriculum) beats the uncurriculed baseline by
    ~3% on `vs_base_at_a_opt` at the Δ=0.5 operating point, a gap that
