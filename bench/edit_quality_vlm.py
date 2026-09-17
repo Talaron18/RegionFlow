@@ -122,12 +122,23 @@ PROMPT_COLS = {"full": "editing_instruction", "single": "edit_instruction_single
 # change occurred... the edit did not occur inside the yellow region" --
 # then kept re-litigating its own conclusion for 600 tokens and never
 # emitted "[[score]]" at all, a parse failure rather than a wrong answer.
+# The outline-authority sentence was added after refedit-119 (a scarf added
+# to the RED dog, not the yellow one): the judge's own text showed it
+# re-deriving "the dog in the passenger seat" from the instruction's
+# wording, deciding that meant the red-outlined dog, and scoring success
+# against ITS OWN re-derived target instead of the yellow one it was told
+# to trust -- overriding the region restriction when its own reading of
+# the instruction disagreed with which instance the case assigned.
 SC_PROMPT = """You are given a source image and an edited image, side by \
 side (source on the left, edited on the right). The instance the editing \
 instruction refers to is outlined in YELLOW on both panels; any other \
 instances of the same category are outlined in RED. Judge the edit ONLY \
 within the yellow-outlined region -- ignore everything outside it, \
-including the red-outlined siblings and the rest of the frame.
+including the red-outlined siblings and the rest of the frame. The yellow \
+outline is the definitive target, chosen independently of the instruction's \
+exact wording. Even if the instruction's description seems to fit the \
+red-outlined instance better, trust the yellow outline and judge only what \
+happened there -- do not re-derive the target from the instruction text.
 
 The editing instruction was: "{instruction}"
 
