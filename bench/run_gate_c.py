@@ -233,6 +233,20 @@ def load_model(args):
             "no-mask arm for this checkpoint. --mask-mode white IS the\n"
             "no-spatial-information control. For a no-mask baseline use\n"
             "--model sd3-ultraedit-freeform instead.")
+    if args.model == "gate-a-transport":
+        if args.mask_mode == "none":
+            raise SystemExit(
+                "gate-a-transport REQUIRES a mask: the architecture takes it\n"
+                "as a required tensor input (AdapterConfig(mode='pair',\n"
+                "use_mask=True)), not an optional argument. --mask-mode white\n"
+                "IS the no-spatial-information control for this model, same\n"
+                "reasoning already established for sd3-ultraedit-mask.")
+        if not args.gate_a_ckpt:
+            raise SystemExit("--model gate-a-transport requires --gate-a-ckpt")
+        from gate_a_model import GateATransportModel  # noqa: PLC0415
+        return GateATransportModel(
+            args.gate_a_ckpt, sigma0=args.gate_a_sigma0, rank=args.gate_a_rank,
+            device=args.device, steps_readout=args.gate_a_steps_readout)
     if args.model in MODEL_REPOS:
         if args.model == "refedit-sd3" and args.mask_mode != "none":
             print("  NOTE: RefEdit-SD3 is finetuned on UltraEdit-FREEFORM, so a "
@@ -671,7 +685,21 @@ def main():
     p.add_argument("--coco-splits", default="train2014")
     p.add_argument("--coco-cache", default="/data/datasets/coco/desc")
     p.add_argument("--model", default="none",
-                   choices=("none",) + tuple(MODEL_REPOS))
+                   choices=("none", "gate-a-transport") + tuple(MODEL_REPOS))
+    p.add_argument("--gate-a-ckpt", default=None,
+                   help="checkpoint path for --model gate-a-transport "
+                        "(e.g. runs/gate_a_sigma_0.3/ckpt_final.pt)")
+    p.add_argument("--gate-a-sigma0", type=float, default=0.0,
+                   help="INFERENCE-time sigma0 for --model gate-a-transport "
+                        "-- must match what the checkpoint was TRAINED with "
+                        "(GATE_A_REOPENING_PLAN.md SS8); a mismatch queries "
+                        "the model off its own training distribution")
+    p.add_argument("--gate-a-rank", type=int, default=16,
+                   help="LoRA rank for --model gate-a-transport, must match "
+                        "training's --rank")
+    p.add_argument("--gate-a-steps-readout", type=int, default=1,
+                   help="readout steps for --model gate-a-transport; 1 is "
+                        "the one-step headline, >1 integrates the path")
     p.add_argument("--ablation", action="store_true",
                    help="also run edit_instruction_single with the same seed")
     p.add_argument("--steps", type=int, default=50)
