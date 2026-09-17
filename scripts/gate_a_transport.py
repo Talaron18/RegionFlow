@@ -10,6 +10,11 @@ source destruction?
     python scripts/gate_a_transport.py eval --ckpt runs/gate_a/ckpt_final.pt \
         --cases captions/captions.json --out runs/gate_a/eval
 
+    # watch a training run's log.jsonl and redraw a PNG every 100 steps --
+    # run this in a second terminal alongside `train`, touches nothing in
+    # the training loop itself
+    python scripts/gate_a_transport.py watch-log --out runs/gate_a --every 100
+
 The eval sweeps displacement magnitude a in [0, 1.5] and computes
 corr(dE, struct) with the Stage 0 metric code, on the Stage 0 cases. The
 verdict is decided by bench/decoupling.py against a threshold fixed before the
@@ -388,6 +393,197 @@ def _sheet(panels, labels, path, size=320):
     sheet.save(path)
 
 
+# ---------------------------------------------------------- log watching --
+
+def read_training_log(log_path: Path) -> list[dict]:
+    """Parse log.jsonl into the step-indexed training records Trainer.run
+    writes every cfg.log_every steps (transport/train.py). Drops val-only
+    records (they carry "val"/"best_val" but no "loss" -- a separate,
+    rarer event, not part of the per-step curve this plots).
+
+    TOLERANT OF A PARTIAL LAST LINE ON PURPOSE: this is read while a
+    training process may be mid-write to the same file (open("a"), one
+    json.dumps + "\\n" per record -- appends are usually atomic at this
+    size, but "usually" is not "always", and a watcher racing the
+    trainer's own writes is exactly the situation where "usually" bites).
+    A line that fails to parse is skipped, not raised -- it will parse
+    cleanly next read once the write completes.
+    """
+    if not log_path.exists():
+        return []
+    recs = []
+    for line in log_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "step" in r and "loss" in r:
+            recs.append(r)
+    return recs
+
+
+def plot_training_log(recs: list[dict], out_png: Path) -> None:
+    """Render step-indexed training records (read_training_log's output)
+    as a PNG. Four panels, not one combined axis -- loss (~1e-2), cos
+    (in [-1,1]) and grad_norm (~1e1) live on scales that would flatten
+    each other on a shared y-axis.
+
+    cos / rel_in_floor are the two curves Direction A specifically needs:
+    pairflow_loss's own stats dict already computes rel_in_floor = 1 -
+    cos^2, the MSE-optimal floor for the CURRENT alignment (GATE_A_
+    REOPENING_PLAN.md SS7 -- "1 - cos^2 is Gate B's own binding
+    constraint" is the same quantity, same reason it binds). If rel_in
+    is already tracking its own floor rather than falling further, more
+    steps will not close the gap; that is the sigma0 sweep's question,
+    not this run's, and the plot is what makes it visible without
+    combing through log.jsonl by hand.
+
+    Uses the Agg backend explicitly (headless -- this runs on a training
+    box with no display) and imports matplotlib lazily, matching this
+    project's convention for heavy/optional dependencies elsewhere
+    (torch imported inside functions throughout transport/ and scripts/).
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    if not recs:
+        return
+    steps = [r["step"] for r in recs]
+
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7))
+
+    ax = axes[0, 0]
+    ax.plot(steps, [r["loss"] for r in recs], label="loss")
+    if "loss_in" in recs[0]:
+        ax.plot(steps, [r["loss_in"] for r in recs], label="loss_in", alpha=0.7)
+        ax.plot(steps, [r["loss_out"] for r in recs], label="loss_out", alpha=0.7)
+    ax.set_title("loss")
+    ax.set_xlabel("step")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+
+    ax = axes[0, 1]
+    if "cos" in recs[0]:
+        ax.plot(steps, [r["cos"] for r in recs])
+        ax.axhline(0.0, color="grey", lw=0.5)
+        ax.set_ylim(-1.05, 1.05)
+    ax.set_title("cos(u, v) -- directional alignment")
+    ax.set_xlabel("step")
+    ax.grid(alpha=0.3)
+
+    ax = axes[1, 0]
+    if "rel_in" in recs[0]:
+        ax.plot(steps, [r["rel_in"] for r in recs], label="rel_in")
+        ax.plot(steps, [r["rel_in_floor"] for r in recs],
+               label="rel_in_floor (1-cos²)", linestyle="--")
+        ax.axhline(1.0, color="red", lw=0.5, alpha=0.5, label="predicting u=0")
+    ax.set_title("rel_in vs its own MSE floor")
+    ax.set_xlabel("step")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+
+    ax = axes[1, 1]
+    if "grad_norm" in recs[0]:
+        ax.plot(steps, [r["grad_norm"] for r in recs], label="grad_norm", alpha=0.6)
+    if "move_ratio" in recs[0]:
+        ax.plot(steps, [r["move_ratio"] for r in recs], label="move_ratio")
+    ax.set_title("grad_norm / move_ratio")
+    ax.set_xlabel("step")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+
+    fig.suptitle(f"{out_png.parent.name}  "
+                f"({len(recs)} log points, last step={steps[-1]})")
+    fig.tight_layout()
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=110)
+    plt.close(fig)
+
+
+def cmd_watch_log(args) -> int:
+    """Poll <out>/log.jsonl and redraw <out>/<png> once at least --every
+    new steps have been logged since the last draw. Runs in a second
+    terminal alongside `train` -- reads the log file Trainer.run already
+    writes, never touches the training process or transport/train.py.
+    """
+    import time
+
+    log_path = Path(args.out) / "log.jsonl"
+    out_png = Path(args.out) / args.png
+    last_drawn = -1
+    print(f"[watch-log] watching {log_path} -> {out_png}, redraw every "
+          f"{args.every} steps (polling every {args.poll_seconds:.0f}s"
+          f"{', once' if args.once else ', Ctrl-C to stop'})")
+    while True:
+        recs = read_training_log(log_path)
+        if recs and recs[-1]["step"] - last_drawn >= args.every:
+            plot_training_log(recs, out_png)
+            last_drawn = recs[-1]["step"]
+            print(f"[watch-log] step {last_drawn} -> {out_png}  "
+                  f"({len(recs)} points)")
+        if args.once:
+            break
+        try:
+            time.sleep(args.poll_seconds)
+        except KeyboardInterrupt:
+            print("\n[watch-log] stopped")
+            break
+    return 0
+
+
+def self_test() -> None:
+    """read_training_log / plot_training_log, CPU-only, no model weights,
+    no GPU -- run before trusting `watch-log` on a live training run."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        log_path = Path(td) / "log.jsonl"
+
+        # Missing file -> empty, not an error (watch-log starts before
+        # `train` has written its first record).
+        assert read_training_log(log_path) == []
+
+        recs_in = [
+            {"step": 25, "lr": 1e-4, "grad_norm": 1.2, "hours": 0.01,
+             "loss": 0.9, "loss_in": 0.95, "loss_out": 0.01,
+             "rel_in": 0.98, "rel_in_floor": 0.9, "cos": 0.31,
+             "move_ratio": 0.9, "amp_vs_optimal": float("nan")},
+            {"step": 50, "lr": 1e-4, "grad_norm": 1.1, "hours": 0.02,
+             "loss": 0.7, "loss_in": 0.75, "loss_out": 0.01,
+             "rel_in": 0.85, "rel_in_floor": 0.8, "cos": 0.45,
+             "move_ratio": 0.92, "amp_vs_optimal": 1.02},
+        ]
+        with log_path.open("w") as fh:
+            for r in recs_in:
+                fh.write(json.dumps(r) + "\n")
+            # a val-only record (no "loss") must be read and skipped, not
+            # raise -- Trainer.run() writes these interleaved with the
+            # per-step records whenever --val-every fires.
+            fh.write(json.dumps({"step": 50, "val": 0.5,
+                                 "best_val": 0.5}) + "\n")
+            # a truncated/corrupt line -- simulates reading mid-write,
+            # racing the trainer's own append -- must be skipped too.
+            fh.write('{"step": 75, "loss": 0.6, "in')
+
+        recs = read_training_log(log_path)
+        assert len(recs) == 2, recs
+        assert [r["step"] for r in recs] == [25, 50]
+
+        out_png = Path(td) / "curve.png"
+        plot_training_log(recs, out_png)
+        assert out_png.exists() and out_png.stat().st_size > 0
+
+        # Missing optional keys (e.g. a future stats dict without "cos")
+        # must not crash the render -- only the panels that have data.
+        plot_training_log([{"step": 1, "loss": 0.5}], Path(td) / "bare.png")
+        assert (Path(td) / "bare.png").exists()
+
+    print("gate_a_transport self-test OK")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -479,6 +675,24 @@ def main() -> int:
     e.add_argument("--device", default="cuda")
     e.add_argument("--model", default=common["model"])
     e.set_defaults(fn=cmd_eval)
+
+    w = sub.add_parser("watch-log")
+    w.add_argument("--out", default="runs/gate_a",
+                   help="same --out directory passed to `train`; reads "
+                        "<out>/log.jsonl")
+    w.add_argument("--every", type=int, default=100,
+                   help="redraw after at least this many new steps are "
+                        "logged since the last draw")
+    w.add_argument("--poll-seconds", type=float, default=10.0,
+                   help="how often to check the log file for new data")
+    w.add_argument("--png", default="training_curve.png",
+                   help="output filename, written inside --out")
+    w.add_argument("--once", action="store_true",
+                   help="draw once and exit instead of polling forever")
+    w.set_defaults(fn=cmd_watch_log)
+
+    s = sub.add_parser("self-test")
+    s.set_defaults(fn=lambda _args: self_test())
 
     args = ap.parse_args()
     return args.fn(args)
