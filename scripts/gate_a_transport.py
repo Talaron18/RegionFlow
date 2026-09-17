@@ -563,6 +563,92 @@ def cmd_diagnose(args) -> int:
     return 0
 
 
+def find_dead_lora_b(adapter_sd: dict) -> list[str]:
+    """lora_b keys whose tensor is exactly all-zero. The liveness count
+    every train/eval/diagnose command already prints ("190/191 non-zero")
+    collapses this to a number; this returns WHICH key(s), so a dead block
+    that's the SAME one across multiple checkpoints (structural -- e.g. a
+    block excluded by max_blocks, or one whose gradient path is genuinely
+    never exercised) can be told apart from one that moves around
+    (a training accident, e.g. an unlucky dead-ReLU-style zero-gradient
+    step early in one specific run).
+    """
+    return sorted(k for k in adapter_sd
+                 if "lora_b" in k and float(adapter_sd[k].abs().sum()) == 0.0)
+
+
+def mask_enc_status(adapter_sd: dict) -> dict:
+    """Per-key stats for every mask_enc.* parameter in a checkpoint's
+    adapter state dict, flagging transport/conditioning.py::MaskEncoder's
+    zero-init final projection (`out.weight`/`out.bias`) specifically.
+
+    The lora_b liveness check doesn't cover mask_enc at all (it isn't a
+    lora_b key) -- but delta_z = mask_enc.out(mask_enc.body(planes)) is
+    IDENTICALLY zero for every input as long as out.weight/out.bias stay
+    at their zero init, regardless of what mask_enc.body computed (a zero
+    final linear map kills both the forward output AND the gradient
+    flowing back to body, so body would never move either). In "pair"
+    mode the gate multiplying this contribution is architecturally always
+    1 (TransportAdapter._gate), never 0, so there's no structural reason
+    for out to still be at zero after real training -- if it still is,
+    that's a genuine bug in the conditioning path, not an expected
+    artifact of the gating.
+    """
+    out = {}
+    for k, t in adapter_sd.items():
+        if "mask_enc" not in k:
+            continue
+        is_zero_init = k.endswith("out.weight") or k.endswith("out.bias")
+        out[k] = {
+            "shape": tuple(t.shape),
+            "abs_sum": float(t.abs().sum()),
+            "abs_max": float(t.abs().max()),
+            "zero_init_layer": is_zero_init,
+            "moved": (float(t.abs().sum()) > 0.0) if is_zero_init else None,
+        }
+    return out
+
+
+def cmd_inspect(args) -> int:
+    """CPU-only checkpoint inspection: which lora_b block(s) are still at
+    zero-init (if any), and did mask_enc's zero-init output layer ever
+    move? No GPU, no base transformer, no forward pass -- torch.load plus
+    tensor stats on the adapter state dict only. Takes multiple --ckpt to
+    check whether a dead block is the same one across runs (structural)
+    or not (a training accident).
+    """
+    import torch
+
+    for ckpt_path in args.ckpt:
+        sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        adapter_sd = sd["adapter"]
+        print(f"\n{ckpt_path} (step {sd.get('step', '?')}):")
+
+        lora_b_keys = [k for k in adapter_sd if "lora_b" in k]
+        dead = find_dead_lora_b(adapter_sd)
+        print(f"  lora_b: {len(lora_b_keys) - len(dead)}/{len(lora_b_keys)} "
+              f"non-zero")
+        for k in dead:
+            print(f"    DEAD: {k}  shape={tuple(adapter_sd[k].shape)}")
+
+        status = mask_enc_status(adapter_sd)
+        if not status:
+            print("  mask_enc: no keys in this checkpoint (use_mask=False?)")
+            continue
+        print("  mask_enc:")
+        for k in sorted(status):
+            s = status[k]
+            tag = ""
+            if s["zero_init_layer"]:
+                tag = ("  <-- zero-init layer; "
+                      + ("moved from zero-init" if s["moved"]
+                         else "STILL AT ZERO -- mask contributes NOTHING "
+                              "to z_in for every example"))
+            print(f"    {k}  shape={s['shape']}  "
+                  f"abs_sum={s['abs_sum']:.6g}  abs_max={s['abs_max']:.6g}{tag}")
+    return 0
+
+
 def _sheet(panels, labels, path, size=320):
     from PIL import Image, ImageDraw
 
@@ -958,6 +1044,39 @@ def self_test() -> None:
     print_diagnostics_summary(summary_empty)  # must not raise
     print_diagnostics_summary(summary_c)       # must not raise
 
+    # find_dead_lora_b / mask_enc_status: the checkpoint inspector's pure
+    # logic, testable on a fake adapter state dict without a real
+    # checkpoint or GPU.
+    import torch as _torch
+    fake_sd = {
+        "block0.attn.lora_b.weight": _torch.zeros(4, 4),
+        "block1.attn.lora_b.weight": _torch.randn(4, 4),
+        "block2.mlp.lora_b.weight": _torch.zeros(4, 4),
+        "mask_enc.body.0.weight": _torch.randn(8, 3, 3, 3),
+        "mask_enc.body.0.bias": _torch.randn(8),
+        "mask_enc.out.weight": _torch.zeros(4, 8, 3, 3),
+        "mask_enc.out.bias": _torch.zeros(4),
+    }
+    dead = find_dead_lora_b(fake_sd)
+    assert dead == ["block0.attn.lora_b.weight", "block2.mlp.lora_b.weight"], dead
+
+    status = mask_enc_status(fake_sd)
+    assert set(status) == {"mask_enc.body.0.weight", "mask_enc.body.0.bias",
+                           "mask_enc.out.weight", "mask_enc.out.bias"}
+    assert status["mask_enc.out.weight"]["zero_init_layer"] is True
+    assert status["mask_enc.out.weight"]["moved"] is False
+    assert status["mask_enc.body.0.weight"]["zero_init_layer"] is False
+    assert status["mask_enc.body.0.weight"]["moved"] is None
+
+    # a mask_enc whose out layer DID move must report moved=True.
+    fake_sd_trained = dict(fake_sd)
+    fake_sd_trained["mask_enc.out.weight"] = _torch.randn(4, 8, 3, 3)
+    status_trained = mask_enc_status(fake_sd_trained)
+    assert status_trained["mask_enc.out.weight"]["moved"] is True
+
+    # no mask_enc keys at all (use_mask=False) must return {}, not raise.
+    assert mask_enc_status({"block0.lora_b.weight": _torch.randn(2, 2)}) == {}
+
     print("gate_a_transport self-test OK")
 
 
@@ -1111,6 +1230,12 @@ def main() -> int:
     d.add_argument("--device", default="cuda")
     d.add_argument("--model", default=common["model"])
     d.set_defaults(fn=cmd_diagnose)
+
+    i = sub.add_parser("inspect")
+    i.add_argument("--ckpt", nargs="+", required=True,
+                   help="one or more checkpoint paths. CPU-only: no model, "
+                        "no GPU needed, just torch.load + tensor stats")
+    i.set_defaults(fn=cmd_inspect)
 
     s = sub.add_parser("self-test")
     s.set_defaults(fn=lambda _args: self_test())
