@@ -432,7 +432,7 @@ other half. Wired into `--mask-restrict`'s output as a distribution
 
 ### Verdict: Direction A closed
 
-Four independent lines now converge on the same conclusion:
+Five independent lines now converge on the same conclusion:
 
 1. No measured mode-selection mechanism — the σ0 sweep (§8) never showed a
    nonzero σ0 beating σ0=0 on `cos_clean`.
@@ -448,6 +448,14 @@ Four independent lines now converge on the same conclusion:
 4. The specificity split — the one check that would have shown genuine
    ambiguity directly if it were there — comes back reversed, and survives
    the template-dominance check built to rule out the obvious artifact.
+5. **The matched-step `diagnose` comparison — the cleanest single piece of
+   evidence.** σ0=0.0 at step 8000 vs. σ0=0.3 at step 8100 — so σ0=0.3 has
+   *more* training and still loses on every treatment: raw 0.541 vs.
+   0.539 (tied), pooled 0.769 vs. 0.713, centered 0.664 vs. 0.587. The gap
+   *widens* as spatial and shared-bias confounds are stripped away, the
+   same pattern σ0=0.5 shows in extreme form. σ0=0.0 itself is stable
+   between step 7000 and 8000 (0.539→0.541, 0.765→0.769, 0.662→0.664), so
+   this isn't a training-noise artifact on either side of the comparison.
 
 **Target ambiguity is not what caps Gate A at `cos ≈ 0.5`.** Direction A
 (`σ(0) > 0`) is closed: no further σ0 sweeping, no multi-turn cache
@@ -489,26 +497,34 @@ Whichever it is, the fix is conditioning/readout geometry, not
 stochasticity.
 
 **Result, run against all three available checkpoints (4511 cached
-examples each, same cache the ambiguity probe used):**
+examples each, same cache the ambiguity probe used). σ0=0.0's checkpoint
+was re-checked at two training steps to rule out training-noise:**
 
-| checkpoint | raw (median) | pooled (median) | centered (median) |
-|---|---|---|---|
-| σ0=0.0 (no Direction A noise) | **+0.539** | **+0.765** | **+0.662** |
-| σ0=0.3 ("decided" Direction A design, §8) | +0.539 | +0.713 | +0.587 |
-| σ0=0.5 | +0.321 | +0.362 | +0.137 |
-| *(data ceiling, same cache, for reference)* | *0.420* | *0.621* | *~0.458 in-sample* |
+| checkpoint | step | raw (median) | pooled (median) | centered (median) |
+|---|---|---|---|---|
+| σ0=0.0 (no Direction A noise) | 7000 | +0.539 | +0.765 | +0.662 |
+| σ0=0.0 (no Direction A noise) | 8000 | **+0.541** | **+0.769** | **+0.664** |
+| σ0=0.3 ("decided" Direction A design, §8) | 8100 | +0.539 | +0.713 | +0.587 |
+| σ0=0.5 | 8100 | +0.321 | +0.362 | +0.137 |
+| *(data ceiling, same cache, for reference)* | — | *0.420* | *0.621* | *~0.458 in-sample* |
 
-Two things fall out cleanly, both confirming the closure rather than
+Three things fall out cleanly, all confirming the closure rather than
 reopening it:
 
-1. **σ0=0.0 beats σ0=0.3 on every single treatment**, by a small but
-   consistent margin (pooled +0.05, centered +0.08). Adding Direction A's
-   noise made the model modestly *worse* at recovering the true edit
-   direction, not better — direct, checkpoint-level confirmation of what
-   the training-log sweep (§8) already showed on `cos_clean` alone, now
-   measured against ground truth on real held-out-style data instead of a
-   training proxy.
-2. **σ0=0.5 collapses specifically on `centered`** (0.137 — near the
+1. **σ0=0.0 is stable between step 7000 and 8000** (0.539→0.541,
+   0.765→0.769, 0.662→0.664) — the comparison below isn't a training-noise
+   artifact on the σ0=0.0 side.
+2. **The matched-step comparison is the cleanest single piece of evidence
+   for closing Direction A.** σ0=0.0 at step 8000 vs. σ0=0.3 at step
+   8100 — so σ0=0.3 has *more* training and still loses on every
+   treatment: raw 0.541 vs. 0.539 (tied), pooled 0.769 vs. 0.713, centered
+   0.664 vs. 0.587. The gap *widens* as spatial and shared-bias confounds
+   are stripped away (raw → pooled → centered), exactly the pattern σ0=0.5
+   shows in extreme form. This supersedes the earlier σ0=0.5-only argument
+   as the headline evidence: adding Direction A's noise makes the model
+   worse even at the "decided" design value, with more training, on a
+   ground-truth accuracy metric, not just a training-log proxy.
+3. **σ0=0.5 collapses specifically on `centered`** (0.137 — near the
    data's own null floor, and well *below* the data's centered ceiling of
    ~0.458): once the shared bias is removed, this checkpoint has almost no
    genuine instruction-specific signal left. This is the concrete shape of
@@ -519,7 +535,7 @@ reopening it:
    just a training-time diagnostic.
 
 **A genuinely new, valid finding, on a like-for-like comparison this
-time:** σ0=0.0's pooled (0.765) and centered (0.662) both exceed the
+time:** σ0=0.0's pooled (0.769) and centered (0.664) both exceed the
 corresponding *data* ceilings (0.621, ~0.458) — unlike the earlier
 retracted claim (which compared a pointwise per-example metric against a
 pooled cross-image one), this comparison uses the *same* treatment on
@@ -535,15 +551,80 @@ the qualitative story here is unlikely to flip given the size of the gaps
 involved, but re-check once that lands.)
 
 **The WHERE/WHAT gap is real even on the best checkpoint.** σ0=0.0's raw
-(0.539) sits well below its own pooled (0.765) — roughly 0.23 of cosine is
+(0.541) sits well below its own pooled (0.769) — roughly 0.23 of cosine is
 being lost specifically to *positional* imprecision (right average
 direction, wrong exact pixels), separate from and on top of whatever
-directional headroom remains (pooled 0.765 vs. a perfect 1.0). Both
+directional headroom remains (pooled 0.769 vs. a perfect 1.0). Both
 matter, but this is the first direct evidence that spatial precision
 specifically — not just conditioning strength in the abstract — is worth
 real attention in whatever comes after Direction A, consistent with Gate
 C's WHERE/WHAT framing (§2) being the axis the whole investigation now
 sits on.
+
+### Checkpoint inspection: is the positional deficit a wiring bug?
+
+All three checkpoints reported `190/191 lora_b blocks non-zero` — identical
+across independently-trained runs, which is the signature of something
+structural rather than a training accident. `scripts/gate_a_transport.py
+inspect` (CPU-only, `torch.load` + tensor stats, no model or GPU) answers
+both the "which block" and "did the mask path even train" questions the
+existing liveness *count* couldn't:
+
+- **The dead block is `transformer_blocks.23.attn.add_q_proj.lora_b`** in
+  all three checkpoints — the last block, text-stream query projection.
+  Identical across independently-trained runs means structural: most
+  likely the last block's text-stream path is inert in SD3-Medium's
+  forward (the context/text branch is dropped or unused at the final
+  layer), so its gradient is exactly zero by construction. Benign — worth
+  confirming once against the base model's own forward and adding to a
+  known-quirks list, not a bug to chase.
+- **`mask_enc.out` (the zero-init final projection) moved**: `abs_max`
+  ≈0.011–0.023, `abs_sum` ≈36–40 across all three checkpoints. The mask
+  conditioning path has been alive the whole run — not a wiring bug, and
+  in `"pair"` mode there was never a structural reason (gate ≡ 1 always)
+  for it to stay at zero. **The positional half of the deficit is not a
+  one-line fix; the readout-constraint hypothesis (§7's `s=0` critique,
+  now aimed at position rather than mode-selection) is the one left
+  standing.**
+- **A wrinkle worth checking before accepting that conclusion fully:**
+  `mask_enc.body`'s weights are nearly IDENTICAL across all three
+  checkpoints (`abs_sum` 169.9/169.6/169.8 on `body.0.weight`,
+  811/806/800 on `body.2`) despite three different σ0 values — consistent
+  with `body` converging to close to a fixed transformation of the mask
+  that σ0 doesn't perturb. Meanwhile `out`'s `abs_max` (~0.02) is an order
+  of magnitude below `body.0`'s (~0.21): the path is alive but what it
+  actually injects into the latent may be weak relative to `z` itself. A
+  third possible failure mode, distinct from "dead wiring" and "an
+  architectural readout limit": conditioning present but too faint to
+  matter, and cheaper to fix than either if true.
+
+`scripts/gate_a_transport.py inspect --ckpt <...> --cache <cache>` now
+also reports `‖delta_z‖ / ‖z_src‖` via `mask_enc` alone (still no
+transformer, still no GPU — `MaskEncoder` is a small standalone CNN) to
+settle this directly. **Run this before deciding between a conditioning
+fix and a readout-architecture change:**
+
+```
+python scripts/gate_a_transport.py inspect \
+    --ckpt runs/gate_a_direction_a/ckpt_final.pt \
+           runs/gate_a_direction_a_0.5/ckpt_final.pt \
+           runs/gate_a_sigma_0.0/ckpt_latest.pt \
+    --cache /data/cache/13061d51aee4
+```
+
+**Ordered next steps:**
+
+1. The `‖delta_z‖ / ‖z_src‖` check above, all three checkpoints. Minutes,
+   CPU-only, decides whether mask injection *strength* is the issue
+   before committing to an architecture change.
+2. If it's healthy (delta_z not vanishingly small relative to z), merge
+   Direction A's machinery with Gate B's multi-step readout — the
+   one-step-at-s=0 readout is then the remaining explanation for the
+   positional half, and multi-step is the thesis's own formulation, not a
+   new idea.
+3. The Gate C scoreboard wrapper (`bench/gate_a_model.py`), regardless of
+   which of the above wins — neither path can be judged on the 3-case
+   Stage-0-comparable sweep alone.
 
 ### What to keep, what to drop
 
