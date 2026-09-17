@@ -387,41 +387,123 @@ withdraws a piece of evidence that had been cited against it. Net: no
 positive evidence either way from this comparison; treat it as retracted,
 not flipped.
 
-**Read on the hypothesis, combined:** the instruction-conditioning signal
-within the edited region is real and non-trivial (ceiling 0.621, gap
-+0.162 with a CI well clear of 0) — larger than the earlier whole-frame
-read suggested. But the specificity split leans mildly against the
-"underspecified instruction → genuine multi-modal ambiguity" framing
-specifically, on thin data. Taken together this is still not a clean
-confirmation of mean-collapse-via-ambiguity, and the withdrawn `cos_clean`
-comparison removes what had been the strongest positive argument *against*
-it. The honest summary is the same shape as before — real, unresolved,
-worth proceeding on but not worth overclaiming — with the caveat that the
-balance of evidence has moved slightly toward "conditioning strength /
-richer `z_src` use" as a live alternative explanation alongside "genuine
-ambiguity," not resolved in favor of either.
+**Two follow-ups on the specificity reversal, both survive it.** The
+concern was that "vague" might be a few homogeneous instruction templates
+("remove the X", "add a Y") whose members share a direction for reasons
+unrelated to specificity. `check_template_dominance()` shows otherwise:
+vague's top 5 groups (by member count) cover only 20% of its 139 pairs —
+not template-dominated — and dropping the single largest group from each
+side barely moves either ceiling (specific 0.384 → 0.393, vague
+0.430 → 0.423). The reversal is not a template artifact. It's still
+`n=38` pairs / 18 groups on the specific side (the two CIs would overlap),
+so it isn't a finding on its own — but it is a check the ambiguity
+hypothesis was given every chance to pass, and didn't.
+
+**The per-channel breakdown separates the mask-pooled ceiling from a
+shared-bias artifact, and most of it isn't one.** Channels 13, 9, 4 have
+both the largest same-instr-minus-unrelated correlation gap AND the
+highest `|mean|/std` (0.76, 0.62, 0.75) — the shared-bias signature
+(a consistent offset, not just spread). But channels 0, 12, 10 carry gaps
+of +0.380, +0.316, +0.353 with `|mean|/std` of 0.02, 0.01, 0.06 —
+essentially no shared offset, strong instruction-specific correlation,
+near-zero unrelated correlation. Those channels are carrying real
+instruction information, not a luminance echo.
+
+**Mean-centered result (subtracting the dataset-wide per-channel bias
+before cosine): the decisive one.** Unrelated pairs drop to mean **−0.051**
+once the shared bias is removed — a null behaving like a null (slightly
+negative, the expected finite-sample residual for uncorrelated unit
+vectors, not a leftover signal). Same-instruction holds at **+0.210**.
+Ceiling gap **+0.063 → +0.162 → +0.451**, 95% CI [+0.250, +0.555] on the
+in-sample fit. The +0.208 unrelated-pairs alignment in the raw pooled
+numbers was almost entirely one shared bias direction common to every
+MagicBrush edit, inflating both columns; net of it, instruction identity
+is the dominant factor in the pooled displacement, not a weak one.
+
+*Caveat, addressed:* the in-sample version fits the bias on the same 177
+pairs it scores, so the unrelated column landing near 0 is partly by
+construction. `held_out_centered_gap()` (added in `ambiguity_probe.py`)
+fixes this properly: repeated random 50/50 item splits, bias fit on one
+half, scored on same-instruction/unrelated pairs drawn only from the
+other half. Wired into `--mask-restrict`'s output as a distribution
+(median + range across splits) rather than a single number. **Re-run
+`--mask-restrict` and record the held-out distribution here before citing
++0.451 anywhere outside this document.**
+
+### Verdict: Direction A closed
+
+Four independent lines now converge on the same conclusion:
+
+1. No measured mode-selection mechanism — the σ0 sweep (§8) never showed a
+   nonzero σ0 beating σ0=0 on `cos_clean`.
+2. A measured cost that scales with σ0 — the `cos − cos_clean` gap widens
+   with σ0 (negligible at 0.3, real and consistent at 0.5), the signature
+   of the model partially learning to echo injected noise back rather than
+   the true edit direction.
+3. Instruction conditioning carries far more information than the
+   mean-collapse story needs it to lack — the corrected, edit-region,
+   mean-centered ceiling (0.458 in-sample; held-out pending) is well above
+   both the raw whole-frame ceiling this document originally reasoned from
+   and the model's own full-field `cos_clean`.
+4. The specificity split — the one check that would have shown genuine
+   ambiguity directly if it were there — comes back reversed, and survives
+   the template-dominance check built to rule out the obvious artifact.
+
+**Target ambiguity is not what caps Gate A at `cos ≈ 0.5`.** Direction A
+(`σ(0) > 0`) is closed: no further σ0 sweeping, no multi-turn cache
+rebuild to chase the same-source contrast — that contrast exists to
+quantify ambiguity, and ambiguity is no longer the live hypothesis. This
+is a clean negative, better-evidenced than the sweep looked like it was
+heading toward, not a failure to reach a positive result.
+
+### What's next: direction vs. position, on the model itself
+
+The live question is the gap between the model's own `cos_clean`
+(~0.50–0.60) and what the data says is available. The mask-pooled ceiling
+(0.621) and mean-centered ceiling (0.458) are *per-channel directional*
+ceilings with spatial structure removed entirely — they are not directly
+comparable to the model's full-field number, because the model also has
+to get *position* right (which pixels move), which the raw-v ceiling
+(0.420) is the one that includes. Whether the model's shortfall is
+mostly directional (wrong per-channel shift) or positional (right shift,
+imprecise about where) is exactly Gate C's WHERE/WHAT split, applied to a
+trained checkpoint instead of to raw data.
+
+`transport/pairflow.py::direction_position_diagnostics()` computes the
+model's own `cos(u, v_clean)` under the same three treatments — raw
+(full frame), pooled (masked, per-channel), centered (pooled minus a
+fixed external bias) — and `scripts/gate_a_transport.py diagnose` runs it
+over a full `TripletCache` (cached latents + embeddings only, no VAE or
+text encoder needed):
+
+```
+python scripts/ambiguity_probe.py --cache /data/cache/<hash> --save-bias runs/bias.npy
+python scripts/gate_a_transport.py diagnose --ckpt <a trained checkpoint> \
+    --cache /data/cache/<hash> --bias-npy runs/bias.npy
+```
+
+A model close to the raw ceiling but well below the pooled ceiling is
+losing direction more than position; the reverse means it already has the
+right direction and is imprecise about where inside the mask to put it.
+Whichever it is, the fix is conditioning/readout geometry, not
+stochasticity.
 
 ### What to keep, what to drop
 
-**Keep:** the WHERE/WHAT unification (§2 above) as a genuinely good frame.
-The mode-selection diagnosis, with the `s=0` refinement. The corrected
-probe's result — a real, moderate instruction-conditioning signal within
-the edited region, mixed evidence on whether it reflects genuine ambiguity
-specifically — as the actual current evidence base, in place of the
-original n=3.
+**Keep:** the WHERE/WHAT unification (§2 above) — it turned out to be the
+frame the whole investigation converges on, not just a nice way to talk
+about Gate C. The corrected probe's full result (ceiling framing,
+mask-pooling, mean-centering, specificity split, template-dominance and
+per-channel checks) as the permanent record of why Direction A closed.
 
-**Drop:** the Gate B cosine claim (as before). The claim that the model's
-`cos_clean` exceeds the instruction-only ceiling as evidence against
-mean-collapse — withdrawn per the corrected mask-restrict result above.
-Any confidence that the mechanism is established as fact rather than
-hypothesis — Gate A's failure still rests on 3 cases scored with a metric
-(`struct`) later shown to be substantially a colour artifact, and the
-probe that was meant to settle it came back real-but-modest, with its
-most informative half (same-source) unavailable in this cache and the new
-specificity check leaning mildly the other way. Proceed toward Direction A
-as a candidate fix; don't claim the mechanism is established, and hold
-open that richer conditioning (Direction B/C) rather than added
-stochasticity could turn out to be the more load-bearing fix.
+**Drop:** the Gate B cosine claim (as before). The original n=3 struct-
+based failure diagnosis and the mean-collapse-via-ambiguity mechanism it
+implied — superseded by the above, not merely unproven. The claim that
+the model's `cos_clean` exceeded the instruction-only ceiling as evidence
+*against* mean-collapse — withdrawn earlier in this section and now moot,
+since mean-collapse itself is no longer the live hypothesis. Any further
+σ0 sweeping or same-source cache-rebuild work — closed per the verdict
+above.
 
 ---
 
