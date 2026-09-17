@@ -34,6 +34,11 @@ services:
       PYTORCH_JIT: "0"
       HF_TOKEN: "${HF_TOKEN}"          # SD3-Medium is gated: accept the licence first
       HF_HUB_ENABLE_HF_TRANSFER: "0"   # flip to 1 after `pip install hf_transfer`
+      # docker/README.md's Layout section already documents hf/ as the cache
+      # dir under /data -- this is what actually makes that true. Without
+      # it, every HF download lands in the container's (small, ephemeral)
+      # home directory instead of the mounted disk.
+      HF_HOME: "/data/hf"
       # 9950X has 16 cores / 32 threads. Leave headroom for dataloader workers.
       OMP_NUM_THREADS: "8"
 
