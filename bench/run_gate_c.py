@@ -60,7 +60,7 @@ from PIL import Image
 
 from frame_fit import apply_rect
 from instance_bench import aggregate, instance_selectivity
-from off_instance import OFF_INSTANCE_EDIT_RATIO, off_instance_change
+from off_instance import OFF_INSTANCE_EDIT_OVER_TARGET, off_instance_change
 from off_instance import self_test as off_self_test
 from refedit_siblings import bench_image, load_bench, load_coco, raster
 
@@ -93,8 +93,8 @@ def outcome_class(r: dict) -> str:
     """Describe every case, including ones `valid` discards.
 
     Uses only COMPARISONS between quantities already computed -- no new
-    threshold beyond OFF_INSTANCE_EDIT_RATIO, which is frozen and imported,
-    not invented here.
+    threshold beyond OFF_INSTANCE_EDIT_OVER_TARGET, which is frozen and
+    imported, not invented here.
 
       no_tracked_change  nothing on target, sibling OR the off-instance peak
                     exceeds its own floor: the model returned ~the source, or
@@ -102,13 +102,19 @@ def outcome_class(r: dict) -> str:
                     this pipeline looks. Genuinely unmeasurable. Named
                     "no_tracked_change", not "no_change" -- see below.
       off_instance_edit  target and sibling both sit at background, but
-                    off_instance_peak clears OFF_INSTANCE_EDIT_RATIO x
-                    off_instance_ambient: something compact happened, just
-                    outside every mask this benchmark tracks. THE THIRD
-                    FAILURE MODE (off_instance.py's module docstring): all 12
-                    of the blind audit's metric/human disagreements were this
-                    class misread as inaction, because nothing here used to
-                    look outside target+siblings at all.
+                    off_instance_peak clears OFF_INSTANCE_EDIT_OVER_TARGET x
+                    the case's own target_change: something compact happened
+                    off-instance, and it moved more than the target itself
+                    did. THE THIRD FAILURE MODE (off_instance.py's module
+                    docstring): all 12 of the blind audit's metric/human
+                    disagreements were this class misread as inaction,
+                    because nothing here used to look outside target+siblings
+                    at all. (Was ratio-based against off_instance_ambient
+                    until GATE_C_REPORT.md SS7 found the ratio threshold
+                    reads ~8x too low against real MagicBrush ground truth --
+                    over_target compares to the case's own target_change
+                    instead of the model's frame-wide noise floor, which
+                    doesn't carry the same cross-dataset scale problem.)
       mis_targeted  the SIBLING changed more than the target: the model
                     resolved the referring expression to the wrong instance.
                     The requested edit did not happen. `valid` currently reads
@@ -126,9 +132,7 @@ def outcome_class(r: dict) -> str:
     """
     tgt, sib, bg = r["target_change"], r["sibling_change"], r["background_change"]
     if max(tgt, sib) <= bg:
-        oi_peak = r.get("off_instance_peak", 0.0)
-        oi_ambient = r.get("off_instance_ambient", 0.0)
-        if oi_peak > OFF_INSTANCE_EDIT_RATIO * (oi_ambient + 1e-9):
+        if r.get("off_instance_over_target", 0.0) > OFF_INSTANCE_EDIT_OVER_TARGET:
             return "off_instance_edit"
         return "no_tracked_change"
     if sib > tgt:
@@ -612,20 +616,19 @@ def self_test():
                           "background_change": 0.0}) == "no_tracked_change"
     assert outcome_class({"target_change": 0.005, "sibling_change": 0.004,
                           "background_change": 0.005,
-                          "off_instance_peak": 0.5,
-                          "off_instance_ambient": 0.02}) == "off_instance_edit"
-    # A dict missing the off_instance_* keys entirely (e.g. instance_selectivity's
+                          "off_instance_over_target": 2.5}) == "off_instance_edit"
+    # A dict missing off_instance_over_target entirely (e.g. instance_selectivity's
     # own bare output, or a pre-rename jsonl row) must default to the old
     # behaviour, not KeyError.
     assert outcome_class({"target_change": 0.0, "sibling_change": 0.0,
                           "background_change": 0.0}) == "no_tracked_change"
-    # Below OFF_INSTANCE_EDIT_RATIO -- self_test's own control-4/5 territory --
-    # must stay no_tracked_change, or every clean edit with target near zero
-    # would misfire as off_instance_edit.
+    # Below OFF_INSTANCE_EDIT_OVER_TARGET, AT the MagicBrush ground-truth
+    # floor itself (GATE_C_REPORT.md SS7 median 0.619) -- must stay
+    # no_tracked_change, or a real good edit's own off-instance noise would
+    # misfire as off_instance_edit.
     assert outcome_class({"target_change": 0.005, "sibling_change": 0.004,
                           "background_change": 0.005,
-                          "off_instance_peak": 0.03,
-                          "off_instance_ambient": 0.02}) == "no_tracked_change"
+                          "off_instance_over_target": 0.619}) == "no_tracked_change"
     assert outcome_class({"target_change": 0.03, "sibling_change": 0.38,
                           "background_change": 0.056}) == "mis_targeted"
     assert outcome_class({"target_change": 0.21, "sibling_change": 0.02,

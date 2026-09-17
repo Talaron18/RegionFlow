@@ -236,15 +236,13 @@ def main():
     try:
         from run_gate_c import outcome_class  # noqa: PLC0415
     except ImportError:
-        from off_instance import OFF_INSTANCE_EDIT_RATIO  # noqa: PLC0415
+        from off_instance import OFF_INSTANCE_EDIT_OVER_TARGET  # noqa: PLC0415
 
         def outcome_class(r):
             tgt, sib = r["target_change"], r["sibling_change"]
             bg = r["background_change"]
             if max(tgt, sib) <= bg:
-                oi_peak = r.get("off_instance_peak", 0.0)
-                oi_amb = r.get("off_instance_ambient", 0.0)
-                if oi_peak > OFF_INSTANCE_EDIT_RATIO * (oi_amb + 1e-9):
+                if r.get("off_instance_over_target", 0.0) > OFF_INSTANCE_EDIT_OVER_TARGET:
                     return "off_instance_edit"
                 return "no_tracked_change"
             return "mis_targeted" if sib > tgt else "measurable"

@@ -683,16 +683,56 @@ detection statistic.** `over_target`'s own ground-truth median (0.619) sits
 well inside the range real arms report (0.46–1.95 above) and does not need
 an order-of-magnitude correction to be legible.
 
-This was not acted on unilaterally. `OFF_INSTANCE_EDIT_RATIO` and
-`outcome_class`'s off-instance branch were left untouched pending the
-threshold/statistic decision, which — like `leakage_ratio`'s own calibration
-— is the kind of call this project's convention keeps with whoever owns the
-number, not with whichever run happened to surface the problem. The other
-four controls (`oracle_local`/`category_level`/`mis_targeted`/
+The other four controls (`oracle_local`/`category_level`/`mis_targeted`/
 `global_shift`) all still pass their `off_instance` self-test bounds
 (sibling/category changes read `ratio < 0.1`; uniform shift reads
 `0.5 < ratio < 2.0`) — only the real-data floor exposes the gap, which is
 exactly why a synthetic control alone was never going to catch this.
+
+### The decision: switch to `over_target`, threshold 1.0
+
+`outcome_class`'s off-instance branch now reads:
+
+```python
+if r.get("off_instance_over_target", 0.0) > OFF_INSTANCE_EDIT_OVER_TARGET:
+    return "off_instance_edit"
+```
+
+`OFF_INSTANCE_EDIT_OVER_TARGET = 1.0` (`off_instance.py`), replacing
+`OFF_INSTANCE_EDIT_RATIO = 10.0`. Why `over_target` and not a recalibrated
+ratio: `ratio` divides by `off_instance_ambient`, a property of how noisy
+*this model's regeneration* is — which is exactly what made it read fine on
+the synthetic self-test's clean frame and 83x on real MagicBrush noise. It
+has no portable scale across datasets. `over_target` divides by the case's
+own `target_change` instead — same units, no cross-case or cross-dataset
+denominator to recalibrate. 1.0 reads literally: *more happened off-instance
+than happened at the target itself*.
+
+1.0 is bracketed the same way 10.0 originally was, now from two independent
+sources instead of one: synthetically, `off_instance.py`'s own self-test
+(genuine off-instance edit reads `over_target > 20`; clean target edit reads
+`< 0.1`; boundary bleed, newly asserted, reads `< 0.1`) and, for the first
+time, against real data (`ground_truth`'s median of 0.619 sits comfortably
+under 1.0, with an order of magnitude of margin either side matching the
+synthetic controls' own spread). `OFF_INSTANCE_EDIT_RATIO` stays defined —
+`off_instance_ratio` is still a reported diagnostic — but is no longer read
+by any classifier; `stratify_analysis.py`'s own fallback copy of
+`outcome_class` (used only when its `run_gate_c` import fails) was updated
+in lockstep, the same discipline its docstring already demanded of itself
+after the 47-vs-43 disagreement.
+
+**What this does and does not change in §3/§6.** `mis_targeted`,
+`measurable`, `valid`, and every leakage figure never touch the off-instance
+branch and are unaffected. §7's own "louder than the target" counts above
+(106/151 `white`, etc.) already used `over_target > 1` unconditionally, not
+gated through `outcome_class`, and are unaffected too. The one number that
+*can* move is §3's "no *tracked* change" row, which is `outcome_class`'s
+`no_tracked_change` count specifically (a case only reaches the off-instance
+branch at all when target and sibling both read at background) — some of
+those 10/16/2/5/12 cases may now reclassify as `off_instance_edit`. Not
+recomputed in this pass — `recompute_outcomes.py` (CPU-only, reads the
+existing per-arm results files, no new inference) gives the corrected
+counts; §3 should be updated once it's run.
 
 ---
 
@@ -776,16 +816,17 @@ works; routing is not enough.
 1. ~~UltraEdit `*_wo_mask` arm~~ — done (§3): `sd3-ultraedit-freeform`,
    40% mis-targeted, worse than `white`. ~~Formal McNemar for `freeform` vs
    `oracle`~~ — done: 60:0 discordant, p < 0.0001 (§3).
-2. ~~MagicBrush ground-truth floor for `off_instance`~~ — obtained (§7):
-   `ratio` median 83.27, `over_target` median 0.619 (n=8/9 valid). This does
-   not close the gap the way `leakage_ratio`'s floor did — it opens one: the
-   ratio-based `off_instance_edit` classifier almost certainly over-fires
-   relative to `OFF_INSTANCE_EDIT_RATIO = 10.0`, since real good edits alone
-   clear it by ~8×. Open decision, not yet made: recalibrate the ratio
-   threshold near the real floor, or switch `outcome_class`'s off-instance
-   branch to threshold on `over_target` instead (§7 recommends the latter).
-   Whichever way this goes, every `off_instance_edit` count in §3/§6 should
-   be treated as provisional until it does.
+2. ~~MagicBrush ground-truth floor for `off_instance`~~ — obtained, and
+   ~~the threshold decision~~ made (§7): `outcome_class`'s off-instance
+   branch now reads `over_target > OFF_INSTANCE_EDIT_OVER_TARGET (1.0)`,
+   replacing the ratio-based check that read `ratio > 10.0` while real
+   MagicBrush ground truth reads a ratio median of 83.27. Bracketed by both
+   the synthetic self-test and, now, the real ground-truth floor (median
+   0.619). `mis_targeted`/`measurable`/`valid`/leakage figures never touch
+   this branch and are unaffected; the one number that can move is §3's
+   "no *tracked* change" row (which excludes `off_instance_edit` from its
+   count) — `recompute_outcomes.py` (CPU-only) gives the corrected per-arm
+   counts; run it and update §3.
 3. ~~Backfill the 4 missing cases~~ — done: GLM-5.3-Flash, n=39/40, ρ=0.717,
    all four verdict classes correctly ordered. ~~Diagnose the 2 residual
    high scorers~~ — done: `refedit-134` is a correctly-scored clean edit,

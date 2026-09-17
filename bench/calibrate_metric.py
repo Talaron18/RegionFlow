@@ -23,6 +23,12 @@ floor -- what a human-approved edit's off-instance ratio actually looks
 like on real MagicBrush regeneration noise, which is the number that was
 missing.
 
+That floor (ratio median 83.27, ~8x OFF_INSTANCE_EDIT_RATIO, vs. over_target
+median 0.619) is why `run_gate_c.outcome_class` no longer uses the ratio at
+all -- see OFF_INSTANCE_EDIT_OVER_TARGET in off_instance.py and
+GATE_C_REPORT.md SS7. `off_instance_ratio` stays reported here as a
+diagnostic, not as the classifier's own input.
+
 MagicBrush is the only source in play with ground-truth EDITED images --
 RefEdit-Bench and MIRA-Bench are both VLM-scored precisely because they have
 none -- so it is the only place this can be done at all. Referential ambiguity
