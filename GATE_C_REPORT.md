@@ -374,6 +374,79 @@ diagnosing `refedit-117`/`170`/`119`/`160`/`29` the same way as the
 original 7 (cropped panel + raw SC text) before deciding whether this needs
 another mechanical fix or a different judge model entirely.
 
+### Diagnosing the five: one clear rule violation, not a single mechanism
+
+Visual inspection (panels pushed the same way as before) of the 5 cases
+above found a mix, not one bug:
+
+- **`refedit-119`** (a red scarf added to the RED dog, not yellow) —
+  genuinely fixable. The judge's own text: *"the instruction specifically
+  targeted the passenger seat dog (red outline)... the edit was applied
+  correctly to that region."* It independently re-derived which instance
+  "the dog in the passenger seat" refers to from the instruction's wording,
+  decided that meant the red one, and scored success against its own
+  re-derived target instead of the yellow one it was told to trust —
+  overriding region restriction outright when its own reading of the
+  instruction disagreed with the case's target assignment.
+- **`refedit-117`** (suit) — looks like real fabrication: the visible change
+  is only a suit-colour shift, but the judge described a full gender change
+  and a "purple top" not clearly present in the pixels.
+- **`refedit-160`** (microwave) and **`refedit-29`** (parrot) — real edits,
+  imprecisely credited, not hallucinated: the microwave was fully replaced
+  with a different-looking one (not "light off," which is what the judge
+  called it), and a parrot really was added, but sitting on the counter near
+  the chef's hand, not on his shoulder as instructed.
+- **`refedit-170`** (tattoo) — too subtle to tell from a compressed image
+  whether a real mark is there.
+
+Added one sentence to `SC_PROMPT` making the yellow outline authoritative
+regardless of what the instruction's wording seems to suggest, targeting
+`refedit-119`'s mechanism directly. Re-testing the same 5:
+`refedit-119` 10.0→0.0 and `refedit-170` 8.0→0.0 (fixed, the second
+unexpectedly), `refedit-29` 10.0→4.2 (partial), `refedit-160` 10.0→9.5 and
+`refedit-117` 9.0→8.5 (unaffected, as expected — neither is an
+outline-authority problem). Running tally across all 12 cases checked by
+eye so far: 7/12 clean, 2/12 partial, 3/12 still bad
+(`refedit-172`/`160`/`117`), each with a distinct, identified cause. None
+of the three remaining look fixable by further prompt wording.
+
+### Switching judges: `Qwen/Qwen3.6-35B-A3B` → `zai-org/GLM-5.3-Flash`
+
+Re-ran the 40-case calibration (36/40 obtained; `refedit-188`/`153`/`28`/`85`
+missing from an interrupted run, not yet backfilled) with GLM-5.3-Flash as
+the judge — a reasoning-only model, so `enable_thinking=False` (400s on it)
+was swapped for `thinking_budget="low"` in `siliconflow_judge`. This run
+already carries all four fixes above (crop/temperature/commit/outline
+-authority live in the shared prompt and `judge_case` code, not per-model
+logic), so it is the most-fixed comparison point either judge has had.
+
+| human verdict | n | Qwen (v2, 3 fixes) | GLM-5.3-Flash (n=36, all 4 fixes) |
+|---|---|---|---|
+| clean | 6 / 5 | median 4.44 | median **9.50** |
+| degraded | 8 / 7 | median 4.93 | median 5.20 |
+| destroyed | 3 / 2 | median 2.06 | median 5.45 |
+| no_edit | 23 / 22 | median 0.00 (mean 2.72) | median 0.00 (mean 2.93) |
+
+**Better, on the two numbers that matter most.** Spearman ρ = **0.527**
+(vs Qwen's 0.333) — clean/degraded is now correctly *ordered*, not merely
+un-inverted: clean's median (9.5) sits above degraded's (5.2), where Qwen's
+v2 result only got as far as "no detectable difference either way."
+
+**Not better on the specific failure this section has been chasing.**
+`no_edit` cases scoring ≥9.0: 5/22 (23%) for GLM vs 6/23 (26%) for Qwen —
+essentially the same rate, including `refedit-172` still at 9.5 (consistent
+with that being a structural limit of cropping itself, not a model-specific
+failure, since it persists across models). One new false positive appears
+(`refedit-138`, 9.5) not seen in Qwen's run.
+
+**Net effect on the consequence stated above: unchanged.** Better
+correlation and correct ordering are real progress and are why
+GLM-5.3-Flash is now the default, but a ~23% unexplained high-scoring
+failure rate on `no_edit` is still not grounds to extend this judge to
+`white`/`oracle` at n=151. Chasing it further needs the same raw-text
+diagnostic as `refedit-117`/`160`/`170`/`29` got, applied to GLM's own
+misses, plus backfilling the 4 missing cases for a complete n=40.
+
 ### One discrepancy, not resolved
 
 `no_tracked_change` median Overall is 6.75 (full, n=10) vs 3.08 (single, n=8)
@@ -384,17 +457,18 @@ single-object instructions. Flagged, not interpreted.
 
 ### Scope limits specific to this section
 
-- **This judge's calibration against the project's own human rubric is
-  improved but still weak.** Spearman ρ = 0.333 against the 40 blind-audited
-  `none`-arm verdicts after `crop_to_target` + `temperature=0.0` + the
-  closing-commit prompt fix (was 0.170); the clean/degraded inversion is
-  resolved (Mann-Whitney U 22/48, null midpoint 24) but ~22% of `no_edit`
-  cases still score ≥9.0 by a mechanism not yet diagnosed. Treat every
-  number in this section as Qwen3.6-35B-A3B's own read, not a validated
+- **The current judge (GLM-5.3-Flash) calibrates better than its
+  predecessor but is still not validated for extending past `none`.**
+  Spearman ρ = 0.527 against 36/40 blind-audited `none`-arm verdicts (up
+  from Qwen3.6-35B-A3B's 0.333), clean/degraded now correctly ordered, but
+  ~23% of `no_edit` cases still score ≥9.0 by a mechanism not yet
+  diagnosed for this model specifically (some, like `refedit-172`, are a
+  structural limit of cropping itself and persist across judges). Treat
+  every number in this section as this judge's own read, not a validated
   proxy for human judgment — weaker than "not a claim of parity with
   GPT-4o" below, and the more consequential limit of the two.
 - **Judge substitution is unvalidated against GPT-4o**, separately from the
-  calibration failure above. Everything in this section is Qwen3.6-35B-A3B's
+  calibration limit above. Everything in this section is GLM-5.3-Flash's
   reading, not a reproduction of RefEdit-Bench's own published numbers.
 - **`parse_scores` is a lenient number-extractor**, not VIEScore's own exact
   output parser (unconfirmed from this sandbox — see module docstring). Ruled
@@ -580,15 +654,16 @@ works; routing is not enough.
 2. MagicBrush ground-truth floor for `off_instance` — now has five arms'
    worth of ratios waiting on it (`white`/`oracle`/`sibling`/`freeform`; `none`
    predates the measure).
-3. Diagnose `refedit-117`/`170`/`119`/`160`/`29` the same way the original 7
-   were diagnosed (cropped panel + raw SC text) before extending the VLM
-   judge (§5) past the `none` baseline. `crop_to_target` + `temperature=0.0`
-   + the closing-commit prompt took Spearman ρ from 0.170 to 0.333 and fixed
-   the clean/degraded inversion, but ~22% of `no_edit` cases still score
-   ≥9.0 by a mechanism these five cases haven't been checked for yet.
-   Re-scoring `white`/`oracle` before that's understood risks adding a
-   confidently wrong number to §9's quality claim, same risk as before the
-   crop fix, just smaller.
+3. Judge is now GLM-5.3-Flash (ρ=0.527, up from Qwen3.6-35B-A3B's 0.333,
+   clean/degraded correctly ordered) but still not validated for `white`/
+   `oracle`: ~23% of `no_edit` cases score ≥9.0 by a mechanism not yet
+   diagnosed for this model. Backfill the 4 missing cases
+   (`refedit-188`/`153`/`28`/`85`) for a complete n=40, then diagnose
+   GLM's own high-scoring misses the same way `refedit-117`/`160`/`170`/
+   `29` were diagnosed for Qwen (cropped panel + raw SC text) before
+   extending past the `none` baseline. Re-scoring `white`/`oracle` before
+   that's understood risks adding a confidently wrong number to §9's
+   quality claim.
 4. Δ-order curriculum (`delta_curriculum.py`) — three arms at ~2 h. Now
    motivated by this gate: direction is the residual it isolated, and the
    anchor-SSE climb is the one lead anyone has on it.
