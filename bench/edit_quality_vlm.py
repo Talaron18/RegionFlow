@@ -388,13 +388,26 @@ def siliconflow_judge(model: str = "zai-org/GLM-5.3-Flash"):
                     headers={"Authorization": f"Bearer {api_key}"},
                     json=payload, timeout=120,
                 )
-                resp.raise_for_status()
+                if not resp.ok:
+                    # raise_for_status()'s own message is just "400 Client
+                    # Error: Bad Request for url: ..." -- it drops the
+                    # response body, which is where SiliconFlow actually
+                    # says what was wrong (e.g. {"code": 20015, "message":
+                    # "..."} for the GLM-5.3-Flash thinking-budget error
+                    # found earlier). Surface it instead of re-discovering
+                    # this every time a 4xx/5xx shows up.
+                    detail = RuntimeError(
+                        f"{resp.status_code} from SiliconFlow: {resp.text[:1000]}")
+                    if resp.status_code == 429 or resp.status_code >= 500:
+                        last_exc = detail  # transient-ish, worth retrying
+                        if attempt < 3:
+                            time.sleep(2 ** attempt)
+                        continue
+                    raise detail  # a real 4xx (bad request, etc.): fatal, don't retry
                 return resp.json()["choices"][0]["message"]["content"]
             except (requests.exceptions.ConnectionError,
                     requests.exceptions.Timeout) as exc:
-                # Transient network failure, not a judge/parsing problem --
-                # retry with backoff. A 4xx/5xx from raise_for_status is a
-                # real API error and propagates immediately, uncaught here.
+                # Transient network failure, not a judge/parsing problem.
                 last_exc = exc
                 if attempt < 3:
                     time.sleep(2 ** attempt)
