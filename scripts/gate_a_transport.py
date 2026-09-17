@@ -609,6 +609,61 @@ def mask_enc_status(adapter_sd: dict) -> dict:
     return out
 
 
+def compute_mask_injection_ratio(adapter_sd: dict, cache_root, latent_ch: int,
+                                 n_items: int = 64) -> dict:
+    """||delta_z|| / ||z_src|| over cached examples, using ONLY mask_enc's
+    weights loaded from the checkpoint -- no transformer, no GPU required,
+    since MaskEncoder (transport/conditioning.py) is a small standalone
+    CNN, not part of the frozen SD3 backbone.
+
+    mask_enc_status() confirms whether the mask conditioning path is ALIVE
+    (out.weight/bias moved from zero-init); this answers a different
+    question -- whether what it injects is actually STRONG relative to z
+    itself, once alive. A path can be technically live (nonzero gradient,
+    nonzero weights) while contributing a delta_z that's a few percent of
+    ||z||, which is a genuine third failure mode between "dead wiring" and
+    "architectural readout limit": conditioning present but too weak to
+    matter, fixable by e.g. reweighting or removing a bottleneck rather
+    than a training-objective change.
+    """
+    import numpy as np
+    import torch
+
+    from transport.conditioning import MaskEncoder
+    from transport.data import TripletCache
+
+    mask_enc = MaskEncoder(latent_ch)
+    prefix = "mask_enc."
+    mask_sd = {k[len(prefix):]: v for k, v in adapter_sd.items()
+              if k.startswith(prefix)}
+    if not mask_sd:
+        return {"n": 0}
+    mask_enc.load_state_dict(mask_sd)
+    mask_enc.eval()
+
+    cache = TripletCache(cache_root)
+    n = min(n_items, len(cache))
+    ratios = []
+    with torch.no_grad():
+        for i in range(n):
+            rec = cache[i]
+            z = torch.from_numpy(rec["z_src"]).float()
+            m = torch.from_numpy(rec["mask"]).float().unsqueeze(0)
+            delta_z = mask_enc(m)[0]
+            z_norm = float(z.pow(2).sum().sqrt())
+            if z_norm < 1e-8:
+                continue
+            ratios.append(float(delta_z.pow(2).sum().sqrt()) / z_norm)
+
+    arr = np.array(ratios)
+    if arr.size == 0:
+        return {"n": 0}
+    return {"n": int(arr.size), "mean": float(arr.mean()),
+           "median": float(np.median(arr)),
+           "p10": float(np.percentile(arr, 10)),
+           "p90": float(np.percentile(arr, 90))}
+
+
 def cmd_inspect(args) -> int:
     """CPU-only checkpoint inspection: which lora_b block(s) are still at
     zero-init (if any), and did mask_enc's zero-init output layer ever
@@ -616,6 +671,12 @@ def cmd_inspect(args) -> int:
     tensor stats on the adapter state dict only. Takes multiple --ckpt to
     check whether a dead block is the same one across runs (structural)
     or not (a training accident).
+
+    With --cache also given, additionally reports ||delta_z|| / ||z_src||
+    on cached examples using ONLY mask_enc's own small CNN (still no
+    transformer, still no GPU) -- a live-but-weak mask injection is a
+    third failure mode distinct from "dead wiring" (mask_enc_status) and
+    an architectural readout limit.
     """
     import torch
 
@@ -646,6 +707,19 @@ def cmd_inspect(args) -> int:
                               "to z_in for every example"))
             print(f"    {k}  shape={s['shape']}  "
                   f"abs_sum={s['abs_sum']:.6g}  abs_max={s['abs_max']:.6g}{tag}")
+
+        if args.cache:
+            latent_ch = adapter_sd["mask_enc.out.weight"].shape[0]
+            ratio = compute_mask_injection_ratio(adapter_sd, args.cache, latent_ch,
+                                                n_items=args.cache_n)
+            if ratio["n"] == 0:
+                print("  ||delta_z|| / ||z_src||: could not compute "
+                      "(no mask_enc keys or no usable cached items)")
+            else:
+                print(f"  ||delta_z|| / ||z_src|| (n={ratio['n']} cached "
+                      f"items): mean {ratio['mean']:.4f}  "
+                      f"median {ratio['median']:.4f}  "
+                      f"p10 {ratio['p10']:.4f}  p90 {ratio['p90']:.4f}")
     return 0
 
 
@@ -1077,6 +1151,45 @@ def self_test() -> None:
     # no mask_enc keys at all (use_mask=False) must return {}, not raise.
     assert mask_enc_status({"block0.lora_b.weight": _torch.randn(2, 2)}) == {}
 
+    # compute_mask_injection_ratio: a real MaskEncoder (transport/
+    # conditioning.py) and a tiny real on-disk TripletCache, no
+    # transformer, no GPU. Two checks: a zero-init mask_enc (out.weight/
+    # bias never trained) must give ratio exactly 0 for every item; a
+    # mask_enc with the out layer scaled up must give a proportionally
+    # larger ratio.
+    import tempfile
+
+    from transport.conditioning import MaskEncoder
+    from transport.data import CacheConfig, TripletCacheWriter
+
+    latent_ch = 4
+    with tempfile.TemporaryDirectory() as td:
+        writer = TripletCacheWriter(td, CacheConfig(context_length=1), "self-test")
+        rng_np = np.random.default_rng(0)
+        for i in range(3):
+            z_src = rng_np.normal(size=(latent_ch, 8, 8)).astype(np.float32)
+            z_tgt = z_src + rng_np.normal(scale=0.5, size=(latent_ch, 8, 8)).astype(np.float32)
+            mask = np.zeros((1, 8, 8), dtype=np.float32)
+            mask[:, 2:6, 2:6] = 1.0
+            writer.add(f"item{i}", z_src, z_tgt, mask, "test instruction")
+        cache_root = writer.close()
+
+        fresh_mask_enc = MaskEncoder(latent_ch)
+        zero_sd = {f"mask_enc.{k}": v for k, v in fresh_mask_enc.state_dict().items()}
+        ratio_zero = compute_mask_injection_ratio(zero_sd, cache_root, latent_ch)
+        assert ratio_zero["n"] == 3, ratio_zero
+        assert ratio_zero["mean"] == 0.0, ratio_zero  # out is zero-init -> delta_z==0 exactly
+
+        trained_sd = dict(zero_sd)
+        trained_sd["mask_enc.out.weight"] = _torch.randn_like(fresh_mask_enc.out.weight)
+        trained_sd["mask_enc.out.bias"] = _torch.ones_like(fresh_mask_enc.out.bias)
+        ratio_trained = compute_mask_injection_ratio(trained_sd, cache_root, latent_ch)
+        assert ratio_trained["n"] == 3, ratio_trained
+        assert ratio_trained["mean"] > 0.0, ratio_trained
+
+        # no mask_enc keys at all -> {"n": 0}, not a crash.
+        assert compute_mask_injection_ratio({}, cache_root, latent_ch) == {"n": 0}
+
     print("gate_a_transport self-test OK")
 
 
@@ -1235,6 +1348,13 @@ def main() -> int:
     i.add_argument("--ckpt", nargs="+", required=True,
                    help="one or more checkpoint paths. CPU-only: no model, "
                         "no GPU needed, just torch.load + tensor stats")
+    i.add_argument("--cache", default=None,
+                   help="TripletCache directory; if given, also reports "
+                        "||delta_z||/||z_src|| via mask_enc alone (still "
+                        "no transformer, still no GPU)")
+    i.add_argument("--cache-n", type=int, default=64,
+                   help="how many cached items to sample for the "
+                        "injection-ratio check")
     i.set_defaults(fn=cmd_inspect)
 
     s = sub.add_parser("self-test")
