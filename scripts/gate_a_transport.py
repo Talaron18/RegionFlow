@@ -462,7 +462,8 @@ def plot_training_log(recs: list[dict], out_png: Path) -> None:
         ax.plot(steps, [r["loss_out"] for r in recs], label="loss_out", alpha=0.7)
     ax.set_title("loss")
     ax.set_xlabel("step")
-    ax.legend(fontsize=8)
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize=8)
     ax.grid(alpha=0.3)
 
     ax = axes[0, 1]
@@ -482,7 +483,8 @@ def plot_training_log(recs: list[dict], out_png: Path) -> None:
         ax.axhline(1.0, color="red", lw=0.5, alpha=0.5, label="predicting u=0")
     ax.set_title("rel_in vs its own MSE floor")
     ax.set_xlabel("step")
-    ax.legend(fontsize=8)
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize=8)
     ax.grid(alpha=0.3)
 
     ax = axes[1, 1]
@@ -492,7 +494,8 @@ def plot_training_log(recs: list[dict], out_png: Path) -> None:
         ax.plot(steps, [r["move_ratio"] for r in recs], label="move_ratio")
     ax.set_title("grad_norm / move_ratio")
     ax.set_xlabel("step")
-    ax.legend(fontsize=8)
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize=8)
     ax.grid(alpha=0.3)
 
     fig.suptitle(f"{out_png.parent.name}  "
@@ -530,6 +533,100 @@ def cmd_watch_log(args) -> int:
             time.sleep(args.poll_seconds)
         except KeyboardInterrupt:
             print("\n[watch-log] stopped")
+            break
+    return 0
+
+
+def plot_sweep_comparison(runs: dict[str, list[dict]], out_png: Path) -> None:
+    """Overlay MULTIPLE training runs' logs (e.g. a sigma0 sweep, one run
+    per value) on one set of axes -- one line per run per panel, so
+    different sigma0 values compare directly instead of getting eyeballed
+    across separate PNGs.
+
+    Deliberately simpler than plot_training_log's own per-run view: just
+    loss / cos / rel_in / move_ratio, ONE line per run, not the in/out
+    breakdown or the rel_in_floor overlay (which would need 2 lines per
+    run and stop being readable past 3-4 runs). Read a run's own
+    training_curve.png (watch-log) for that detail -- this view answers
+    the cross-run question, which sigma0 is winning, not the within-run
+    one.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    runs = {label: recs for label, recs in runs.items() if recs}
+    if not runs:
+        return
+
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7))
+    panels = [(axes[0, 0], "loss", "loss"),
+             (axes[0, 1], "cos", "cos(u, v) -- directional alignment"),
+             (axes[1, 0], "rel_in", "rel_in"),
+             (axes[1, 1], "move_ratio", "move_ratio")]
+    for ax, key, title in panels:
+        for label, recs in runs.items():
+            xs = [r["step"] for r in recs if key in r]
+            ys = [r[key] for r in recs if key in r]
+            if xs:
+                ax.plot(xs, ys, label=label)
+        ax.set_title(title)
+        ax.set_xlabel("step")
+        ax.grid(alpha=0.3)
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(fontsize=8)
+    axes[0, 1].axhline(0.0, color="grey", lw=0.5)
+    axes[0, 1].set_ylim(-1.05, 1.05)
+    axes[1, 0].axhline(1.0, color="red", lw=0.5, alpha=0.5)
+
+    last_steps = [recs[-1]["step"] for recs in runs.values()]
+    fig.suptitle(f"sweep comparison -- {len(runs)} runs, "
+                f"steps up to {max(last_steps)}")
+    fig.tight_layout()
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=110)
+    plt.close(fig)
+
+
+def cmd_watch_sweep(args) -> int:
+    """Poll SEVERAL runs' log.jsonl (e.g. sweep_sigma0.sh's output
+    directories) and redraw one combined comparison PNG once any run has
+    advanced by --every steps since the last draw. Same non-interference
+    principle as watch-log: reads log files from outside, touches none of
+    the training processes.
+    """
+    import time
+
+    outs = [Path(o) for o in args.outs]
+    labels = args.labels if args.labels else [o.name for o in outs]
+    if len(labels) != len(outs):
+        raise SystemExit(f"--labels has {len(labels)} entries but --outs "
+                         f"has {len(outs)}; must match 1:1")
+    out_png = Path(args.png)
+    last_drawn = -1
+    print(f"[watch-sweep] watching {len(outs)} runs -> {out_png}, redraw "
+          f"every {args.every} steps (polling every {args.poll_seconds:.0f}s"
+          f"{', once' if args.once else ', Ctrl-C to stop'})")
+    for label, o in zip(labels, outs):
+        print(f"  {label}: {o}/log.jsonl")
+    while True:
+        runs = {label: read_training_log(o / "log.jsonl")
+               for label, o in zip(labels, outs)}
+        max_step = max((recs[-1]["step"] for recs in runs.values() if recs),
+                       default=-1)
+        if max_step >= 0 and max_step - last_drawn >= args.every:
+            plot_sweep_comparison(runs, out_png)
+            last_drawn = max_step
+            counts = "  ".join(
+                f"{l}={recs[-1]['step'] if recs else 'n/a'}"
+                for l, recs in runs.items())
+            print(f"[watch-sweep] -> {out_png}   {counts}")
+        if args.once:
+            break
+        try:
+            time.sleep(args.poll_seconds)
+        except KeyboardInterrupt:
+            print("\n[watch-sweep] stopped")
             break
     return 0
 
@@ -580,6 +677,30 @@ def self_test() -> None:
         # must not crash the render -- only the panels that have data.
         plot_training_log([{"step": 1, "loss": 0.5}], Path(td) / "bare.png")
         assert (Path(td) / "bare.png").exists()
+
+        # plot_sweep_comparison: multiple runs overlaid. Different step
+        # ranges on purpose (real concurrent runs don't stay in lockstep --
+        # one process can be a few steps ahead of another) to check the
+        # per-run x-axis isn't assumed shared.
+        runs = {
+            "sigma0=0.0": recs,
+            "sigma0=0.3": [
+                {"step": 25, "loss": 0.8, "cos": 0.5, "rel_in": 0.9,
+                 "move_ratio": 0.95},
+                {"step": 50, "loss": 0.6, "cos": 0.6, "rel_in": 0.7,
+                 "move_ratio": 0.97},
+                {"step": 75, "loss": 0.5, "cos": 0.65, "rel_in": 0.6,
+                 "move_ratio": 0.98},
+            ],
+        }
+        sweep_png = Path(td) / "sweep.png"
+        plot_sweep_comparison(runs, sweep_png)
+        assert sweep_png.exists() and sweep_png.stat().st_size > 0
+
+        # An empty run (process just started, log.jsonl has nothing valid
+        # yet) must be dropped, not crash the render.
+        plot_sweep_comparison({**runs, "sigma0=0.6": []}, sweep_png)
+        assert sweep_png.exists()
 
     print("gate_a_transport self-test OK")
 
@@ -690,6 +811,22 @@ def main() -> int:
     w.add_argument("--once", action="store_true",
                    help="draw once and exit instead of polling forever")
     w.set_defaults(fn=cmd_watch_log)
+
+    ws = sub.add_parser("watch-sweep")
+    ws.add_argument("--outs", nargs="+", required=True,
+                    help="multiple --out directories to compare, e.g. the "
+                         "ones sweep_sigma0.sh launched")
+    ws.add_argument("--labels", nargs="+", default=None,
+                    help="one label per --outs entry, same order; default "
+                         "is each directory's own basename")
+    ws.add_argument("--every", type=int, default=100,
+                    help="redraw once ANY run has logged this many new "
+                         "steps since the last draw")
+    ws.add_argument("--poll-seconds", type=float, default=10.0)
+    ws.add_argument("--png", default="runs/sigma0_sweep_comparison.png")
+    ws.add_argument("--once", action="store_true",
+                    help="draw once and exit instead of polling forever")
+    ws.set_defaults(fn=cmd_watch_sweep)
 
     s = sub.add_parser("self-test")
     s.set_defaults(fn=lambda _args: self_test())
