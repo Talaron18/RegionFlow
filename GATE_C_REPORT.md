@@ -184,14 +184,35 @@ the VIEScore paper itself (arxiv.org is blocked from the training sandbox, so
 the prompt protocol was confirmed against the VIEScore repo's own prompt file,
 not the paper).
 
-### Sanity check, and it passes
+Three instruments now tile the space: `instance_selectivity` measures WHERE
+change landed, this VLM axis measures how good it was GIVEN that it landed
+there, and `off_instance` (§7, still missing its null floor) measures whether
+anything happened elsewhere. That structural independence is real and worth
+having. The calibration check below is what determines whether the middle
+instrument can be trusted yet — right now it cannot.
 
-`mis_targeted` cases score `Overall = 0.00` at the median, in both prompt
-kinds (43/151 full, 53/151 single — consistent with §3's 28%/30%-scale
-mis-targeting figures for `none`/`white`). This is the target-region
-restriction working as intended: when the edit lands on the wrong instance,
-nothing happens inside the yellow-outlined *target* region, so SC correctly
-reads zero there. Not assumed — checked.
+### Sanity check: real, but not as clean as a median suggests
+
+`mis_targeted` cases score `Overall = 0.00` at the **median**, in both prompt
+kinds (43/151 full, 53/151 single). But the median hides a bimodal split, not
+a clean zero:
+
+| prompt | n | Overall = 0.0 | Overall in 9–10 |
+|---|---|---|---|
+| full | 43 | 23 (53%) | 14 (33%) |
+| single | 53 | 27 (51%) | 17 (32%) |
+
+About half read as intended (nothing happened in the target region). The
+other third score as good as any successful edit. This is not a parsing bug —
+all 302 rows are present with no duplicates (0% parse-failure rate, checked
+directly against the resumable output). It is `mis_targeted`'s own definition:
+`outcome_class` calls a case `mis_targeted` when `sibling_change >
+target_change`, not when target_change is near zero. A case where both the
+target AND a sibling were genuinely edited, sibling slightly more, is
+correctly flagged `mis_targeted` by the pixel metric while still showing a
+real, well-executed edit inside the yellow region. **Restate accordingly: the
+sanity check confirms the target-region restriction works, not that
+`mis_targeted` implies an untouched target.**
 
 ### When the metric says `measurable`, quality is decent
 
@@ -218,6 +239,45 @@ a large share of the edits producing them are independently judged poor
 quality. **Quote every leakage figure in §3 alongside this distribution, not
 instead of it.**
 
+### Calibration against the 40 human blind verdicts: it fails
+
+The `none` arm already has 40 blind-audited human verdicts (§4). Joining VLM
+`Overall` (full prompt) against them by id is a free check with no GPU and no
+new API cost — and a stronger warrant than parity with GPT-4o would be,
+since the blind-audit rubric, not GPT-4o's, is what this report's own §9
+claim rests on.
+
+| human verdict | n | median Overall |
+|---|---|---|
+| clean | 6 | 3.46 |
+| degraded | 8 | **7.59** |
+| destroyed | 3 | 3.57 |
+| no_edit | 23 | 0.00 (mean 3.38) |
+
+`clean` scores *below* `degraded` — inverted, not just noisy: Mann-Whitney
+U = 15.5 against a maximum of 48 (n=6 vs n=8), meaning clean cases mostly
+rank lower than degraded ones, not scattered around them. Spearman ρ between
+Overall and an ordinal human-quality scale (`no_edit`=0 → `clean`=4) across
+all 40 cases is **0.170** — negligible.
+
+`no_edit` (n=23) has a separate problem: median is 0 as the sanity check
+above would predict, but 7/23 (30%) score ≥9.4, including a perfect 10.0 on
+**refedit-172** — the same case where both the pixel metric and the blind
+human verdict independently agree nothing happened. Its instruction ("Add a
+bird to the bench next to the bench with **the bird on it**") describes a
+bird that already exists elsewhere in the source frame; the working
+hypothesis is the judge's SC score is reading that existing bird rather than
+staying inside the yellow-outlined target region, but this is unconfirmed —
+`edit_quality_vlm.py` does not persist the judge's raw text, only the parsed
+numbers, so checking it needs a targeted re-query of just these 7 cases.
+
+**Consequence: do not extend this judge to `white`/`oracle` to strengthen §9's
+low-power quality claim.** That would report a more "powered" number built on
+an instrument shown not to track the ground truth it is meant to proxy for —
+worse than the existing 40-case audit, not better. Before any re-scoring at
+n=151 means anything, either this judge needs to pass the calibration above,
+or a different judge does.
+
 ### One discrepancy, not resolved
 
 `no_tracked_change` median Overall is 6.75 (full, n=10) vs 3.08 (single, n=8)
@@ -228,14 +288,22 @@ single-object instructions. Flagged, not interpreted.
 
 ### Scope limits specific to this section
 
-- **Judge substitution is unvalidated against GPT-4o.** Everything above is
-  Qwen3.6-35B-A3B's reading, not a reproduction of RefEdit-Bench's own
-  published numbers.
+- **This judge does not calibrate against the project's own human rubric.**
+  Spearman ρ = 0.170 against the 40 blind-audited `none`-arm verdicts, with an
+  inverted clean/degraded median. Treat every number in this section as
+  Qwen3.6-35B-A3B's own read, not a validated proxy for human judgment —
+  weaker than "not a claim of parity with GPT-4o" below, and the more
+  consequential limit of the two.
+- **Judge substitution is unvalidated against GPT-4o**, separately from the
+  calibration failure above. Everything in this section is Qwen3.6-35B-A3B's
+  reading, not a reproduction of RefEdit-Bench's own published numbers.
 - **`parse_scores` is a lenient number-extractor**, not VIEScore's own exact
-  output parser (unconfirmed from this sandbox — see module docstring).
+  output parser (unconfirmed from this sandbox — see module docstring). Ruled
+  out as the explanation for the calibration failure: parse-failure rate is
+  0/302, checked directly.
 - **Baseline only.** No VLM-judged comparison across `white`/`oracle`/`sibling`
-  exists yet; extending it is the natural next step if the mask arms' edits
-  are re-scored the same way.
+  exists — and per the calibration result above, extending this judge to them
+  is not advisable until it is recalibrated or replaced.
 
 ---
 
