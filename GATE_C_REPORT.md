@@ -446,13 +446,53 @@ with that being a structural limit of cropping itself, not a model-specific
 failure, since it persists across models). One new false positive appears
 (`refedit-138`, 9.5) not seen in Qwen's run.
 
-**Net effect on the consequence stated above: unchanged.** Better
-correlation and correct ordering are real progress and are why
-GLM-5.3-Flash is now the default, but a ~23% unexplained high-scoring
-failure rate on `no_edit` is still not grounds to extend this judge to
-`white`/`oracle` at n=151. Chasing it further needs the same raw-text
-diagnostic as `refedit-117`/`160`/`170`/`29` got, applied to GLM's own
-misses, plus backfilling the 4 missing cases for a complete n=40.
+**Net effect on the consequence stated above, at the time: unchanged** —
+see below, this has since changed.
+
+### Full backfill (n=39): ρ jumps to 0.717, ordering clean across all four classes
+
+The 4 missing cases (`refedit-188`/`153`/`28`/`85`) were backfilled for a
+complete run: 39/40 scored (1 API failure), same judge, same four fixes,
+no further prompt changes.
+
+| human verdict | n | mean | median |
+|---|---|---|---|
+| clean | 6 | 6.41 | 6.74 |
+| degraded | 7 | 5.59 | 5.48 |
+| destroyed | 3 | 2.53 | 2.65 |
+| no_edit | 23 | 1.23 | 0.00 |
+
+**Spearman ρ = 0.717** (n=39), up from the n=36 partial run's 0.527 and far
+past Qwen's v1/v2 (0.170 / 0.333). The ordering is now clean on both mean
+and median across all four classes, not just clean-vs-degraded: every
+median step (clean → degraded → destroyed → no_edit) moves the right
+direction, and `no_edit`'s median of exactly 0.00 with a low mean (1.23,
+pulled up by a small number of outliers rather than a systematic bias) is
+the first time this judge has read `no_edit` as unambiguously low rather
+than bimodal.
+
+**The specific failure this section was chasing is mostly gone.** Only 2 of
+39 cases score ≥9.0 in this run (`refedit-134` at 9.22, `refedit-83` at
+9.08), down from 5 of 22 `no_edit` cases alone in the partial run — a drop
+from a ~23% high-scoring `no_edit` rate to at most 2/39 ≈ 5% overall, and
+possibly lower still since neither of the two remaining outliers is
+confirmed `no_edit` here (that needs the same `blind_key`/`blind_ledger`
+join used for the aggregate table above, not done in this pass).
+`refedit-172` — the compound-reference case flagged earlier as a
+*structural* limit of cropping, expected to persist across judges — now
+scores **0.0**, not 9.5. Whether that is the outline-authority fix, the
+model switch, or both is not separated here; it is no longer a live
+concern either way. `refedit-134` is worth a second look on its own
+merits regardless of verdict, since it is also the case that earlier hit
+the 400 "parameter invalid" bug during scoring — this run confirms it now
+scores cleanly, but not what it scores *correctly*.
+
+**Net effect on the consequence stated above: reversed.** This is no
+longer just "better correlation" — it is a judge that orders all four
+verdict classes correctly and has largely resolved its worst failure mode.
+Extending it to `white`/`oracle` at n=151 is now defensible in a way it
+was not at ρ=0.527; that extension has not been run yet (this section
+still covers `none` only), and doing it is the natural next step (§11).
 
 ### One discrepancy, not resolved
 
@@ -464,16 +504,17 @@ single-object instructions. Flagged, not interpreted.
 
 ### Scope limits specific to this section
 
-- **The current judge (GLM-5.3-Flash) calibrates better than its
-  predecessor but is still not validated for extending past `none`.**
-  Spearman ρ = 0.527 against 36/40 blind-audited `none`-arm verdicts (up
-  from Qwen3.6-35B-A3B's 0.333), clean/degraded now correctly ordered, but
-  ~23% of `no_edit` cases still score ≥9.0 by a mechanism not yet
-  diagnosed for this model specifically (some, like `refedit-172`, are a
-  structural limit of cropping itself and persist across judges). Treat
-  every number in this section as this judge's own read, not a validated
-  proxy for human judgment — weaker than "not a claim of parity with
-  GPT-4o" below, and the more consequential limit of the two.
+- **The current judge (GLM-5.3-Flash) is now calibrated on the full
+  backfilled `none` set: ρ = 0.717 (n=39), all four verdict classes
+  correctly ordered on both mean and median, high-scoring-`no_edit` down
+  to at most 2/39 cases.** This is a real improvement over the n=36
+  partial run (ρ=0.527) and over Qwen (ρ=0.170 → 0.333), not just a
+  larger sample of the same result. It is still calibrated on `none`
+  only — `white`/`oracle`/`sibling`/`freeform` have not been VLM-judged
+  at all — and the two remaining high-scoring outliers (`refedit-134`,
+  `refedit-83`) have not been diagnosed by verdict class. Treat every
+  number in this section as this judge's own read on the `none` arm,
+  now reasonably well-validated there, but not yet extended.
 - **Judge substitution is unvalidated against GPT-4o**, separately from the
   calibration limit above. Everything in this section is GLM-5.3-Flash's
   reading, not a reproduction of RefEdit-Bench's own published numbers.
@@ -704,16 +745,15 @@ works; routing is not enough.
    branch to threshold on `over_target` instead (§7 recommends the latter).
    Whichever way this goes, every `off_instance_edit` count in §3/§6 should
    be treated as provisional until it does.
-3. Judge is now GLM-5.3-Flash (ρ=0.527, up from Qwen3.6-35B-A3B's 0.333,
-   clean/degraded correctly ordered) but still not validated for `white`/
-   `oracle`: ~23% of `no_edit` cases score ≥9.0 by a mechanism not yet
-   diagnosed for this model. Backfill the 4 missing cases
-   (`refedit-188`/`153`/`28`/`85`) for a complete n=40, then diagnose
-   GLM's own high-scoring misses the same way `refedit-117`/`160`/`170`/
-   `29` were diagnosed for Qwen (cropped panel + raw SC text) before
-   extending past the `none` baseline. Re-scoring `white`/`oracle` before
-   that's understood risks adding a confidently wrong number to §9's
-   quality claim.
+3. ~~Backfill the 4 missing cases~~ — done: GLM-5.3-Flash, n=39/40, ρ=0.717,
+   all four verdict classes correctly ordered, high-scoring `no_edit` down
+   to at most 2/39. Judge is now reasonably well-calibrated on `none`.
+   Remaining before extending: diagnose the 2 residual high scorers
+   (`refedit-134`, `refedit-83`) by verdict class — same raw-text +
+   cropped-panel method as before — then run `white`/`oracle`/`sibling`/
+   `freeform` through the judge. That last step is the one still not done;
+   it is what would turn §9's quality claim (currently 40 audited cases
+   only) into a full-151 comparison.
 4. ~~Δ-order curriculum~~ — done, two seeds each, see `DELTA_CURRICULUM_REPORT.md`.
    Headline: A1 (Δ-order curriculum) beats the uncurriculed baseline by
    ~3% on `vs_base_at_a_opt` at the Δ=0.5 operating point, a gap that
