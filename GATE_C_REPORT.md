@@ -272,7 +272,7 @@ a large share of the edits producing them are independently judged poor
 quality. **Quote every leakage figure in §3 alongside this distribution, not
 instead of it.**
 
-### Calibration against the 40 human blind verdicts: it fails
+### Calibration against the 40 human blind verdicts: it fails (first attempt)
 
 The `none` arm already has 40 blind-audited human verdicts (§4). Joining VLM
 `Overall` (full prompt) against them by id is a free check with no GPU and no
@@ -311,6 +311,69 @@ worse than the existing 40-case audit, not better. Before any re-scoring at
 n=151 means anything, either this judge needs to pass the calibration above,
 or a different judge does.
 
+### Re-calibration after `crop_to_target`: better, not sufficient
+
+Visual inspection of 7 of the misfiring `no_edit` cases (images pushed to
+`tmp/` on this branch at the time, not retained in the repo) found the judge
+crediting content ANYWHERE in the full frame to the target, by at least three
+distinct mechanisms — a decoy object named in the instruction's own landmark
+clause recoloured (`refedit-172`), the SIBLING's own edit credited to the
+target (`refedit-169`), an unrelated background change credited to the
+target (`refedit-165`, `refedit-126`), a frisbee near the sibling credited to
+the target (`refedit-73`), and a target left completely untouched by an
+"erase" instruction scored a perfect 10.0 (`refedit-81`). `crop_to_target`
+crops the panel to the target's own padded bounding box before the judge
+ever sees it, mechanically removing the option instead of relying on
+instruction-following for it (`edit_quality_vlm.py`). Two more issues
+surfaced alongside it and were also fixed: response variance from an unset
+`temperature` (0.7 default; the same panel+prompt scored 4.3 then 0.0 on
+`refedit-144`), fixed by pinning `temperature=0.0`; and a case
+(`refedit-172` again) where the judge reasoned to the CORRECT answer in
+text — *"within the yellow region, no change occurred... the edit did not
+occur inside the yellow region"* — then kept re-litigating it for the full
+600-token budget and never emitted `[[score]]`, fixed with a closing
+"commit and stop" instruction appended to both prompts.
+
+Re-running the full 40-case calibration with all three fixes:
+
+| human verdict | n | median Overall (before → after) |
+|---|---|---|
+| clean | 6 | 3.46 → 4.44 |
+| degraded | 8 | 7.59 → 4.93 |
+| destroyed | 3 | 3.57 → 2.06 |
+| no_edit | 23 | 0.00 → 0.00 (mean 3.38 → 2.72) |
+
+**The clean/degraded inversion is resolved.** Mann-Whitney U went from
+15.5/48 (clean scoring mostly *lower* than degraded — backwards) to 22/48,
+essentially the null midpoint of 24 — no detectable difference in rank
+either way, which is at least the right qualitative shape even if it isn't
+separating them cleanly yet. Spearman ρ against the ordinal human-quality
+scale went **0.170 → 0.333** — meaningfully better, still weak.
+
+**A second failure mode survived the fix, and the original 7-case check
+never saw it.** Of the 23 `no_edit` cases, 6 still score ≥9.0 — one is
+`refedit-172` (already attributed to a real limitation of cropping itself:
+its instruction is a *compound* reference, "the bench next to the bench
+with the bird on it," which structurally requires seeing both benches to
+verify, and a tight crop around only the target can starve exactly the
+context a relational instruction needs). The other five are new:
+`refedit-117` (9.0), `refedit-170` (9.0), `refedit-119` (9.5), `refedit-160`
+(9.5), `refedit-29` (9.5). None of these were in the original 7 checked by
+eye, so their failure mechanism is not yet known — this is the open item,
+not a closed one. `refedit-126` (4.5, was 9.7) similarly stopped being a
+clean hallucination and became a genuine judgment call: the raw SC text now
+reasons correctly inside the yellow region and calls a plain sky/cloud
+screen image a "scenic beach wallpaper," which a stricter rater might
+reasonably not.
+
+**Still the same consequence as the first attempt, for a different reason.**
+ρ=0.333 and an unexplained ~22% high-scoring failure rate on `no_edit` are
+not grounds to extend this judge to `white`/`oracle` at n=151 yet. The
+crop fix is real progress — worth keeping — but the next step is
+diagnosing `refedit-117`/`170`/`119`/`160`/`29` the same way as the
+original 7 (cropped panel + raw SC text) before deciding whether this needs
+another mechanical fix or a different judge model entirely.
+
 ### One discrepancy, not resolved
 
 `no_tracked_change` median Overall is 6.75 (full, n=10) vs 3.08 (single, n=8)
@@ -321,12 +384,15 @@ single-object instructions. Flagged, not interpreted.
 
 ### Scope limits specific to this section
 
-- **This judge does not calibrate against the project's own human rubric.**
-  Spearman ρ = 0.170 against the 40 blind-audited `none`-arm verdicts, with an
-  inverted clean/degraded median. Treat every number in this section as
-  Qwen3.6-35B-A3B's own read, not a validated proxy for human judgment —
-  weaker than "not a claim of parity with GPT-4o" below, and the more
-  consequential limit of the two.
+- **This judge's calibration against the project's own human rubric is
+  improved but still weak.** Spearman ρ = 0.333 against the 40 blind-audited
+  `none`-arm verdicts after `crop_to_target` + `temperature=0.0` + the
+  closing-commit prompt fix (was 0.170); the clean/degraded inversion is
+  resolved (Mann-Whitney U 22/48, null midpoint 24) but ~22% of `no_edit`
+  cases still score ≥9.0 by a mechanism not yet diagnosed. Treat every
+  number in this section as Qwen3.6-35B-A3B's own read, not a validated
+  proxy for human judgment — weaker than "not a claim of parity with
+  GPT-4o" below, and the more consequential limit of the two.
 - **Judge substitution is unvalidated against GPT-4o**, separately from the
   calibration failure above. Everything in this section is Qwen3.6-35B-A3B's
   reading, not a reproduction of RefEdit-Bench's own published numbers.
@@ -514,11 +580,15 @@ works; routing is not enough.
 2. MagicBrush ground-truth floor for `off_instance` — now has five arms'
    worth of ratios waiting on it (`white`/`oracle`/`sibling`/`freeform`; `none`
    predates the measure).
-3. Fix or replace the VLM judge (§5) before extending it past the `none`
-   baseline. Qwen3.6-35B-A3B via SiliconFlow does not calibrate against the
-   40 human blind verdicts (Spearman ρ = 0.170, inverted clean/degraded
-   medians) — re-scoring `white`/`oracle` with it would not strengthen §9's
-   quality claim, it would just add a confidently wrong number.
+3. Diagnose `refedit-117`/`170`/`119`/`160`/`29` the same way the original 7
+   were diagnosed (cropped panel + raw SC text) before extending the VLM
+   judge (§5) past the `none` baseline. `crop_to_target` + `temperature=0.0`
+   + the closing-commit prompt took Spearman ρ from 0.170 to 0.333 and fixed
+   the clean/degraded inversion, but ~22% of `no_edit` cases still score
+   ≥9.0 by a mechanism these five cases haven't been checked for yet.
+   Re-scoring `white`/`oracle` before that's understood risks adding a
+   confidently wrong number to §9's quality claim, same risk as before the
+   crop fix, just smaller.
 4. Δ-order curriculum (`delta_curriculum.py`) — three arms at ~2 h. Now
    motivated by this gate: direction is the residual it isolated, and the
    anchor-SSE climb is the one lead anyone has on it.
