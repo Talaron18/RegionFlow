@@ -431,63 +431,50 @@ def print_diagnostics_summary(summary: dict) -> None:
               f"p90 {s['p90']:+.3f}")
 
 
-def cmd_diagnose(args) -> int:
-    """WHERE/WHAT breakdown of a trained checkpoint's own predictions
-    (GATE_A_REOPENING_PLAN.md SS2), following the ambiguity probe's mask-
-    restrict work: the mask-pooled ceiling (0.621 on the real cache) sits
-    well above the model's own full-field cos_clean (~0.50-0.60), which
-    could mean the model is losing POSITION (getting the wrong pixels) or
-    DIRECTION (getting the wrong per-channel shift) or both -- this tells
-    you which. Runs entirely off the cached latents and prompt embeddings
-    (transport/data.py's TripletCache); no VAE or text encoder needed,
-    only the transformer + adapter, to compute u = model(z_src, 0, ...).
-    """
+def _load_diagnose_checkpoint(adapter, ckpt_path: str) -> dict:
+    """Load one checkpoint's adapter weights IN PLACE (reused across
+    multiple --ckpt values so the expensive part -- loading the base
+    transformer -- happens once). Returns the raw checkpoint dict (for its
+    "step") after the same live-weight guard cmd_train/cmd_eval already
+    use -- a checkpoint whose lora_b blocks are all still zero is the
+    pretrained model, and diagnosing it would produce a confident null."""
     import torch
-    from torch.utils.data import DataLoader
 
-    from transport.pairflow import direction_position_diagnostics
-
-    cache = TripletCache(args.cache)
-    ds = torch_dataset(cache)
-    dl = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
-                    num_workers=args.num_workers)
-    print(f"[diagnose] {len(cache)} cached item(s) from {args.cache}")
-
-    adapter = build_adapter(args.model, args.device, args.rank)
-    sd = torch.load(args.ckpt, map_location="cpu", weights_only=False)
+    sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     _missing, unexpected = adapter.load_state_dict(sd["adapter"], strict=False)
     if unexpected:
-        raise RuntimeError(f"checkpoint has unexpected keys: {unexpected[:5]}")
+        raise RuntimeError(f"{ckpt_path}: checkpoint has unexpected keys: "
+                          f"{unexpected[:5]}")
     trained = [k for k in sd["adapter"] if "lora_b" in k]
     live = sum(float(sd["adapter"][k].abs().sum()) > 0 for k in trained)
-    print(f"[diagnose] checkpoint step {sd.get('step', '?')}, "
+    print(f"[diagnose] {ckpt_path}: step {sd.get('step', '?')}, "
           f"{live}/{len(trained)} lora_b blocks non-zero")
     if live == 0:
         raise RuntimeError(
-            "every lora_b is still zero -- this checkpoint is the "
-            "pretrained model, diagnosing it would produce a confident null")
-    adapter.eval()
+            f"{ckpt_path}: every lora_b is still zero -- this checkpoint is "
+            "the pretrained model, diagnosing it would produce a confident null")
+    return sd
 
-    bias = None
-    if args.bias_npy:
-        bias = torch.from_numpy(np.load(args.bias_npy)).float()
-        print(f"[diagnose] loaded bias vector shape {tuple(bias.shape)} "
-              f"from {args.bias_npy}")
-    else:
-        print("[diagnose] no --bias-npy given -- skipping the centered "
-              "treatment (generate one with: python scripts/"
-              "ambiguity_probe.py --cache ... --save-bias PATH)")
+
+def _diagnose_checkpoint(adapter, dl, device, bias) -> dict:
+    """Run one already-loaded checkpoint over the whole dataloader and
+    return summarize_diagnostics()' summary dict. Pulled out of
+    cmd_diagnose so multiple --ckpt values share one adapter/dataloader
+    without repeating the accumulation loop."""
+    import torch
+
+    from transport.pairflow import direction_position_diagnostics
 
     raws, pooleds, centereds = [], [], []
     with torch.no_grad():
         for batch in dl:
-            z_src = batch["z_src"].to(args.device).float()
-            z_tgt = batch["z_tgt"].to(args.device).float()
-            mask = batch["mask"].to(args.device).float()
-            pe = batch["prompt_embeds"].to(args.device)
-            pooled = batch["pooled"].to(args.device)
+            z_src = batch["z_src"].to(device).float()
+            z_tgt = batch["z_tgt"].to(device).float()
+            mask = batch["mask"].to(device).float()
+            pe = batch["prompt_embeds"].to(device)
+            pooled = batch["pooled"].to(device)
             b = z_src.shape[0]
-            s0 = torch.zeros(b, device=args.device)
+            s0 = torch.zeros(b, device=device)
             # s=0, z=z_src exactly: the one-step readout's actual query
             # point (apply_transport's first grid point, at sigma0=0).
             u = adapter(z_src, s0, s0, pe, pooled, mask=mask)
@@ -502,10 +489,70 @@ def cmd_diagnose(args) -> int:
     raw_arr = np.concatenate(raws)
     pooled_arr = np.concatenate(pooleds)
     centered_arr = np.concatenate(centereds) if centereds else None
-    summary = summarize_diagnostics(raw_arr, pooled_arr, centered_arr)
-    print(f"\n[diagnose] model's own cos(u, v_clean) under three treatments "
-          f"({raw_arr.size} examples), checkpoint {args.ckpt}:")
-    print_diagnostics_summary(summary)
+    return summarize_diagnostics(raw_arr, pooled_arr, centered_arr)
+
+
+def cmd_diagnose(args) -> int:
+    """WHERE/WHAT breakdown of one or more trained checkpoints' own
+    predictions (GATE_A_REOPENING_PLAN.md SS2), following the ambiguity
+    probe's mask-restrict work: the mask-pooled ceiling (0.621 on the real
+    cache) sits well above the model's own full-field cos_clean
+    (~0.50-0.60), which could mean the model is losing POSITION (getting
+    the wrong pixels) or DIRECTION (getting the wrong per-channel shift)
+    or both -- this tells you which. Runs entirely off the cached latents
+    and prompt embeddings (transport/data.py's TripletCache); no VAE or
+    text encoder needed, only the transformer + adapter, to compute
+    u = model(z_src, 0, ...).
+
+    --ckpt takes one or more paths (e.g. comparing sigma0=0.0/0.3/0.5
+    checkpoints on the same cache) -- the base transformer is loaded ONCE
+    and each checkpoint's adapter weights are swapped in, since loading
+    the transformer is the expensive part.
+    """
+    from torch.utils.data import DataLoader
+
+    import torch
+
+    cache = TripletCache(args.cache)
+    ds = torch_dataset(cache)
+    dl = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
+                    num_workers=args.num_workers)
+    print(f"[diagnose] {len(cache)} cached item(s) from {args.cache}")
+
+    bias = None
+    if args.bias_npy:
+        bias = torch.from_numpy(np.load(args.bias_npy)).float()
+        print(f"[diagnose] loaded bias vector shape {tuple(bias.shape)} "
+              f"from {args.bias_npy}")
+    else:
+        print("[diagnose] no --bias-npy given -- skipping the centered "
+              "treatment (generate one with: python scripts/"
+              "ambiguity_probe.py --cache ... --save-bias PATH)")
+
+    adapter = build_adapter(args.model, args.device, args.rank)
+    adapter.eval()
+
+    summaries = {}
+    for ckpt_path in args.ckpt:
+        sd = _load_diagnose_checkpoint(adapter, ckpt_path)
+        summary = _diagnose_checkpoint(adapter, dl, args.device, bias)
+        summaries[ckpt_path] = summary
+        n = summary["raw"]["n"]
+        print(f"\n[diagnose] {ckpt_path} (step {sd.get('step', '?')}) -- "
+              f"model's own cos(u, v_clean) under three treatments "
+              f"({n} examples):")
+        print_diagnostics_summary(summary)
+
+    if len(summaries) > 1:
+        print("\n===== comparison (median cosine per treatment) =====")
+        print(f"{'checkpoint':<45}{'raw':>8}{'pooled':>8}{'centered':>10}")
+        for ckpt_path, summary in summaries.items():
+            def _med(key):
+                s = summary.get(key, {})
+                return f"{s['median']:+.3f}" if s.get("n", 0) > 0 else "--"
+            print(f"{ckpt_path:<45}{_med('raw'):>8}{_med('pooled'):>8}"
+                  f"{_med('centered'):>10}")
+
     print("\ncompare against ambiguity_probe.py's cross-image ceilings on "
           "the same cache: raw 0.420, pooled 0.621, centered ~0.458 "
           "in-sample / see held-out distribution for the honest version. "
@@ -1045,7 +1092,11 @@ def main() -> int:
     ws.set_defaults(fn=cmd_watch_sweep)
 
     d = sub.add_parser("diagnose")
-    d.add_argument("--ckpt", required=True)
+    d.add_argument("--ckpt", nargs="+", required=True,
+                   help="one or more checkpoint paths; the base transformer "
+                        "loads once and each checkpoint's adapter weights "
+                        "are swapped in, with a comparison table printed "
+                        "when more than one is given")
     d.add_argument("--cache", required=True,
                    help="TripletCache directory -- the same one used for "
                         "training/ambiguity_probe.py, no VAE or text "
