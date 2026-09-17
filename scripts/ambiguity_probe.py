@@ -103,6 +103,15 @@ both cheap and both run automatically now:
                     to see whether the gap survives removing any single
                     shared bias direction.
 
+THE MEAN-CENTERED RESULT NEEDED A HELD-OUT VERSION. The in-sample version
+above fits the per-channel bias on the exact 177 pairs it's then scored
+against, so the unrelated column reading ~0 is partly by construction, not
+purely a finding. held_out_centered_gap() fits the bias on a random half
+of the ITEMS and scores same-instruction/unrelated pairs drawn only from
+the OTHER half, repeated over many random splits, reported as a
+distribution rather than a single number that could be an artifact of
+double-dipping on the same data.
+
 USAGE
     python ambiguity_probe.py --self-test
     python ambiguity_probe.py --cache /path/to/cache/<hash>
@@ -341,8 +350,65 @@ def bootstrap_ceiling_gap(by_instruction: dict, null_pairs: list, vecs: dict,
     return float(np.median(gaps)), float(lo), float(hi)
 
 
+def held_out_centered_gap(ids: list[str], vecs: dict, instruction_of: dict,
+                          rng: np.random.Generator, n_splits: int = 20,
+                          max_pairs: int = 2000) -> list[float]:
+    """The honest version of the mean-centered check: the in-sample version
+    fits the per-channel bias on the SAME 177 pairs it's then scored on, so
+    the unrelated column going to ~0 is partly by construction. Here, each
+    of n_splits repeats does a fresh random 50/50 item split, fits the bias
+    on one half only, and scores the ceiling gap on same-instruction /
+    unrelated pairs drawn ONLY from the OTHER half -- the bias never sees
+    the pairs it's evaluated against. Returns the list of held-out gaps,
+    one per split, to report as a distribution rather than a point value.
+    """
+    ids = list(ids)
+    gaps = []
+    for _ in range(n_splits):
+        perm = rng.permutation(len(ids))
+        half = len(ids) // 2
+        fit_ids = [ids[i] for i in perm[:half]]
+        eval_ids = [ids[i] for i in perm[half:]]
+        mean_c = np.stack([vecs[i] for i in fit_ids]).mean(axis=0)
+
+        eval_by_instr = collections.defaultdict(list)
+        for i in eval_ids:
+            eval_by_instr[instruction_of[i]].append(i)
+        same_pairs = []
+        for members in eval_by_instr.values():
+            if len(members) >= 2:
+                same_pairs.extend(itertools.combinations(members, 2))
+        if len(same_pairs) > max_pairs:
+            idx = rng.choice(len(same_pairs), max_pairs, replace=False)
+            same_pairs = [same_pairs[k] for k in idx]
+
+        n_eval = len(eval_ids)
+        n_null_target = min(len(same_pairs), max_pairs) or max_pairs
+        null_pairs, tries, max_tries = [], 0, n_null_target * 50
+        while len(null_pairs) < n_null_target and tries < max_tries and n_eval > 1:
+            tries += 1
+            i, j = rng.integers(0, n_eval), rng.integers(0, n_eval)
+            if i == j:
+                continue
+            a, b = eval_ids[i], eval_ids[j]
+            if instruction_of[a] == instruction_of[b]:
+                continue
+            null_pairs.append((a, b))
+
+        if not same_pairs or not null_pairs:
+            continue
+        vecs_c = {i: vecs[i] - mean_c for i in eval_ids}
+        si = cosines_for(same_pairs, vecs_c)
+        nu = cosines_for(null_pairs, vecs_c)
+        si, nu = si[~np.isnan(si)], nu[~np.isnan(nu)]
+        if si.size == 0 or nu.size == 0:
+            continue
+        gaps.append(np.sqrt(max(si.mean(), 0.0)) - np.sqrt(max(nu.mean(), 0.0)))
+    return gaps
+
+
 def run(cache_root: Path, max_pairs: int, seed: int,
-       mask_restrict: bool = False) -> None:
+       mask_restrict: bool = False, save_bias: Path | None = None) -> None:
     meta = json.loads((cache_root / "meta.json").read_text())
     items = meta["items"]
     print(f"{len(items)} cached triplets in {cache_root}")
@@ -359,6 +425,25 @@ def run(cache_root: Path, max_pairs: int, seed: int,
     ids = list(vecs)
     by_instruction, by_source = build_groups(ids, instruction_of, source_of)
     rng = np.random.default_rng(seed)
+
+    if save_bias is not None:
+        if not any(m is not None for m in masks.values()):
+            print("\n--save-bias requested but no cached item has a mask "
+                  "-- cannot compute, skipping")
+        else:
+            all_pooled = np.stack([mean_pool_in_mask(vecs[i], masks[i])
+                                   for i in ids])
+            bias = all_pooled.mean(axis=0)
+            save_bias.parent.mkdir(parents=True, exist_ok=True)
+            np.save(save_bias, bias)
+            print(f"\nsaved per-channel bias (shape {bias.shape}, mean-"
+                  f"pooled-in-mask, computed over all {len(ids)} cached "
+                  f"items) to {save_bias}. For use with "
+                  "scripts/gate_a_transport.py diagnose --bias-npy -- this "
+                  "is a whole-cache estimate, not held out from any "
+                  "particular eval set; fine as a fixed nuisance vector to "
+                  "subtract, not as a statistic to test significance "
+                  "against (that's what held_out_centered_gap is for).")
 
     print("\npair availability:")
     same_instr_pairs = sample_pair_ids(by_instruction, rng, max_pairs,
@@ -466,6 +551,23 @@ def run(cache_root: Path, max_pairs: int, seed: int,
             med, lo, hi = boot_c
             print(f"\nceiling gap, mean-centered, group-level bootstrap: "
                   f"median {med:+.3f}  95% CI [{lo:+.3f}, {hi:+.3f}]")
+
+        # The above fits the bias on the same pairs it scores -- the
+        # unrelated column reading ~0 is partly by construction. This is
+        # the honest version: fit and score on disjoint random halves,
+        # repeated, reported as a distribution.
+        ho_gaps = held_out_centered_gap(ids, vecs_m, instruction_of, rng)
+        if ho_gaps:
+            arr = np.array(ho_gaps)
+            print(f"\nheld-out mean-centered ceiling gap ({arr.size} random "
+                  f"50/50 splits, bias fit on one half and scored on the "
+                  f"other, disjoint from it every time): "
+                  f"median {np.median(arr):+.3f}  "
+                  f"range [{arr.min():+.3f}, {arr.max():+.3f}]")
+        else:
+            print("\nheld-out mean-centered check: no split produced both "
+                  "same-instruction and unrelated pairs -- not enough data "
+                  "per half to run this honestly")
     elif mask_restrict:
         print("\n--mask-restrict requested but no cached item has a 'mask' "
               "array -- cannot restrict, skipping")
@@ -621,6 +723,48 @@ def self_test() -> None:
     assert raw_biased_cos.mean() > 0.9  # bias swamps the signal before centering
     assert centered_cos.mean() < 0.3    # centering recovers the true near-orthogonal result
 
+    # held_out_centered_gap: a larger synthetic cache with a real
+    # instruction-conditioned signal PLUS a shared bias. Fitting and
+    # scoring on disjoint halves must still recover a clearly positive gap
+    # (not just an artifact of fitting bias on the scored pairs).
+    rng4 = np.random.default_rng(5)
+    instr_dirs = {f"instr{k}": rng4.normal(size=4) for k in range(6)}
+    bias4 = np.array([3.0, 3.0, 3.0, 3.0])
+    ho_vecs, ho_instr = {}, {}
+    idx = 0
+    for instr, direction in instr_dirs.items():
+        for _rep in range(8):  # 8 sources per instruction -> plenty of pairs per half
+            v = direction + bias4 + rng4.normal(scale=0.05, size=4)
+            item_id = f"item{idx}"
+            idx += 1
+            ho_vecs[item_id] = v
+            ho_instr[item_id] = instr
+    ho_ids = list(ho_vecs)
+    gaps_signal = held_out_centered_gap(ho_ids, ho_vecs, ho_instr,
+                                        np.random.default_rng(6), n_splits=30)
+    assert len(gaps_signal) > 10, len(gaps_signal)
+    assert np.median(gaps_signal) > 0.3, np.median(gaps_signal)
+
+    # No-signal control: same bias, but every item's direction is pure
+    # per-instruction noise with NO shared instruction-conditioned
+    # direction -- the held-out gap must sit near 0, not spuriously
+    # positive from the split machinery itself.
+    ho_vecs_null, ho_instr_null = {}, {}
+    idx = 0
+    for k in range(6):
+        instr = f"instr{k}"
+        for _rep in range(8):
+            v = bias4 + rng4.normal(scale=1.0, size=4)  # no instr_dirs term
+            item_id = f"nitem{idx}"
+            idx += 1
+            ho_vecs_null[item_id] = v
+            ho_instr_null[item_id] = instr
+    gaps_null = held_out_centered_gap(list(ho_vecs_null), ho_vecs_null,
+                                      ho_instr_null,
+                                      np.random.default_rng(7), n_splits=30)
+    assert len(gaps_null) > 10, len(gaps_null)
+    assert abs(np.median(gaps_null)) < 0.3, np.median(gaps_null)
+
     print("ambiguity_probe self-test OK")
 
 
@@ -634,6 +778,10 @@ def main() -> None:
     p.add_argument("--mask-restrict", action="store_true",
                    help="also recompute every cosine with v restricted to "
                         "the mask region")
+    p.add_argument("--save-bias", type=Path, default=None,
+                   help="save the per-channel mean-pooled-in-mask bias "
+                        "(computed over the whole cache) to this .npy path, "
+                        "for scripts/gate_a_transport.py diagnose --bias-npy")
     p.add_argument("--self-test", action="store_true")
     args = p.parse_args()
 
@@ -642,7 +790,8 @@ def main() -> None:
         return
     if args.cache is None:
         p.error("--cache is required (or pass --self-test)")
-    run(args.cache, args.max_pairs, args.seed, mask_restrict=args.mask_restrict)
+    run(args.cache, args.max_pairs, args.seed, mask_restrict=args.mask_restrict,
+       save_bias=args.save_bias)
 
 
 if __name__ == "__main__":

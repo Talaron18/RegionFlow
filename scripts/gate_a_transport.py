@@ -393,6 +393,129 @@ def cmd_eval(args) -> int:
     return 0
 
 
+def summarize_diagnostics(raw: np.ndarray, pooled: np.ndarray,
+                          centered: np.ndarray | None = None) -> dict:
+    """Aggregate transport.pairflow.direction_position_diagnostics' per-
+    example arrays (may contain NaN for degenerate examples, e.g. an
+    empty mask) into mean/median/p10/p90 per treatment, NaNs dropped.
+    Pulled out of cmd_diagnose so the aggregation/NaN-handling is
+    self-testable without a GPU or a checkpoint.
+    """
+    def _stats(arr: np.ndarray) -> dict:
+        arr = arr[~np.isnan(arr)]
+        if arr.size == 0:
+            return {"n": 0}
+        return {"n": int(arr.size), "mean": float(arr.mean()),
+                "median": float(np.median(arr)),
+                "p10": float(np.percentile(arr, 10)),
+                "p90": float(np.percentile(arr, 90))}
+    out = {"raw": _stats(raw), "pooled": _stats(pooled)}
+    if centered is not None:
+        out["centered"] = _stats(centered)
+    return out
+
+
+def print_diagnostics_summary(summary: dict) -> None:
+    labels = {"raw": "raw (full frame)",
+             "pooled": "pooled (masked, per-channel)",
+             "centered": "centered (bias removed)"}
+    for key, label in labels.items():
+        if key not in summary:
+            continue
+        s = summary[key]
+        if s["n"] == 0:
+            print(f"  {label}: no valid examples")
+            continue
+        print(f"  {label}: n={s['n']}  mean {s['mean']:+.3f}  "
+              f"median {s['median']:+.3f}  p10 {s['p10']:+.3f}  "
+              f"p90 {s['p90']:+.3f}")
+
+
+def cmd_diagnose(args) -> int:
+    """WHERE/WHAT breakdown of a trained checkpoint's own predictions
+    (GATE_A_REOPENING_PLAN.md SS2), following the ambiguity probe's mask-
+    restrict work: the mask-pooled ceiling (0.621 on the real cache) sits
+    well above the model's own full-field cos_clean (~0.50-0.60), which
+    could mean the model is losing POSITION (getting the wrong pixels) or
+    DIRECTION (getting the wrong per-channel shift) or both -- this tells
+    you which. Runs entirely off the cached latents and prompt embeddings
+    (transport/data.py's TripletCache); no VAE or text encoder needed,
+    only the transformer + adapter, to compute u = model(z_src, 0, ...).
+    """
+    import torch
+    from torch.utils.data import DataLoader
+
+    from transport.pairflow import direction_position_diagnostics
+
+    cache = TripletCache(args.cache)
+    ds = torch_dataset(cache)
+    dl = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
+                    num_workers=args.num_workers)
+    print(f"[diagnose] {len(cache)} cached item(s) from {args.cache}")
+
+    adapter = build_adapter(args.model, args.device, args.rank)
+    sd = torch.load(args.ckpt, map_location="cpu", weights_only=False)
+    _missing, unexpected = adapter.load_state_dict(sd["adapter"], strict=False)
+    if unexpected:
+        raise RuntimeError(f"checkpoint has unexpected keys: {unexpected[:5]}")
+    trained = [k for k in sd["adapter"] if "lora_b" in k]
+    live = sum(float(sd["adapter"][k].abs().sum()) > 0 for k in trained)
+    print(f"[diagnose] checkpoint step {sd.get('step', '?')}, "
+          f"{live}/{len(trained)} lora_b blocks non-zero")
+    if live == 0:
+        raise RuntimeError(
+            "every lora_b is still zero -- this checkpoint is the "
+            "pretrained model, diagnosing it would produce a confident null")
+    adapter.eval()
+
+    bias = None
+    if args.bias_npy:
+        bias = torch.from_numpy(np.load(args.bias_npy)).float()
+        print(f"[diagnose] loaded bias vector shape {tuple(bias.shape)} "
+              f"from {args.bias_npy}")
+    else:
+        print("[diagnose] no --bias-npy given -- skipping the centered "
+              "treatment (generate one with: python scripts/"
+              "ambiguity_probe.py --cache ... --save-bias PATH)")
+
+    raws, pooleds, centereds = [], [], []
+    with torch.no_grad():
+        for batch in dl:
+            z_src = batch["z_src"].to(args.device).float()
+            z_tgt = batch["z_tgt"].to(args.device).float()
+            mask = batch["mask"].to(args.device).float()
+            pe = batch["prompt_embeds"].to(args.device)
+            pooled = batch["pooled"].to(args.device)
+            b = z_src.shape[0]
+            s0 = torch.zeros(b, device=args.device)
+            # s=0, z=z_src exactly: the one-step readout's actual query
+            # point (apply_transport's first grid point, at sigma0=0).
+            u = adapter(z_src, s0, s0, pe, pooled, mask=mask)
+            v_clean = z_tgt - z_src
+            diag = direction_position_diagnostics(u.float(), v_clean, mask,
+                                                  bias=bias)
+            raws.append(diag["raw"].cpu().numpy())
+            pooleds.append(diag["pooled"].cpu().numpy())
+            if "centered" in diag:
+                centereds.append(diag["centered"].cpu().numpy())
+
+    raw_arr = np.concatenate(raws)
+    pooled_arr = np.concatenate(pooleds)
+    centered_arr = np.concatenate(centereds) if centereds else None
+    summary = summarize_diagnostics(raw_arr, pooled_arr, centered_arr)
+    print(f"\n[diagnose] model's own cos(u, v_clean) under three treatments "
+          f"({raw_arr.size} examples), checkpoint {args.ckpt}:")
+    print_diagnostics_summary(summary)
+    print("\ncompare against ambiguity_probe.py's cross-image ceilings on "
+          "the same cache: raw 0.420, pooled 0.621, centered ~0.458 "
+          "in-sample / see held-out distribution for the honest version. "
+          "A model well below the pooled ceiling but close to the raw "
+          "ceiling is losing DIRECTION more than position; the reverse "
+          "means it already has the right direction but is imprecise "
+          "about WHERE inside the mask to put it.")
+    return 0
+
+
 def _sheet(panels, labels, path, size=320):
     from PIL import Image, ImageDraw
 
@@ -764,6 +887,30 @@ def self_test() -> None:
         plot_sweep_comparison(runs_clean, clean_png)
         assert clean_png.exists() and clean_png.stat().st_size > 0
 
+    # summarize_diagnostics / print_diagnostics_summary: the pure
+    # aggregation half of `diagnose`, testable without a GPU or checkpoint.
+    # NaNs (degenerate examples, e.g. an empty mask) must be dropped, not
+    # propagate into the summary.
+    raw = np.array([0.5, 0.6, float("nan"), 0.4])
+    pooled = np.array([0.8, float("nan"), 0.7, 0.9])
+    summary = summarize_diagnostics(raw, pooled)
+    assert summary["raw"]["n"] == 3
+    assert abs(summary["raw"]["mean"] - 0.5) < 1e-9
+    assert summary["pooled"]["n"] == 3
+    assert "centered" not in summary  # omitted entirely when not passed
+
+    summary_c = summarize_diagnostics(raw, pooled, np.array([0.2, 0.3]))
+    assert summary_c["centered"]["n"] == 2
+
+    # all-NaN input (e.g. every mask in a batch was empty) must report
+    # n=0, not raise or produce a NaN mean that would silently poison a
+    # printed report.
+    all_nan = np.array([float("nan"), float("nan")])
+    summary_empty = summarize_diagnostics(all_nan, all_nan)
+    assert summary_empty["raw"]["n"] == 0
+    print_diagnostics_summary(summary_empty)  # must not raise
+    print_diagnostics_summary(summary_c)       # must not raise
+
     print("gate_a_transport self-test OK")
 
 
@@ -896,6 +1043,23 @@ def main() -> int:
     ws.add_argument("--once", action="store_true",
                     help="draw once and exit instead of polling forever")
     ws.set_defaults(fn=cmd_watch_sweep)
+
+    d = sub.add_parser("diagnose")
+    d.add_argument("--ckpt", required=True)
+    d.add_argument("--cache", required=True,
+                   help="TripletCache directory -- the same one used for "
+                        "training/ambiguity_probe.py, no VAE or text "
+                        "encoder needed since latents+embeddings are cached")
+    d.add_argument("--bias-npy", default=None,
+                   help="per-channel bias vector (.npy) from "
+                        "ambiguity_probe.py --save-bias, for the centered "
+                        "treatment; omit to report raw+pooled only")
+    d.add_argument("--batch-size", type=int, default=8)
+    d.add_argument("--num-workers", type=int, default=2)
+    d.add_argument("--rank", type=int, default=16)
+    d.add_argument("--device", default="cuda")
+    d.add_argument("--model", default=common["model"])
+    d.set_defaults(fn=cmd_diagnose)
 
     s = sub.add_parser("self-test")
     s.set_defaults(fn=lambda _args: self_test())

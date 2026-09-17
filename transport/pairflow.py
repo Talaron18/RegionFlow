@@ -291,6 +291,70 @@ def pairflow_loss(
 
 
 @torch.no_grad()
+def direction_position_diagnostics(
+    u: torch.Tensor,
+    v_clean: torch.Tensor,
+    mask: torch.Tensor,
+    bias: torch.Tensor | None = None,
+) -> dict[str, torch.Tensor]:
+    """Per-example cos(u, v_clean) under three treatments -- the WHERE/WHAT
+    split (GATE_A_REOPENING_PLAN.md SS2) applied to a trained checkpoint's
+    own predictions, not to raw data. u is the model's predicted velocity
+    at s=0 (the actual one-step readout query point); v_clean = z_tgt -
+    z_src, sigma0-independent, same as pairflow_loss's own cos_clean.
+
+    raw       cosine over the FULL (C,H,W) tensor, unmasked. The model has
+              to get both WHERE (which pixels move) and WHAT (which
+              direction) right here -- comparable to
+              ambiguity_probe.py's raw-v ceiling (0.420 on the real
+              cache).
+    pooled    u and v_clean each mean-pooled over the mask into one value
+              per channel FIRST (same construction as
+              ambiguity_probe.mean_pool_in_mask), then cosine. Removes the
+              positional burden entirely -- comparable to its
+              mask-restricted ceiling (0.621).
+    centered  pooled, then a fixed per-channel `bias` (the shared,
+              non-instruction-specific direction most edits move in --
+              fit externally on held-out ground truth via
+              ambiguity_probe.held_out_centered_gap, NOT estimated from
+              this batch) is subtracted from both u and v_clean before
+              cosine. Omitted (bias=None, the default) if no bias is
+              available. Comparable to the mean-centered ceiling (0.458 /
+              held-out distribution).
+
+    Why this triple exists: the raw-vs-pooled gap tells you how much of
+    the model's shortfall is POSITIONAL (getting the right pixels) versus
+    DIRECTIONAL (getting the right per-channel shift); pooled-vs-centered
+    tells you how much of what looks directional is actually the model
+    reproducing a generic bias every edit shares, versus genuine
+    instruction-specific direction.
+
+    Returns per-example tensors of shape (B,) (NaN where a denominator is
+    ~0), for the caller to aggregate (mean/median/percentiles) across a
+    whole eval set the same way ambiguity_probe.report() does.
+    """
+    def _cos(a: torch.Tensor, b: torch.Tensor, dim: tuple[int, ...]) -> torch.Tensor:
+        num = (a * b).sum(dim=dim)
+        den = (a.pow(2).sum(dim=dim).clamp(min=1e-16).sqrt()
+              * b.pow(2).sum(dim=dim).clamp(min=1e-16).sqrt())
+        return torch.where(den > 1e-8, num / den, torch.full_like(num, float("nan")))
+
+    raw = _cos(u, v_clean, dim=(1, 2, 3))
+
+    denom = mask.sum(dim=(2, 3)).clamp(min=1e-8)          # (B, 1)
+    u_pooled = (u * mask).sum(dim=(2, 3)) / denom          # (B, C)
+    v_pooled = (v_clean * mask).sum(dim=(2, 3)) / denom    # (B, C)
+    pooled = _cos(u_pooled, v_pooled, dim=(1,))
+
+    out = {"raw": raw, "pooled": pooled}
+    if bias is not None:
+        C = u_pooled.shape[1]
+        b = bias.reshape(1, C).to(dtype=u_pooled.dtype, device=u_pooled.device)
+        out["centered"] = _cos(u_pooled - b, v_pooled - b, dim=(1,))
+    return out
+
+
+@torch.no_grad()
 def apply_transport(
     model,
     z_src: torch.Tensor,
@@ -490,6 +554,56 @@ def self_test() -> None:
     # exactly the divergence a sweep comparison plot would otherwise
     # conflate with a real improvement.
     assert abs(stats1["cos"] - stats1["cos_clean"]) > 1e-3, stats1
+
+    # direction_position_diagnostics: a model stub that gets direction right
+    # INSIDE the mask but predicts pure noise everywhere else. raw (whole
+    # frame) must be dragged down by the background noise; pooled (masked
+    # region only) must recover near-perfect alignment since it never sees
+    # the background at all.
+    torch.manual_seed(8)
+    Bd, Cd, Hd, Wd = 3, 4, 8, 8
+    mask_d = torch.zeros(Bd, 1, Hd, Wd)
+    mask_d[:, :, 2:6, 2:6] = 1.0
+    v_clean_d = torch.zeros(Bd, Cd, Hd, Wd)
+    v_clean_d[:, :, 2:6, 2:6] = torch.randn(Bd, Cd, 1, 1)  # constant per-example inside mask
+    u_d = v_clean_d.clone()
+    u_d[:, :, mask_d[0, 0] < 0.5] = torch.randn(Bd, Cd, (mask_d[0, 0] < 0.5).sum())
+    diag = direction_position_diagnostics(u_d, v_clean_d, mask_d)
+    assert torch.all(diag["pooled"] > 0.99), diag["pooled"]
+    assert torch.all(diag["raw"] < diag["pooled"]), (diag["raw"], diag["pooled"])
+
+    # centered: subtracting the TRUE shared bias from both u and v_clean,
+    # when u and v_clean are otherwise identical (perfect prediction), must
+    # still give cosine ~1 -- centering a perfect match stays a perfect
+    # match.
+    bias_d = v_clean_d[:, :, 2, 2].mean(dim=0)  # a (C,) vector, not exactly
+    # the per-channel mean used elsewhere but any fixed (C,) vector
+    # exercises the subtraction path identically.
+    diag_c = direction_position_diagnostics(v_clean_d, v_clean_d, mask_d, bias=bias_d)
+    assert torch.all(diag_c["centered"] > 0.99) or torch.all(torch.isnan(diag_c["centered"])), \
+        diag_c["centered"]
+
+    # centered actually changes the answer when u and v_clean diverge only
+    # in their shared-bias component (a case where pooled would say "aligned"
+    # but centered reveals there is no genuine per-instruction signal beyond
+    # the bias).
+    direction = torch.randn(Cd)
+    v_bias_only = torch.zeros(Bd, Cd, Hd, Wd)
+    v_bias_only[:, :, 2:6, 2:6] = direction.reshape(1, Cd, 1, 1)
+    u_opposite_signal = torch.zeros(Bd, Cd, Hd, Wd)
+    # u matches v_clean's bias component but has the OPPOSITE genuine signal
+    # on top -- pooled cosine (dominated by the large shared bias) should
+    # still read positive, while centered (bias removed) should reveal the
+    # true disagreement.
+    big_bias = direction * 5.0
+    small_signal = torch.randn(Cd)
+    v_pool_case = torch.zeros(Bd, Cd, Hd, Wd)
+    v_pool_case[:, :, 2:6, 2:6] = (big_bias + small_signal).reshape(1, Cd, 1, 1)
+    u_pool_case = torch.zeros(Bd, Cd, Hd, Wd)
+    u_pool_case[:, :, 2:6, 2:6] = (big_bias - small_signal).reshape(1, Cd, 1, 1)
+    diag_case = direction_position_diagnostics(u_pool_case, v_pool_case, mask_d, bias=big_bias)
+    assert torch.all(diag_case["pooled"] > 0.9), diag_case["pooled"]
+    assert torch.all(diag_case["centered"] < -0.9), diag_case["centered"]
 
     print("pairflow self-test OK")
 
