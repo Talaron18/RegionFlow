@@ -480,11 +480,23 @@ def plot_training_log(recs: list[dict], out_png: Path) -> None:
 
     ax = axes[0, 1]
     if "cos" in recs[0]:
-        ax.plot(steps, [r["cos"] for r in recs])
+        ax.plot(steps, [r["cos"] for r in recs], label="cos (vs noised target)")
+        if "cos_clean" in recs[0]:
+            # cos vs cos_clean is itself the diagnostic for whether sigma0
+            # is learning something real: cos alone can rise just because
+            # the model partially echoes back sigma0*eps from its own
+            # input (transport/pairflow.py's own note on this). cos_clean
+            # can't be gamed that way -- if the two track together, the
+            # improvement is real; if cos climbs while cos_clean doesn't,
+            # that's the echo, not genuine mode-selection.
+            ax.plot(steps, [r["cos_clean"] for r in recs],
+                   label="cos_clean (vs true v)", linestyle="--")
         ax.axhline(0.0, color="grey", lw=0.5)
         ax.set_ylim(-1.05, 1.05)
     ax.set_title("cos(u, v) -- directional alignment")
     ax.set_xlabel("step")
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize=8)
     ax.grid(alpha=0.3)
 
     ax = axes[1, 0]
@@ -556,12 +568,27 @@ def plot_sweep_comparison(runs: dict[str, list[dict]], out_png: Path) -> None:
     across separate PNGs.
 
     Deliberately simpler than plot_training_log's own per-run view: just
-    loss / cos / rel_in / move_ratio, ONE line per run, not the in/out
-    breakdown or the rel_in_floor overlay (which would need 2 lines per
-    run and stop being readable past 3-4 runs). Read a run's own
-    training_curve.png (watch-log) for that detail -- this view answers
-    the cross-run question, which sigma0 is winning, not the within-run
-    one.
+    loss / cos_clean / rel_in / move_ratio, ONE line per run, not the
+    in/out breakdown or the rel_in_floor overlay (which would need 2
+    lines per run and stop being readable past 3-4 runs). Read a run's
+    own training_curve.png (watch-log) for that detail -- this view
+    answers the cross-run question, which sigma0 is winning, not the
+    within-run one.
+
+    cos_clean, NOT cos, is what a sigma0 sweep has to compare on. "cos"
+    (pairflow_loss's stats dict) is cos(u, v) against sample_path's own
+    NOISED target -- a DIFFERENT quantity at every sigma0, since that
+    target is literally z_tgt - z_src - sigma0*eps. A model can partially
+    learn to echo sigma0*eps straight back out of its own input (z_s
+    contains it almost directly near s=0) rather than learning the true
+    edit direction, and that echo gets EASIER to fit as sigma0 grows --
+    so "cos" rising faster for larger sigma0 is exactly what you'd also
+    see from pure metric-gaming, not only from real improvement.
+    cos_clean = cos(u, z_tgt - z_src) can't be gamed that way: the true
+    displacement has no eps in it regardless of which sigma0 or which eps
+    produced z_s, so it's the one column comparable across the sweep.
+    Falls back to "cos" for log files predating this field, with the
+    panel title marking which one it actually drew.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -571,9 +598,17 @@ def plot_sweep_comparison(runs: dict[str, list[dict]], out_png: Path) -> None:
     if not runs:
         return
 
+    cos_key = "cos_clean" if any("cos_clean" in r
+                                 for recs in runs.values() for r in recs) \
+             else "cos"
+    cos_title = ("cos_clean(u, v) -- vs the TRUE displacement, comparable "
+                "across sigma0" if cos_key == "cos_clean" else
+                "cos(u, v) -- vs the noised target, NOT comparable across "
+                "sigma0 (old log, predates cos_clean)")
+
     fig, axes = plt.subplots(2, 2, figsize=(11, 7))
     panels = [(axes[0, 0], "loss", "loss"),
-             (axes[0, 1], "cos", "cos(u, v) -- directional alignment"),
+             (axes[0, 1], cos_key, cos_title),
              (axes[1, 0], "rel_in", "rel_in"),
              (axes[1, 1], "move_ratio", "move_ratio")]
     for ax, key, title in panels:
@@ -713,6 +748,21 @@ def self_test() -> None:
         # yet) must be dropped, not crash the render.
         plot_sweep_comparison({**runs, "sigma0=0.6": []}, sweep_png)
         assert sweep_png.exists()
+
+        # cos_clean preferred over cos when present -- the whole point of
+        # the fallback logic (a sigma0 sweep must compare on cos_clean,
+        # not the noised "cos", or it's comparing different quantities).
+        runs_clean = {
+            "sigma0=0.0": [{"step": 25, "loss": 0.5, "cos": 0.3,
+                            "cos_clean": 0.3, "rel_in": 0.9,
+                            "move_ratio": 0.8}],
+            "sigma0=0.7": [{"step": 25, "loss": 0.6, "cos": 0.6,
+                            "cos_clean": 0.35, "rel_in": 0.85,
+                            "move_ratio": 0.82}],
+        }
+        clean_png = Path(td) / "clean.png"
+        plot_sweep_comparison(runs_clean, clean_png)
+        assert clean_png.exists() and clean_png.stat().st_size > 0
 
     print("gate_a_transport self-test OK")
 

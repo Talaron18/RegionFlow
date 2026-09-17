@@ -255,6 +255,38 @@ def pairflow_loss(
             stats["move_ratio"] / stats["cos"] if stats["cos"] > 0.2
             else float("nan")
         )
+
+        # cos_clean -- cos(u, v) against the TRUE, sigma0-INDEPENDENT
+        # displacement z_tgt - z_src, not the noised v = z_tgt - z_src'
+        # sample_path returned above. Diagnostic only; never fed into the
+        # loss (that stays the interpolant's own noised target, which is
+        # what Direction A is supposed to learn against).
+        #
+        # WHY THIS EXISTS. "cos" above is NOT comparable across sigma0
+        # values -- it measures alignment against a DIFFERENT, noisier
+        # target at every sigma0 (v_rms_in ~1.0-1.1, i.e. the same scale
+        # as eps's own unit variance, so by sigma0=1.0 that target is
+        # roughly half true-edit-signal, half injected noise). z_s
+        # CONTAINS sigma0*eps*mask near s=0 -- almost exactly the point
+        # the one-step readout queries -- so a model can partially learn
+        # to echo that noise straight back out of its own input rather
+        # than learning the true edit direction, and that echo gets
+        # EASIER to fit as sigma0 grows (linearly present in the input,
+        # unlike real edit semantics). A rising "cos" at higher sigma0 is
+        # consistent with genuine mode-selection improving; it is EQUALLY
+        # consistent with the model gaming an increasingly-noise-dominated
+        # target. cos_clean can't be gamed this way: z_tgt - z_src has no
+        # eps in it regardless of what sigma0 or what eps generated z_s,
+        # so echoing eps back does not help this number.
+        #
+        # sigma0=0: v already equals z_tgt - z_src, so cos_clean == cos
+        # exactly (not approximately) -- asserted in self_test.
+        v_clean = z_tgt - z_src
+        v2c_in = float((v_clean.pow(2) * inside).sum() / (n_in * C))
+        stats["cos_clean"] = (
+            float(((u * v_clean * inside).sum() / (n_in * C)))
+            / max((u2_in * v2c_in) ** 0.5, 1e-8)
+        )
     return loss, stats
 
 
@@ -428,6 +460,36 @@ def self_test() -> None:
                           prompt_embeds=None, pooled=None,
                           strength=1.0, steps=1, sigma0=0.6, generator=gen_c)
     assert not torch.equal(z_a, z_c)
+
+    # pairflow_loss / cos_clean: was never exercised by this self-test
+    # before Direction A added it. A fixed-output stub model isolates the
+    # stats computation from anything the model itself does.
+    pe = torch.randn(B, 4, 8)
+    po = torch.randn(B, 8)
+    u_fixed = torch.randn(B, C, H, W)
+
+    cfg0 = PairFlowConfig(mask_dropout=0.0, cond_dropout=0.0, sigma0=0.0)
+    _, stats0 = pairflow_loss(_fake_pair_model(u_fixed), z_src, z_tgt, mask,
+                              pe, po, cfg0)
+    # sigma0=0: v IS the true displacement already (sample_path's own
+    # byte-identical guarantee), so cos and cos_clean must match exactly,
+    # not approximately.
+    assert abs(stats0["cos"] - stats0["cos_clean"]) < 1e-6, stats0
+
+    cfg1 = PairFlowConfig(mask_dropout=0.0, cond_dropout=0.0, sigma0=0.7)
+    gen = torch.Generator().manual_seed(7)
+    _, stats1 = pairflow_loss(_fake_pair_model(u_fixed), z_src, z_tgt, mask,
+                              pe, po, cfg1, generator=gen)
+    # cos_clean must be INDEPENDENT of sigma0/eps -- same u, same
+    # z_tgt - z_src regardless of which noised path produced z_s. This is
+    # the property that makes it comparable across a sigma0 sweep, which
+    # "cos" (against the noised target) is not.
+    assert abs(stats1["cos_clean"] - stats0["cos_clean"]) < 1e-6, \
+        (stats1, stats0)
+    # "cos" (against the noised target) DOES move once sigma0>0 -- this is
+    # exactly the divergence a sweep comparison plot would otherwise
+    # conflate with a real improvement.
+    assert abs(stats1["cos"] - stats1["cos_clean"]) > 1e-3, stats1
 
     print("pairflow self-test OK")
 
