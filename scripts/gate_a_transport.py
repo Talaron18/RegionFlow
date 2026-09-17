@@ -87,8 +87,20 @@ def cmd_train(args) -> int:
     ds = torch_dataset(cache)
     print(f"cache {args.cache}: {len(ds)} triplets")
 
+    # persistent_workers=True: without it, PyTorch tears down and respawns
+    # every worker process at EVERY epoch boundary (Trainer.run's own
+    # `except StopIteration: it = iter(self.loader)` creates a fresh
+    # DataLoader iterator there, and persistent_workers=False -- the
+    # default -- means a fresh iterator means fresh worker processes).
+    # Harmless for a single run; expensive when running several
+    # concurrent sweep processes (sweep_sigma0.sh) that share roughly the
+    # same cache size and so tend to hit their own epoch boundaries around
+    # the same wall-clock time -- observed as a periodic multi-run stall
+    # (GPU utilization sawtooth) rather than smooth throughput. No
+    # downside here: same dataset for the whole run, nothing to reload.
     loader = DataLoader(ds, batch_size=args.batch, shuffle=True,
-                        num_workers=4, drop_last=True, pin_memory=True)
+                        num_workers=args.num_workers, drop_last=True,
+                        pin_memory=True, persistent_workers=True)
 
     adapter = build_adapter(args.model, args.device, args.rank, args.max_blocks)
     # Gradient checkpointing trades ~30-40% step time for activation memory,
@@ -717,6 +729,13 @@ def main() -> int:
     t.add_argument("--steps", type=int, default=8000)
     t.add_argument("--batch", type=int, default=4)
     t.add_argument("--accum", type=int, default=4)
+    t.add_argument("--num-workers", type=int, default=4,
+                   help="DataLoader worker processes for THIS run. Was "
+                        "hardcoded at 4; now tunable because sweep_sigma0.sh "
+                        "runs several of these concurrently -- N runs x "
+                        "this many workers each are all competing for CPU/IO "
+                        "on the same box. Lower it (e.g. 2) when running a "
+                        "wide sweep if you see contention.")
     t.add_argument("--lr", type=float, default=1e-4)
     t.add_argument("--rank", type=int, default=16)
     t.add_argument("--max-blocks", type=int, default=None)
