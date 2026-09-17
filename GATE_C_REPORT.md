@@ -664,6 +664,10 @@ works; routing is not enough.
    extending past the `none` baseline. Re-scoring `white`/`oracle` before
    that's understood risks adding a confidently wrong number to §9's
    quality claim.
-4. Δ-order curriculum (`delta_curriculum.py`) — three arms at ~2 h. Now
-   motivated by this gate: direction is the residual it isolated, and the
-   anchor-SSE climb is the one lead anyone has on it.
+4. ~~Δ-order curriculum~~ — done, two seeds each, see `DELTA_CURRICULUM_REPORT.md`.
+   Headline: A1 (Δ-order curriculum) beats the uncurriculed baseline by
+   ~3% on `vs_base_at_a_opt` at the Δ=0.5 operating point, a gap that
+   clears seed noise in both seeds; A2 (anchor replacement) is a
+   reproducible regression with a code-confirmed mechanism. This is
+   separate MeanFlow-training work, not part of the mask-conditioning gate
+   this report covers.
