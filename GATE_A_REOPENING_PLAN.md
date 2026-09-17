@@ -155,17 +155,143 @@ the project has today.
 This document was written from two inputs: the synthesis in §1–4 (pasted
 in full), and the Do/Don't list in §5 (pasted in full, as feedback on a
 longer proposal). That proposal itself — the document defining **Direction
-A** vs **Direction B**, the σ(0) parameterisation, the `1 − cos²` ≈ 0.44 vs
-≈0.72 LoRA ablation, and the exact `§7` ambiguity probe being critiqued —
-is not in this repo and was not pasted into this conversation. Grepping the
-full tree for "Direction A", "Direction B", "σ(0)"/"sigma(0)", "ambiguity
-probe", and "same LoRA" returns nothing.
+A** vs **Direction B**, the σ(0) parameterisation, and the `§7` ambiguity
+probe being critiqued was not in this repo at the time this section was
+first written. It has since been supplied in full and is folded in below.
 
-Scoping the Gate A reopening means designing the stochastic-path objective
-concretely enough to run — and "if Direction A is taken, keep σ(0) > 0" is
-a real constraint on that design that can't be honored without knowing what
-Direction A specifies. Rather than guess at a design that might silently
-contradict it, this is the one blocking question before scoping starts:
-**share the document (or its relevant section) that defines Direction A and
-Direction B**, or restate σ(0), the two directions, and the LoRA ablation
-directly. Everything else in this file is ready to act on now.
+---
+
+## 7. The objective failure, precisely
+
+Gate A's failure was not "ordinary multimodal networks inevitably undergo
+MSE averaging." It was more specific: the target definition compressed a
+conditional distribution that inherently has latent edit ambiguity into a
+single point vector, causing MSE to learn the conditional expectation
+`E[v | z, c, M]`.
+
+**The mechanism.** Target `v = z_tgt − z_src`; training minimises
+`E[‖u(z,c,M) − v‖²]`; the optimal solution under MSE is
+`u*(z,c,M) = E[v | z,c,M]`. If a set of conditions is indistinguishable
+within the conditioning — "turn the dog white/brown/black" all read the
+same `(z,c,M)` when `c` doesn't pin down which brown — then
+`p(v | z,c,M)` isn't a delta distribution, it's a mixture of distinct modes
+`v_1, v_2, v_3, …`, and the model learns their mean: smaller magnitude,
+mid-way direction, cancelled high-frequency structure. That's desaturation
+and blur, and it's exactly what Gate A's own closure already described
+("no visible change straight to blur," "the average of many colour changes
+over an object is a desaturated smear").
+
+**Why Gate A specifically, and not just "MSE regression in general."** The
+target here isn't an image, it's a latent displacement field. So the result
+of averaging isn't an averaged image (Pix2Pix's blurry grey roof,
+super-resolution's blurry upscale) — it's an *averaged edit direction*.
+Same root cause as the precedent across the field (Pix2Pix's motivation for
+conditional GANs, SR's motivation for perceptual/adversarial losses, DDPM
+predicting noise/velocity rather than `x_0` directly because `p(x_0|x_t)` is
+multimodal, standard flow matching's `v*(x,t) = E[x_1−x_0|x_t]`), but
+applied to a displacement target rather than a pixel target.
+
+**Why diffusion editors don't hit this.** They don't predict a single
+static velocity from the condition alone — sampled noise provides mode
+selection: `condition + randomness → one possible edit`. Gate A currently
+has `condition → average edit`, with nothing playing the randomness role.
+
+### Where the fix has to land: the s=0 readout
+
+This is the refinement that matters most, and it's sharper than "MSE learns
+the conditional mean."
+
+`pairflow` doesn't integrate a path to read out the edit — it reads out in
+**one step at s=0**: `z_edit = z_src + u(z_src, 0, c, M)`. At `s=0` the
+conditioning is `(z_src, c, M)` for *every mode* — there is nothing at the
+exact point the model is queried that disambiguates which brown was meant.
+
+This has a consequence for the fix. Direction A below proposes
+`z_s = (1−s)z_src + s·z_tgt + σ(s)ε`. Stochastic interpolants conventionally
+take `σ(0) = σ(1) = 0` so the endpoints stay exact. But with `σ(0) = 0`,
+`z_0 = z_src` for every mode regardless, `u(z_src, 0, c, M) = E[v]` again,
+and nothing has changed at the only place Gate A looks. **Direction A only
+works if either `σ(0) > 0`** (the noise itself selects the mode at the
+query point) **or the one-step-at-s=0 readout is abandoned and the path is
+integrated** (accumulated noise does the disambiguating along the way).
+Those are different designs with different costs, and picking between them
+is part of the scoping work, not a detail to settle later.
+
+This also reconciles the precedent survey's own observation that standard
+flow matching's `v*(x,t) = E[x_1−x_0 | x_t]` — also a conditional
+expectation — works fine: the averaged marginal field provably transports
+the right distribution because `x_t` differs across modes and disambiguates
+*along the trajectory*. **Averaging isn't the bug. Averaging at a point
+where nothing distinguishes the modes is the bug**, and `s=0` under
+`σ(0)=0` is exactly that point.
+
+### The three directions
+
+- **Direction A — stochastic pair transport.**
+  `z_s = (1−s)z_src + s·z_tgt + σ(s)ε`, train `v(z_s, s)` as a stochastic
+  interpolant, keeping the flow trajectory while injecting mode selection.
+  **The one that stays inside the thesis** — see below — conditional on
+  resolving the `σ(0)` question above.
+- **Direction B — diffusion-style velocity target.** Sample
+  `z_t = α_t z_src + σ_t ε`, train `v_θ(z_t, t, c, M)` under conditional
+  flow matching. This is InstructPix2Pix-shaped: it reintroduces exactly
+  the source/noise mixing Stage 0 found collapses onto a single axis, and
+  it discards `pairflow`'s stated premise that noise never enters and the
+  source is displaced rather than destroyed. Possibly correct, but **a
+  retreat to the standard approach, not a continuation of the thesis** —
+  presenting it as continuous with "conditional average-velocity transport"
+  would be misleading.
+- **Direction C — distributional velocity.** Explicitly model
+  `p(v | z,c,M)` via a mixture density network
+  (`Σ_k π_k N(μ_k, Σ_k)`) or latent noise injection
+  `v_θ(z,c,M,η)`, `η ~ N(0,I)`. Not evaluated against A/B in detail here;
+  parked as a third option, not ranked.
+
+### One claim to delete
+
+**"Changing the target raised cos to ≈0.72 using the exact same rank-32
+LoRA and conditioning path" does not follow, and should not be quoted
+anywhere, including in a paper.** That 0.72–0.76 is cosine between the Gate
+B adapter's correction and the true average velocity of the frozen
+teacher's *generation* field — a different task, different target,
+different data role from Gate A's *edit displacement*. Gate B never
+ablated Gate A's objective; it isn't evidence about it either way. And the
+number is being read backwards: `1 − cos² ≈ 0.44–0.48` is what Gate B's own
+closure calls the *binding constraint* — the thing that's still wrong —
+not evidence that a target change fixed something.
+
+### The corrected ambiguity probe
+
+The original `§7` probe — `cos(v_i, v_j)` across samples "sharing similar
+`(z,c,M)`" — is confounded: low cosine could mean genuine mode ambiguity,
+or just that the two images are different. The dataset has no fixed
+`(z,c,M)` with multiple recorded targets, so `p(v|z,c,M)` isn't directly
+measurable that way.
+
+What's measurable, and answers the actual claim, is a **contrast**, computed
+over the existing MagicBrush cache (numpy only, no GPU):
+
+- same instruction string, different source images (the cache already
+  dedupes text embeddings by instruction, so this grouping is close to
+  free)
+- same source image, different instructions
+
+If the two cosine distributions come out comparable, the instruction
+carries little directional information and the *conditioning* is the
+problem. If same-instruction pairs are clearly more aligned, ambiguity is
+smaller than assumed and the mean-collapse story is weaker than Gate A's
+n=3 supports. Either way, it's a real test of the claim instead of an
+assertion of it — the cheap decisive step Gate A never had. See
+`ambiguity_probe.py` below.
+
+### What to keep, what to drop
+
+**Keep:** the WHERE/WHAT unification (§2 above) as a genuinely good frame.
+The mode-selection diagnosis, with the `s=0` refinement. The probe, in its
+controlled (contrast) form, as the immediate next step.
+
+**Drop:** the Gate B cosine claim. Any confidence that the mechanism is
+established as fact rather than hypothesis — Gate A's failure rests on 3
+cases scored with a metric (`struct`) later shown to be substantially a
+colour artifact, which is precisely why the probe comes before the retrain,
+not after.
