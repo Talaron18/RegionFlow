@@ -123,9 +123,16 @@ this report's headline result: **40% mis-targeted → 0%**, a bigger swing than
 `none → oracle`'s 28% → 0%, with no cross-checkpoint caveat attached. Mask
 conditioning did not just clean up an already-tuned model's residual leakage
 — it took a checkpoint with no instance-selectivity behaviour at all and
-eliminated wrong-instance editing completely. (A formal McNemar test for
-`freeform` vs `oracle`, matching the `none`/`white` comparisons above, needs
-`compare_arms.py` run against both results files — not done here.)
+eliminated wrong-instance editing completely.
+
+**McNemar confirms it: 60:0 discordant, p < 0.0001.** Every one of
+`freeform`'s 60 mis-targeted cases becomes correctly targeted under `oracle`;
+zero go the other way — a more extreme, more one-sided result than
+`none → oracle`'s own 0:43. (P2 — does the model actually use the mask,
+rather than a real effect being confounded with a model that ignores masks
+entirely — was already established in §2 via the `sibling` positive control
+on this same `oracle` checkpoint; `compare_arms.py`'s own P2 warning on a
+2-arm invocation is about that invocation, not a gap in this report.)
 
 Leakage/excess figures for `freeform` rest on 1 valid case at K=10 — worse
 than `white`'s 2, same "not a measurement" caveat applies.
@@ -556,7 +563,7 @@ At the absolute threshold the proxy never exceeded 55% recall at usable
 precision. The human `no_edit` verdict sees something the pixel metric largely
 cannot.
 
-### Off-instance measure has no null floor yet
+### Off-instance measure has no null floor yet — now it does, and the ratio fails it
 
 `off_instance.py` (new) reports peak windowed change outside the tracked
 instance set, over the ambient median. Arms: `white` ratio 5.47 / over-target
@@ -566,8 +573,44 @@ The `none` arm predates the measure.
 
 Under a noiseless uniform shift the null ratio is 1.0, but real regeneration is
 not uniform and the max over ~700 windows will exceed the median under the null
-too. **Report `over_target` only**; the ratio needs a ground-truth floor from
-the MagicBrush pairs, exactly as `leakage_ratio` has one.
+too. `calibrate_metric.py` now computes `off_instance_change` alongside
+`leakage_ratio` on the same MagicBrush×COCO controls, including the real
+`ground_truth` pairs (not a synthetic control): **`ratio` median 83.27,
+`over_target` median 0.619, n=8 of 9 valid.**
+
+That ratio is not a typo. Real, human-approved MagicBrush edits — edits with
+no mis-targeting, no instance-selectivity problem, nothing an auditor would
+flag — read a peak/ambient ratio nearly **8× the frozen
+`OFF_INSTANCE_EDIT_RATIO = 10.0`** that `run_gate_c.outcome_class` uses to
+call a case `off_instance_edit`:
+
+```python
+if oi_peak > OFF_INSTANCE_EDIT_RATIO * (oi_ambient + 1e-9):
+    return "off_instance_edit"
+```
+
+A real edit's own floor clears that threshold by roughly an order of
+magnitude. This means the ratio-based classifier is very likely over-firing
+`off_instance_edit` on genuinely good, well-localized edits throughout §3/§6 —
+the false-positive rate for this specific failure mode has not been
+quantified, but the ground-truth floor being this far above the cutoff is
+itself the finding, independent of any single arm's count. This is the
+concrete case the `off_instance.py` docstring warned about before there was
+a floor to check it against: **use `over_target`, not `ratio`, as the
+detection statistic.** `over_target`'s own ground-truth median (0.619) sits
+well inside the range real arms report (0.46–1.95 above) and does not need
+an order-of-magnitude correction to be legible.
+
+This was not acted on unilaterally. `OFF_INSTANCE_EDIT_RATIO` and
+`outcome_class`'s off-instance branch were left untouched pending the
+threshold/statistic decision, which — like `leakage_ratio`'s own calibration
+— is the kind of call this project's convention keeps with whoever owns the
+number, not with whichever run happened to surface the problem. The other
+four controls (`oracle_local`/`category_level`/`mis_targeted`/
+`global_shift`) all still pass their `off_instance` self-test bounds
+(sibling/category changes read `ratio < 0.1`; uniform shift reads
+`0.5 < ratio < 2.0`) — only the real-data floor exposes the gap, which is
+exactly why a synthetic control alone was never going to catch this.
 
 ---
 
@@ -649,11 +692,18 @@ works; routing is not enough.
 ## 11. Next
 
 1. ~~UltraEdit `*_wo_mask` arm~~ — done (§3): `sd3-ultraedit-freeform`,
-   40% mis-targeted, worse than `white`. Formal McNemar for
-   `freeform` vs `oracle` via `compare_arms.py` is the one piece not yet run.
-2. MagicBrush ground-truth floor for `off_instance` — now has five arms'
-   worth of ratios waiting on it (`white`/`oracle`/`sibling`/`freeform`; `none`
-   predates the measure).
+   40% mis-targeted, worse than `white`. ~~Formal McNemar for `freeform` vs
+   `oracle`~~ — done: 60:0 discordant, p < 0.0001 (§3).
+2. ~~MagicBrush ground-truth floor for `off_instance`~~ — obtained (§7):
+   `ratio` median 83.27, `over_target` median 0.619 (n=8/9 valid). This does
+   not close the gap the way `leakage_ratio`'s floor did — it opens one: the
+   ratio-based `off_instance_edit` classifier almost certainly over-fires
+   relative to `OFF_INSTANCE_EDIT_RATIO = 10.0`, since real good edits alone
+   clear it by ~8×. Open decision, not yet made: recalibrate the ratio
+   threshold near the real floor, or switch `outcome_class`'s off-instance
+   branch to threshold on `over_target` instead (§7 recommends the latter).
+   Whichever way this goes, every `off_instance_edit` count in §3/§6 should
+   be treated as provisional until it does.
 3. Judge is now GLM-5.3-Flash (ρ=0.527, up from Qwen3.6-35B-A3B's 0.333,
    clean/degraded correctly ordered) but still not validated for `white`/
    `oracle`: ~23% of `no_edit` cases score ≥9.0 by a mechanism not yet
