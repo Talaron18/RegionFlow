@@ -66,13 +66,27 @@ model quietly ignoring masks are the same observation.
 | | `none` | `white` | `oracle` | `sibling` | `freeform` |
 |---|---|---|---|---|---|
 | mis-targeted | 43 (28%) | 46 (30%) | **0 (0%)** | 142 (94%) | 60 (40%) |
-| no *tracked* change | 10 (7%) | 16 (11%) | 2 (1%) | 5 (3%) | 12 (8%) |
+| no *tracked* change | 10 (7%) | 15 (10%) | 1 (0.7%) | 4 (3%) | 12 (8%) |
+| off-instance edit | 0 | 1 | 1 | 1 | 0 |
 | measurable | 98 (65%) | 89 (59%) | 149 (99%) | 4 (3%) | 79 (52%) |
 | valid (K=10) | 38 (25%) | 2 (1%) | 16 (11%) | 0 | 1 (0.7%) |
 | leakage ratio median (K=10) | 0.082 | 0.857 | 0.154 | — | 1.121 |
 | sibling excess median (K=10) | +0.0083 | +0.0884 | **+0.0097** | — | +0.1634 |
 
 Reference: ground truth 0.011 / −0.005; category-level 1.001 / +0.157.
+
+**"off-instance edit" is a new row**, split out of "no *tracked* change" by
+`outcome_class`'s `over_target > 1.0` branch (§7) — reclassified via
+`recompute_outcomes.py` against the results already on disk, no new
+inference. Small movement: 3 cases total across 453 non-`none` results.
+`none` and `freeform` don't move at all — `freeform`'s off-instance loudness
+(§7's earlier "every case louder than the target") mostly co-occurs with
+target/sibling change that already clears background, so those cases were
+already `measurable`/`mis_targeted` before reaching this branch, not
+silently sitting in the no-signal bucket. The 3 flagged cases (1 each in
+`white`/`oracle`/`sibling`) haven't been looked at individually yet —
+`off_instance.py`'s own docstring warning applies here as much as anywhere:
+this row says WHERE, never whether it was wanted.
 
 McNemar vs `none`: `oracle` 0:43, p < 0.0001. `white` 28:25, p = 0.784.
 
@@ -729,10 +743,12 @@ gated through `outcome_class`, and are unaffected too. The one number that
 *can* move is §3's "no *tracked* change" row, which is `outcome_class`'s
 `no_tracked_change` count specifically (a case only reaches the off-instance
 branch at all when target and sibling both read at background) — some of
-those 10/16/2/5/12 cases may now reclassify as `off_instance_edit`. Not
-recomputed in this pass — `recompute_outcomes.py` (CPU-only, reads the
-existing per-arm results files, no new inference) gives the corrected
-counts; §3 should be updated once it's run.
+those 10/16/2/5/12 cases could reclassify as `off_instance_edit`.
+
+**Recomputed** (`recompute_outcomes.py`, CPU-only, existing per-arm results
+files, no new inference): 3 cases move, one each in `white`/`oracle`/
+`sibling`; `none` and `freeform` are unchanged. §3's table now carries the
+updated split as its own row.
 
 ---
 
@@ -823,10 +839,12 @@ works; routing is not enough.
    MagicBrush ground truth reads a ratio median of 83.27. Bracketed by both
    the synthetic self-test and, now, the real ground-truth floor (median
    0.619). `mis_targeted`/`measurable`/`valid`/leakage figures never touch
-   this branch and are unaffected; the one number that can move is §3's
-   "no *tracked* change" row (which excludes `off_instance_edit` from its
-   count) — `recompute_outcomes.py` (CPU-only) gives the corrected per-arm
-   counts; run it and update §3.
+   this branch and are unaffected. ~~Recompute §3's "no *tracked* change"
+   row~~ — done: 3 cases move (1 each in `white`/`oracle`/`sibling`), `none`
+   and `freeform` unchanged. §3 now carries `off_instance_edit` as its own
+   row. Not yet done: look at the 3 individual flagged cases before quoting
+   them anywhere — off_instance.py's own standing warning, never checked
+   for this batch specifically.
 3. ~~Backfill the 4 missing cases~~ — done: GLM-5.3-Flash, n=39/40, ρ=0.717,
    all four verdict classes correctly ordered. ~~Diagnose the 2 residual
    high scorers~~ — done: `refedit-134` is a correctly-scored clean edit,
