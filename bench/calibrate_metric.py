@@ -1,10 +1,27 @@
 """
-Calibrate `instance_selectivity` before trusting it.
+Calibrate `instance_selectivity` -- and now `off_instance_change` -- before
+trusting either.
 
 THE RULE THIS IMPLEMENTS. Score the ground truth on your metric before you
 score anything else. Stage 0's `struct` metric looked meaningful until the
 ground truth was pushed through it; the oracle transport result went the same
 way. A leakage number from an uncalibrated metric is not evidence.
+
+OFF_INSTANCE_EDIT_RATIO (10.0, in off_instance.py) was frozen against a
+self-test bound and 12 real disagreement cases, explicitly NOT against a
+ground-truth floor (gate_c_report.md SS6 "Off-instance measure has no null
+floor yet"). Every control below now also reports `off_instance_ratio` /
+`off_instance_over_target`, giving that floor: oracle_local and
+category_level -- which only ever touch the target and/or siblings, both
+part of the TRACKED instance set -- must read near-zero off-instance
+regardless of how they read on leakage_ratio (siblings are not "off";
+leakage onto them is leakage_ratio's job, not this one's). global_shift is
+the discriminator that matters most: every pixel changes, including
+off-instance, but uniformly, so peak == ambient and the ratio stays near 1
+rather than tripping OFF_INSTANCE_EDIT_RATIO. ground_truth gives the real
+floor -- what a human-approved edit's off-instance ratio actually looks
+like on real MagicBrush regeneration noise, which is the number that was
+missing.
 
 MagicBrush is the only source in play with ground-truth EDITED images --
 RefEdit-Bench and MIRA-Bench are both VLM-scored precisely because they have
@@ -66,6 +83,7 @@ from PIL import Image
 from instance_bench import instance_selectivity
 from magicbrush_coco import (_img_bytes, load_coco, load_frames,
                              read_magicbrush, resolve_case)
+from off_instance import off_instance_change
 
 
 def as_frame(cell, hw) -> np.ndarray:
@@ -142,9 +160,21 @@ def summarise(name, results, show_invalid_reason=False):
         print(f"  {'':<15} (all invalid) ratio med {np.median(lr):.3f}  "
               f"tgt {np.median(tc):.4f}  bg {np.median(bg):.4f}  "
               f"tgt/bg {np.median(tc / (bg + 1e-9)):.2f}")
-    return {"n": n, "n_valid": len(valid),
-            "ratio_median": float(np.median(col("leakage_ratio", valid))) if valid else None,
-            "excess_median": float(np.median(col("sibling_excess_over_bg", valid))) if valid else None}
+    out = {"n": n, "n_valid": len(valid),
+          "ratio_median": float(np.median(col("leakage_ratio", valid))) if valid else None,
+          "excess_median": float(np.median(col("sibling_excess_over_bg", valid))) if valid else None}
+    # off_instance is not gated by `valid` -- it is a separate measure of
+    # change OUTSIDE the tracked instance set, unconditional on whether the
+    # target itself was edited enough to pass the leakage gate. Reported
+    # over all n results, matching how run_gate_c.py reports it.
+    if results and "off_instance_ratio" in results[0]:
+        oratio = col("off_instance_ratio", results)
+        oover = col("off_instance_over_target", results)
+        print(f"  {'':<15} off-instance: ratio med {np.median(oratio):>6.2f}  "
+              f"over_target med {np.median(oover):>6.3f}")
+        out["off_instance_ratio_median"] = float(np.median(oratio))
+        out["off_instance_over_target_median"] = float(np.median(oover))
+    return out
 
 
 def run_controls_on_cases(args):
@@ -195,7 +225,9 @@ def run_controls_on_cases(args):
             continue
         src = np.asarray(bench_image(row["input_image"]))
         for name, edited in controls(src, tmask, smasks).items():
-            buckets[name].append(instance_selectivity(src, edited, tmask, smasks))
+            r = instance_selectivity(src, edited, tmask, smasks)
+            r.update(off_instance_change(src, edited, tmask, smasks))
+            buckets[name].append(r)
         used += 1
 
     print(f"\ncontrols on {used} RefEdit benchmark cases "
@@ -267,9 +299,11 @@ def run(args):
             continue
 
         for name, edited in controls(src, tmask, smasks).items():
-            buckets[name].append(
-                instance_selectivity(src, edited, tmask, smasks))
+            cr = instance_selectivity(src, edited, tmask, smasks)
+            cr.update(off_instance_change(src, edited, tmask, smasks))
+            buckets[name].append(cr)
         r = instance_selectivity(src, gt, tmask, smasks)
+        r.update(off_instance_change(src, gt, tmask, smasks))
         buckets["ground_truth"].append(r)
         per_case.append({"id": rec["id"], "instruction": rec["instruction"],
                          "category": rec["category"],
@@ -401,10 +435,39 @@ def self_test():
         "if this ever passes, the gate has changed and the note below is stale")
     print(f"  mis-targeted: ratio {r_mt['leakage_ratio']:.1f}, "
           f"valid={r_mt['valid']} <- discarded by the gate")
+
+    # off_instance floor. Siblings are TRACKED (part of `inst`, not "off"),
+    # so oracle_local/category_level/mis_targeted -- which only ever touch
+    # target and/or siblings -- must all read near-zero off-instance
+    # regardless of how they read on leakage_ratio. off_instance and
+    # leakage_ratio are answering different questions and these controls
+    # prove it: a control that saturates leakage_ratio (category_level)
+    # should NOT also saturate off_instance_ratio.
+    o_ol = off_instance_change(src, c["oracle_local"], t, sm)
+    assert o_ol["off_instance_ratio"] < 0.1, o_ol
+    assert o_ol["off_instance_over_target"] < 0.1, o_ol
+
+    o_cl = off_instance_change(src, c["category_level"], t, sm)
+    assert o_cl["off_instance_ratio"] < 0.1, o_cl
+
+    o_mt = off_instance_change(src, c["mis_targeted"], t, sm)
+    assert o_mt["off_instance_ratio"] < 0.1, o_mt
+
+    # THE discriminator this measure exists for: a uniform shift (every
+    # pixel, including off-instance, moves by the same amount) must NOT
+    # read as a hot spot. Peak == ambient under uniform change by
+    # construction, so ratio ~= 1 -- nowhere near OFF_INSTANCE_EDIT_RATIO
+    # (10.0) despite literally every pixel having changed.
+    o_gs = off_instance_change(src, c["global_shift"], t, sm)
+    assert 0.5 < o_gs["off_instance_ratio"] < 2.0, o_gs
+
     print(f"self-test OK  (oracle {r_ol['leakage_ratio']:.3f} | "
           f"category {r_cl['leakage_ratio']:.3f} | "
           f"global shift {r_gs['leakage_ratio']:.3f}, "
-          f"excess {r_gs['sibling_excess_over_bg']:+.5f})")
+          f"excess {r_gs['sibling_excess_over_bg']:+.5f} | "
+          f"off-instance floor: oracle {o_ol['off_instance_ratio']:.2f}, "
+          f"category {o_cl['off_instance_ratio']:.2f}, "
+          f"global shift {o_gs['off_instance_ratio']:.2f})")
 
 
 def main():
