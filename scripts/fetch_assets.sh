@@ -99,6 +99,24 @@ if ! have "$DATA/torch/sam_vit_h_4b8939.pth"; then
     https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
 fi
 
+say "UltraEdit's diffusers fork -- only needed for bench/run_gate_c.py's"
+say "sd3-ultraedit-mask / sd3-ultraedit-freeform arms"
+# StableDiffusion3InstructPix2PixPipeline (mask_img support) does not exist
+# in stock diffusers (pinned diffusers>=0.31 in docker/requirements.txt);
+# it ships as a VENDORED, modified diffusers/ inside this repo, not a
+# separate pip package. `pip install -e .` on it makes it the diffusers
+# every script in this environment imports from then on -- fine for
+# run_gate_c.py, which only calls the stock pipeline API, but if you later
+# run scripts/gate_b_meanflow.py in the SAME environment, its own [env]
+# provenance print will show this fork instead of stock diffusers; that is
+# the same shadowing already documented and worked around there, not a new
+# problem, but check that print rather than assuming.
+if ! have "$DATA/repos/UltraEdit"; then
+  git clone https://github.com/pkunlp-icler/UltraEdit.git "$DATA/repos/UltraEdit"
+fi
+pip install -r "$DATA/repos/UltraEdit/requirements.txt"
+pip install -e "$DATA/repos/UltraEdit/diffusers"
+
 # ------------------------------------------------------------ benchmarks ----
 say "PIE-Bench (700 images, 10 edit types, RLE masks)"
 if ! have "$DATA/repos/PnPInversion"; then
