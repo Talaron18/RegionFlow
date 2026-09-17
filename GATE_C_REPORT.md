@@ -38,6 +38,12 @@ region — and the within-checkpoint comparison is **white → oracle**.
 A guard in `run_gate_c.load_model` now refuses `sd3-ultraedit-mask` +
 `--mask-mode none` with this explanation, so the hour is not spent twice.
 
+**Added after the above, not part of the original pre-registration**: a
+fifth arm, `freeform` (`BleachNick/SD3_UltraEdit_freeform`, `--mask-mode
+none`) — UltraEdit's own base checkpoint, the free-form partner this section
+originally said was not yet run (§11). It closes the `none`/`oracle`
+cross-checkpoint gap; results are in §3.
+
 ---
 
 ## 2. Premise checks — both had to pass before any branch could be read
@@ -57,14 +63,14 @@ model quietly ignoring masks are the same observation.
 
 ## 3. Headline results (151 cases, prompt = full)
 
-| | `none` | `white` | `oracle` | `sibling` |
-|---|---|---|---|---|
-| mis-targeted | 43 (28%) | 46 (30%) | **0 (0%)** | 142 (94%) |
-| no *tracked* change | 10 (7%) | 16 (11%) | 2 (1%) | 5 (3%) |
-| measurable | 98 (65%) | 89 (59%) | 149 (99%) | 4 (3%) |
-| valid (K=10) | 38 (25%) | 2 (1%) | 16 (11%) | 0 |
-| leakage ratio median (K=10) | 0.082 | 0.857 | 0.154 | — |
-| sibling excess median (K=10) | +0.0083 | +0.0884 | **+0.0097** | — |
+| | `none` | `white` | `oracle` | `sibling` | `freeform` |
+|---|---|---|---|---|---|
+| mis-targeted | 43 (28%) | 46 (30%) | **0 (0%)** | 142 (94%) | 60 (40%) |
+| no *tracked* change | 10 (7%) | 16 (11%) | 2 (1%) | 5 (3%) | 12 (8%) |
+| measurable | 98 (65%) | 89 (59%) | 149 (99%) | 4 (3%) | 79 (52%) |
+| valid (K=10) | 38 (25%) | 2 (1%) | 16 (11%) | 0 | 1 (0.7%) |
+| leakage ratio median (K=10) | 0.082 | 0.857 | 0.154 | — | 1.121 |
+| sibling excess median (K=10) | +0.0083 | +0.0884 | **+0.0097** | — | +0.1634 |
 
 Reference: ground truth 0.011 / −0.005; category-level 1.001 / +0.157.
 
@@ -96,6 +102,33 @@ K=3), which is the same fact seen from the other side.
 1.001. With 2 valid cases at K=10 it is not a measurement, but it is consistent
 with what the audit found independently: `white` regenerates globally rather
 than editing.
+
+### `freeform` → `oracle`: the matched ablation §8 flagged as missing
+
+`sd3-ultraedit-freeform` is UltraEdit's own base checkpoint — the one
+`oracle`'s `SD3_UltraEdit_w_mask` and `none` (RefEdit-SD3) both descend from,
+before RefEdit-SD3's referring-expression finetuning. Scoring it closes the
+"`none` vs `oracle` crosses checkpoints" gap §8 flagged as not yet run.
+
+It is not a gentler baseline than `none` — it is worse than `white`. 40%
+mis-targeted (vs `white`'s 30%, `none`'s 28%), 0.7% valid at K=10 (vs
+`white`'s 1%), and every one of its cases has an off-instance hot spot louder
+than the target (§7's `off_instance` measure, `over_target` median
+1.27 full / 1.34 single). With no finetuning and no mask, this checkpoint
+barely respects instance boundaries at all — worse than even the
+"edit anywhere" `white` control.
+
+`freeform → oracle`, same checkpoint family, is now the cleanest version of
+this report's headline result: **40% mis-targeted → 0%**, a bigger swing than
+`none → oracle`'s 28% → 0%, with no cross-checkpoint caveat attached. Mask
+conditioning did not just clean up an already-tuned model's residual leakage
+— it took a checkpoint with no instance-selectivity behaviour at all and
+eliminated wrong-instance editing completely. (A formal McNemar test for
+`freeform` vs `oracle`, matching the `none`/`white` comparisons above, needs
+`compare_arms.py` run against both results files — not done here.)
+
+Leakage/excess figures for `freeform` rest on 1 valid case at K=10 — worse
+than `white`'s 2, same "not a measurement" caveat applies.
 
 ---
 
@@ -388,7 +421,8 @@ cannot.
 `off_instance.py` (new) reports peak windowed change outside the tracked
 instance set, over the ambient median. Arms: `white` ratio 5.47 / over-target
 1.40, louder than the target in 106/151; `oracle` 4.01 / 0.46, 16/151;
-`sibling` 3.91 / 1.95, 126/151. The `none` arm predates the measure.
+`sibling` 3.91 / 1.95, 126/151; `freeform` 4.21 / 1.27, 100/151 (full prompt).
+The `none` arm predates the measure.
 
 Under a noiseless uniform shift the null ratio is 1.0, but real regeneration is
 not uniform and the max over ~700 windows will exceed the median under the null
@@ -403,8 +437,12 @@ Everything in §10 of the note still applies. Additionally:
 
 - **Mis-targeting is saturated for region-conditioned models.** It cannot rank
   them.
-- **`none` vs `oracle` crosses checkpoints.** The matched free-form partner is
-  UltraEdit's `*_wo_mask` checkpoint, not RefEdit-SD3. Not yet run.
+- **`none` vs `oracle` still crosses checkpoints** (RefEdit-SD3 vs
+  `SD3_UltraEdit_w_mask`) and that comparison is reported only as context, as
+  it always was. §3 now also has `freeform` (UltraEdit's own base
+  checkpoint) vs `oracle` as a same-checkpoint-family ablation, which is the
+  one to cite for the headline claim — this bullet used to say that
+  comparison had not been run; it has.
 - **The audit is 40 ids.** The 20 additional ids were not drawn: `read_arm`
   collapsed both prompt kinds into one dict before filtering, emptying the
   pool. Fixed; the audit was not rerun because rebuilding the deck would
@@ -431,6 +469,14 @@ Everything in §10 of the note still applies. Additionally:
 > mask determines *where* the model edits and not *what* it does there: within
 > one checkpoint, conditioning moved 15 of 40 cases out of "no edit", of which
 > 11 produced something other than the requested edit.
+
+**The mis-targeting half of this claim now has a cleaner, same-checkpoint
+version**: `freeform → oracle`, both `SD3_UltraEdit` variants, goes
+40% → 0% mis-targeted (§3) — a bigger swing than the `none → oracle` figure
+above, and without that comparison's cross-checkpoint caveat. Use `freeform →
+oracle` when the claim needs to be checkpoint-controlled; the quality half of
+the claim (15% → 22% clean, p = 0.51) still rests on `none` and `oracle` only,
+since `freeform` has not been through the blind audit.
 
 Lead with mis-targeting and the unchanged quality. Do not lead with a leakage
 magnitude, and never quote one without its K.
@@ -462,9 +508,17 @@ works; routing is not enough.
 
 ## 11. Next
 
-1. UltraEdit `*_wo_mask` arm — the matched free-form partner, one hour, turns
-   the cross-checkpoint context row into a clean ablation.
-2. MagicBrush ground-truth floor for `off_instance`.
-3. Δ-order curriculum (`delta_curriculum.py`) — three arms at ~2 h. Now
+1. ~~UltraEdit `*_wo_mask` arm~~ — done (§3): `sd3-ultraedit-freeform`,
+   40% mis-targeted, worse than `white`. Formal McNemar for
+   `freeform` vs `oracle` via `compare_arms.py` is the one piece not yet run.
+2. MagicBrush ground-truth floor for `off_instance` — now has five arms'
+   worth of ratios waiting on it (`white`/`oracle`/`sibling`/`freeform`; `none`
+   predates the measure).
+3. Fix or replace the VLM judge (§5) before extending it past the `none`
+   baseline. Qwen3.6-35B-A3B via SiliconFlow does not calibrate against the
+   40 human blind verdicts (Spearman ρ = 0.170, inverted clean/degraded
+   medians) — re-scoring `white`/`oracle` with it would not strengthen §9's
+   quality claim, it would just add a confidently wrong number.
+4. Δ-order curriculum (`delta_curriculum.py`) — three arms at ~2 h. Now
    motivated by this gate: direction is the residual it isolated, and the
    anchor-SSE climb is the one lead anyone has on it.
