@@ -488,6 +488,63 @@ right direction and is imprecise about where inside the mask to put it.
 Whichever it is, the fix is conditioning/readout geometry, not
 stochasticity.
 
+**Result, run against all three available checkpoints (4511 cached
+examples each, same cache the ambiguity probe used):**
+
+| checkpoint | raw (median) | pooled (median) | centered (median) |
+|---|---|---|---|
+| σ0=0.0 (no Direction A noise) | **+0.539** | **+0.765** | **+0.662** |
+| σ0=0.3 ("decided" Direction A design, §8) | +0.539 | +0.713 | +0.587 |
+| σ0=0.5 | +0.321 | +0.362 | +0.137 |
+| *(data ceiling, same cache, for reference)* | *0.420* | *0.621* | *~0.458 in-sample* |
+
+Two things fall out cleanly, both confirming the closure rather than
+reopening it:
+
+1. **σ0=0.0 beats σ0=0.3 on every single treatment**, by a small but
+   consistent margin (pooled +0.05, centered +0.08). Adding Direction A's
+   noise made the model modestly *worse* at recovering the true edit
+   direction, not better — direct, checkpoint-level confirmation of what
+   the training-log sweep (§8) already showed on `cos_clean` alone, now
+   measured against ground truth on real held-out-style data instead of a
+   training proxy.
+2. **σ0=0.5 collapses specifically on `centered`** (0.137 — near the
+   data's own null floor, and well *below* the data's centered ceiling of
+   ~0.458): once the shared bias is removed, this checkpoint has almost no
+   genuine instruction-specific signal left. This is the concrete shape of
+   the ε-fitting failure mode flagged from the training logs' widening
+   `cos − cos_clean` gap — at σ0=0.5 the model was learning to partially
+   echo injected noise back at the cost of the real conditioning signal,
+   and here it shows up directly in a ground-truth accuracy metric, not
+   just a training-time diagnostic.
+
+**A genuinely new, valid finding, on a like-for-like comparison this
+time:** σ0=0.0's pooled (0.765) and centered (0.662) both exceed the
+corresponding *data* ceilings (0.621, ~0.458) — unlike the earlier
+retracted claim (which compared a pointwise per-example metric against a
+pooled cross-image one), this comparison uses the *same* treatment on
+both sides. A model conditioned on `z_src` is not bound by a
+constant-per-instruction ceiling at all — it has strictly more
+information available than the ceiling's hypothetical predictor — so
+exceeding it here is the expected signature of a model using `z_src`
+productively, not an anomaly. σ0=0.3 also clears both data ceilings, by a
+smaller margin; σ0=0.5 clears neither, which is the sharpest single number
+in this table for why it's the checkpoint to discard. (The centered data
+ceiling is still the in-sample 0.458, pending the held-out distribution —
+the qualitative story here is unlikely to flip given the size of the gaps
+involved, but re-check once that lands.)
+
+**The WHERE/WHAT gap is real even on the best checkpoint.** σ0=0.0's raw
+(0.539) sits well below its own pooled (0.765) — roughly 0.23 of cosine is
+being lost specifically to *positional* imprecision (right average
+direction, wrong exact pixels), separate from and on top of whatever
+directional headroom remains (pooled 0.765 vs. a perfect 1.0). Both
+matter, but this is the first direct evidence that spatial precision
+specifically — not just conditioning strength in the abstract — is worth
+real attention in whatever comes after Direction A, consistent with Gate
+C's WHERE/WHAT framing (§2) being the axis the whole investigation now
+sits on.
+
 ### What to keep, what to drop
 
 **Keep:** the WHERE/WHAT unification (§2 above) — it turned out to be the
