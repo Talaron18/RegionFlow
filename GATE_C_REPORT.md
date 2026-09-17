@@ -217,7 +217,7 @@ it on held-out data. It carries the weight of the 28/35 ablation, no more.
 
 ---
 
-## 5. VLM-judged edit quality (RefEdit-SD3 baseline, `none` arm)
+## 5. VLM-judged edit quality
 
 `bench/edit_quality_vlm.py`, VIEScore-adapted (TIGER-AI-Lab, ACL 2024,
 arXiv:2312.14867): SC (semantic consistency, 0–10), PQ = sqrt(naturalness ×
@@ -225,9 +225,10 @@ artifacts), Overall = sqrt(SC × PQ) — all three restricted to the
 yellow-outlined target region only, same outline convention as §4's human
 panels. This is a re-scorer: the 302 edits (151 cases × {full, single} prompt)
 already existed on disk from the completed `none`-arm run; nothing here does
-new inference on the editing model. **Only the baseline `none` arm has been
-scored this way — `white`/`oracle`/`sibling` have not, so this section adds a
-quality axis to the baseline, not a fourth arm to §3's or §4's comparisons.**
+new inference on the editing model. The judge (GLM-5.3-Flash) was calibrated
+on `none` only — everything through "Switching judges" below is that
+calibration work. §5's final subsection extends it to the full 151-case
+`white`/`oracle`/`sibling` arms; `freeform` is scored separately (§11).
 
 Judge: `Qwen/Qwen3.6-35B-A3B` via SiliconFlow, picked as a budget substitute
 after confirming with a real image probe (not just its presence in
@@ -554,6 +555,46 @@ a sample size too small to adjudicate (n=8–10). Possibly noise, possibly a
 real difference in what "no tracked change" means between full and
 single-object instructions. Flagged, not interpreted.
 
+### Extending past `none`: `white`/`oracle`/`sibling` at full scale
+
+Same judge (GLM-5.3-Flash), same prompts, same crop — the calibration above
+carries over unchanged. `--prompt-kinds full`, all 151 cases per arm.
+
+| arm | n | Overall median | Overall mean | valid+measurable n | median (valid+measurable) |
+|---|---|---|---|---|---|
+| `white` | 151 | 2.50 | 3.55 | 2 | 0.00 (both) |
+| `oracle` | 151 | 5.66 | 4.90 | 16 | 4.87 |
+| `sibling` | 151 | 0.00 | 0.66 | 0 | — |
+
+**`oracle` is the first full-scale VLM-judged confirmation of §9's quality
+claim.** Among the 16 valid+measurable cases the reported leakage figures are
+actually computed from, median Overall is 4.87 and **8/16 (50%) score below
+5.0**, VIEScore's own rough failure line. Not identical to the blind audit's
+"four in five outputs remain unclean" — different threshold (VLM Overall < 5
+vs. a human `clean`/`degraded`/`destroyed` label), different n (151
+VLM-judged vs. 40 blind-audited) — but directionally the same story from an
+independent instrument: roughly half a very small valid sample fails
+outright, nowhere near a clean pass. Report it as a complement to §9's claim,
+not a replacement — the blind audit is still the higher-warrant number by
+this project's own standard (human judgment audit > VLM judge, always).
+
+**`white` and `sibling` both read exactly as their role predicts.** `white`
+has only 2 valid+measurable cases (matches §3's own valid count) — too few
+to interpret, same caveat §3 already carries, not a new finding. `sibling`'s
+median Overall of 0.00 is correct behaviour for a positive control: if the
+model follows a sibling mask, it is by definition not fulfilling the actual
+instruction, so near-zero SC here validates P2 (§2), not a judge failure.
+
+**One cross-arm confirmation worth naming.** Two `no_change`-class cases in
+`white` score ≥9.0: `refedit-162` (new, not yet diagnosed) and
+**`refedit-172`** — the same compound-reference case already flagged in the
+`none`-arm diagnosis (§5, "Diagnosing the five") as a structural limit of
+cropping, expected to persist across judges and arms. Seeing it misfire
+again here, on a completely different arm's images, is confirmation by a
+second, independent case rather than a repetition of the first: this is a
+structural limitation of the cropping approach itself, not something
+specific to one model, one arm, or one image.
+
 ### Scope limits specific to this section
 
 - **The current judge (GLM-5.3-Flash) is now calibrated on the full
@@ -562,14 +603,20 @@ single-object instructions. Flagged, not interpreted.
   positive (`refedit-83`, of the 2 candidates — `refedit-134` turned out
   to be a correctly-scored clean edit).** This is a real improvement over
   the n=36 partial run (ρ=0.527) and over Qwen (ρ=0.170 → 0.333), not
-  just a larger sample of the same result. It is still calibrated on
-  `none` only — `white`/`oracle`/`sibling`/`freeform` have not been
-  VLM-judged at all. The one confirmed miss has a named mechanism
-  (identity drift on an attribute-edit instruction, not checked by either
-  SC_PROMPT or PQ_PROMPT) rather than being unexplained, but it rests on
-  n=1 and was not acted on for that reason — see the diagnosis above.
-  Treat every number in this section as this judge's own read on the
-  `none` arm, now reasonably well-validated there, but not yet extended.
+  just a larger sample of the same result. The one confirmed miss has a
+  named mechanism (identity drift on an attribute-edit instruction, not
+  checked by either SC_PROMPT or PQ_PROMPT) rather than being unexplained,
+  but it rests on n=1 and was not acted on for that reason — see the
+  diagnosis above.
+- **`white`/`oracle`/`sibling` are now scored too** (above), but at n=151
+  each with no matching human blind audit at that scale to check them
+  against — the ρ=0.717 calibration is `none`-specific evidence of
+  trustworthiness, extended by inference, not independently re-verified
+  for these three arms. `oracle`'s 16-case valid+measurable subset and
+  `white`'s 2-case one are both too small to be measurements on their own;
+  read them as a complement to §9, not a new headline number.
+- **`freeform` is not scored** — its edited images were never saved to
+  disk (§7/§11); needs a regeneration run before it can be judged at all.
 - **Judge substitution is unvalidated against GPT-4o**, separately from the
   calibration limit above. Everything in this section is GLM-5.3-Flash's
   reading, not a reproduction of RefEdit-Bench's own published numbers.
@@ -577,9 +624,6 @@ single-object instructions. Flagged, not interpreted.
   output parser (unconfirmed from this sandbox — see module docstring). Ruled
   out as the explanation for the calibration failure: parse-failure rate is
   0/302, checked directly.
-- **Baseline only.** No VLM-judged comparison across `white`/`oracle`/`sibling`
-  exists — and per the calibration result above, extending this judge to them
-  is not advisable until it is recalibrated or replaced.
 
 ---
 
@@ -852,11 +896,14 @@ works; routing is not enough.
    mechanism (identity drift on an attribute-edit instruction — SC/PQ
    check the instructed attribute and pixel artifacts, not whether the
    subject is still recognizably the same individual). Not prompt-fixed
-   on n=1; watch for recurrence when `white`/`oracle` are scored. Judge is
-   now reasonably well-calibrated on `none`. What's left: run `white`/
-   `oracle`/`sibling`/`freeform` through the judge. That's the one step
-   not done; it's what would turn §9's quality claim (currently 40
-   audited cases only) into a full-151 comparison.
+   on n=1 — did not recur in `white`/`oracle`/`sibling`'s full-151 run,
+   so still resting on that single case. ~~Run `white`/`oracle`/`sibling`
+   through the judge~~ — done (§5): `oracle` median Overall 4.87 among
+   valid+measurable cases, 8/16 below VIEScore's failure line — the
+   first full-scale VLM confirmation of §9's quality claim. `white`/
+   `sibling` both read as their role predicts (too few valid cases /
+   correctly near-zero). `freeform` still not scored — its images were
+   never saved (§7); see the regeneration command given separately.
 4. ~~Δ-order curriculum~~ — done, two seeds each, see `DELTA_CURRICULUM_REPORT.md`.
    Headline: A1 (Δ-order curriculum) beats the uncurriculed baseline by
    ~3% on `vs_base_at_a_opt` at the Δ=0.5 operating point, a gap that
