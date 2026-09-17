@@ -323,12 +323,17 @@ def siliconflow_judge(model: str = "zai-org/GLM-5.3-Flash"):
     blind verdicts, with several residual failure modes (apparent
     fabrication, imprecise credit) that did not look prompt-fixable.
     GLM-5.3-Flash is a REASONING-ONLY model: it 400s on enable_thinking=False
-    ("model always thinks, use thinking_budget low/high/max instead"), so
-    the payload below uses thinking_budget="low" instead. If you point
-    `model` back at Qwen3.6-35B-A3B or another non-reasoning-only model,
-    swap that back for enable_thinking=False (confirmed: Qwen3.6-35B-A3B
-    goes to 2 completion tokens for a trivial answer with it; Kimi-K3 still
-    spends ~24 regardless of the flag). Re-run the same calibration check
+    ("model always thinks, use thinking_budget low/high/max instead").
+    thinking_budget="low" DID work -- for one full 36-case run -- then
+    started 400ing on every request to every model (Qwen3.6-35B-A3B
+    included, which never used this parameter), ruling out payload content,
+    balance and rate-limiting by isolated test. Most likely a SiliconFlow-
+    side schema change for this still-new parameter/model. The payload
+    below sends neither enable_thinking nor thinking_budget at all, which
+    is what actually works right now for both models -- if you hit a 400
+    with "parameter is invalid" again, suspect this parameter first and
+    try removing it before adding it back differently. Re-run the same
+    calibration check
     (GATE_C_REPORT.md SS5's re-test scripts) against this model before
     trusting it any further than Qwen was trusted -- switching models is not
     itself validation.
@@ -366,12 +371,20 @@ def siliconflow_judge(model: str = "zai-org/GLM-5.3-Flash"):
                  "image_url": {"url": f"data:image/png;base64,{b64}"}},
                 {"type": "text", "text": prompt},
             ]}],
-            "max_tokens": 800,
-            # GLM-5.3-Flash cannot disable thinking (400s on
-            # enable_thinking=False, "model always thinks"); "low" keeps the
-            # reasoning trace short so it doesn't eat the whole max_tokens
-            # budget the way the pre-fix Qwen run did at max_tokens=150.
-            "thinking_budget": "low",
+            "max_tokens": 1000,
+            # Deliberately no enable_thinking / thinking_budget at all.
+            # enable_thinking=False 400s on GLM-5.3-Flash ("model always
+            # thinks"); its own error message says to use
+            # thinking_budget="low"/"high"/"max" instead, which worked for
+            # one full 36-case run and then started 400ing on EVERY request
+            # to EITHER model (Qwen included, which never used this param)
+            # -- ruled out balance, rate-limiting and payload content by
+            # isolated test, leaving a SiliconFlow-side schema change for
+            # this parameter as the most likely cause (GLM-5.3-Flash is
+            # new enough that it postdates their own published model
+            # enum). Omitting the parameter entirely is what actually
+            # works for both models right now; max_tokens raised 800->1000
+            # since GLM's mandatory reasoning trace is no longer capped.
             # A scorer that samples is not a scorer -- two calls on the
             # IDENTICAL panel+prompt returned 4.3 and 0.0 Overall before
             # this was set (refedit-144, temperature defaults to 0.7 per
