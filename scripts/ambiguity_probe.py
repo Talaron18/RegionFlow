@@ -76,6 +76,33 @@ TWO CHEAP CHECKS ADDED, both still CPU-only on the cache as built:
                     than source-dependence, which the aggregate gap alone
                     cannot distinguish.
 
+THE SPECIFICITY SPLIT CAME BACK REVERSED (vague ceiling 0.430 > specific
+0.384 on the real cache) -- backwards from the ambiguity prediction, on
+thin data (n=38 pairs / 18 groups for "specific"). Two follow-up checks,
+both cheap and both run automatically now:
+
+  template-dominance check (in the specificity-split section)  is either
+                    side's ceiling driven by a few large instruction
+                    strings, e.g. "vague" containing homogeneous families
+                    like "remove the X" / "add a Y" whose members share a
+                    direction for reasons that have nothing to do with
+                    specificity? Prints the largest groups by member count
+                    and their share of total pairs, and recomputes the
+                    ceiling with the single largest group excluded.
+  per-channel breakdown (in --mask-restrict's output)  mean-pooling to one
+                    value per channel is coarse -- some SD3 latent channels
+                    behave roughly like luminance, so a same-sign shift
+                    there can look like cross-pair "alignment" while
+                    actually reflecting a generic brightness change every
+                    edit shares, unrelated to instruction. Reports
+                    per-channel correlation for same-instruction vs.
+                    unrelated pairs (a channel high in BOTH is a shared-bias
+                    candidate, not an instruction-specific one), and
+                    recomputes the ceiling gap after subtracting the
+                    dataset-wide per-channel mean from every pooled vector,
+                    to see whether the gap survives removing any single
+                    shared bias direction.
+
 USAGE
     python ambiguity_probe.py --self-test
     python ambiguity_probe.py --cache /path/to/cache/<hash>
@@ -121,6 +148,27 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
 
 def cosines_for(pairs: list[tuple[str, str]], vecs: dict) -> np.ndarray:
     return np.array([cosine(vecs[a], vecs[b]) for a, b in pairs])
+
+
+def per_channel_correlation(pairs: list[tuple[str, str]], vecs: dict) -> np.ndarray:
+    """Pearson correlation per channel, across paired (a[c], b[c]) values.
+
+    Decomposes a pooled-vector cosine into which channels actually carry
+    cross-pair agreement, vs. which are just noise for this pairing. NaN
+    for a channel with ~zero variance in either side of the pairing.
+    """
+    if not pairs:
+        return np.array([])
+    A = np.stack([vecs[a] for a, b in pairs])
+    B = np.stack([vecs[b] for a, b in pairs])
+    n_ch = A.shape[1]
+    corr = np.full(n_ch, np.nan)
+    for c in range(n_ch):
+        a, b = A[:, c], B[:, c]
+        if a.std() < 1e-8 or b.std() < 1e-8:
+            continue
+        corr[c] = np.corrcoef(a, b)[0, 1]
+    return corr
 
 
 def mean_pool_in_mask(v: np.ndarray, mask: np.ndarray | None) -> np.ndarray:
@@ -217,6 +265,37 @@ def report(name: str, arr: np.ndarray) -> None:
           f"p10 {np.percentile(arr, 10):+.3f}  "
           f"p90 {np.percentile(arr, 90):+.3f}  "
           f"ceiling=sqrt(mean)={ceiling:.3f}")
+
+
+def check_template_dominance(label: str, groups: dict, vecs: dict,
+                             rng: np.random.Generator, max_pairs: int,
+                             top_k: int = 5) -> None:
+    """Is this group's ceiling dominated by a few large, possibly
+    template-homogeneous instruction strings (e.g. many "remove the X"
+    variants that all move a generic direction for reasons unrelated to
+    the specificity split itself)? Prints the largest groups by member
+    count and their share of total pairs, and recomputes the ceiling with
+    the single largest group excluded -- if the number barely moves, the
+    result isn't an artifact of one dominant template.
+    """
+    sizes = sorted(((k, len(v)) for k, v in groups.items() if len(v) >= 2),
+                   key=lambda kv: -kv[1])
+    if not sizes:
+        return
+    total_pairs = sum(n * (n - 1) // 2 for _, n in sizes)
+    top = sizes[:top_k]
+    top_pairs = sum(n * (n - 1) // 2 for _, n in top)
+    share = top_pairs / total_pairs if total_pairs else 0.0
+    print(f"    {label}: top {len(top)} of {len(sizes)} groups (by member "
+          f"count) cover {top_pairs}/{total_pairs} pairs ({share:.0%})")
+    for instr, n in top:
+        print(f"      n={n:3d} members  {instr!r}")
+    if len(sizes) > 1:
+        largest_key = sizes[0][0]
+        reduced = {k: v for k, v in groups.items() if k != largest_key}
+        pairs = sample_pair_ids(reduced, rng, max_pairs,
+                                f"      {label} minus largest group")
+        report(f"      {label} minus largest group", cosines_for(pairs, vecs))
 
 
 def bootstrap_ceiling_gap(by_instruction: dict, null_pairs: list, vecs: dict,
@@ -330,6 +409,11 @@ def run(cache_root: Path, max_pairs: int, seed: int,
     vague_pairs = sample_pair_ids(vague_groups, rng, max_pairs, "  vague")
     report("  specific same-instr", cosines_for(spec_pairs, vecs))
     report("  vague same-instr   ", cosines_for(vague_pairs, vecs))
+    print("\n  template-dominance check (is either side's ceiling driven by "
+          "a few large, possibly homogeneous instruction strings rather "
+          "than specificity itself?):")
+    check_template_dominance("specific", specific_groups, vecs, rng, max_pairs)
+    check_template_dominance("vague", vague_groups, vecs, rng, max_pairs)
 
     # ------------------------------------------------------ mask-restrict --
     if mask_restrict and any(m is not None for m in masks.values()):
@@ -342,6 +426,45 @@ def run(cache_root: Path, max_pairs: int, seed: int,
         if boot_m:
             med, lo, hi = boot_m
             print(f"\nceiling gap, mask-restricted, group-level bootstrap: "
+                  f"median {med:+.3f}  95% CI [{lo:+.3f}, {hi:+.3f}]")
+
+        # -------------------------------------- per-channel breakdown --
+        # Mean-pooling to one value per channel is coarse -- some SD3
+        # latent channels behave roughly like luminance, so a same-sign
+        # shift there can look like "alignment" while actually just
+        # reflecting a generic brightness change every edit shares,
+        # regardless of instruction. Break the pooled cosine down by
+        # channel to see where the agreement actually lives, and check
+        # whether the gap survives removing any shared, non-instruction-
+        # specific direction.
+        corr_si = per_channel_correlation(same_instr_pairs, vecs_m)
+        corr_null = per_channel_correlation(null_pairs, vecs_m)
+        all_pooled = np.stack(list(vecs_m.values()))
+        mean_c = all_pooled.mean(axis=0)
+        std_c = all_pooled.std(axis=0) + 1e-8
+        bias_ratio = np.abs(mean_c) / std_c
+        order = np.argsort(-np.nan_to_num(corr_si - corr_null))
+        print("\nper-channel breakdown of the pooled alignment (sorted by "
+              "same-instr-minus-unrelated correlation gap; a channel with "
+              "high correlation in BOTH columns and high |mean|/std is a "
+              "shared-bias candidate, e.g. a luminance-like channel, not "
+              "an instruction-specific one):")
+        print("  ch  same-instr-r  unrelated-r   gap     |mean|/std")
+        for c in order:
+            print(f"  {c:3d}   {corr_si[c]:+.3f}        {corr_null[c]:+.3f}      "
+                  f"{(corr_si[c] - corr_null[c]):+.3f}   {bias_ratio[c]:.2f}")
+
+        vecs_centered = {i: v - mean_c for i, v in vecs_m.items()}
+        print("\nmean-centered (dataset-wide per-channel mean subtracted from "
+              "every pooled vector, to test whether the ceiling gap survives "
+              "removing any single shared bias direction common to all "
+              "edits regardless of instruction):")
+        report("same-instruction", cosines_for(same_instr_pairs, vecs_centered))
+        report(f"{null_label:<17}", cosines_for(null_pairs, vecs_centered))
+        boot_c = bootstrap_ceiling_gap(by_instruction, null_pairs, vecs_centered, rng)
+        if boot_c:
+            med, lo, hi = boot_c
+            print(f"\nceiling gap, mean-centered, group-level bootstrap: "
                   f"median {med:+.3f}  95% CI [{lo:+.3f}, {hi:+.3f}]")
     elif mask_restrict:
         print("\n--mask-restrict requested but no cached item has a 'mask' "
@@ -453,6 +576,50 @@ def self_test() -> None:
     pooled_a = mean_pool_in_mask(v_a, mask_a)
     pooled_b = mean_pool_in_mask(v_b, mask_b)
     assert cosine(pooled_a, pooled_b) > 0.99  # the fix: recovers the true match
+
+    # per_channel_correlation: channel 0 correlated across pairs, channel 1
+    # independent noise -- must recover high correlation for ch0, near-zero
+    # for ch1.
+    rng3 = np.random.default_rng(3)
+    shared = rng3.normal(size=50)
+    pc_vecs = {}
+    pc_pairs = []
+    for i in range(50):
+        a_id, b_id = f"a{i}", f"b{i}"
+        pc_vecs[a_id] = np.array([shared[i] + rng3.normal(scale=0.01),
+                                  rng3.normal()])
+        pc_vecs[b_id] = np.array([shared[i] + rng3.normal(scale=0.01),
+                                  rng3.normal()])
+        pc_pairs.append((a_id, b_id))
+    corr = per_channel_correlation(pc_pairs, pc_vecs)
+    assert corr[0] > 0.9, corr[0]
+    assert abs(corr[1]) < 0.5, corr[1]  # noisy but should not be strongly correlated
+
+    # check_template_dominance: must not raise, on both a dominated and a
+    # balanced set of groups.
+    dominated = {"remove the x": [f"i{k}" for k in range(20)],
+                "make it red": [f"j{k}" for k in range(2)]}
+    dom_vecs = {i: np.array([1.0, 0.0]) for g in dominated.values() for i in g}
+    check_template_dominance("test-dominated", dominated, dom_vecs,
+                             np.random.default_rng(4), 1000)
+
+    # mean-centering: a shared bias direction added to every pooled vector
+    # must be exactly removable by subtracting the dataset mean, recovering
+    # the unbiased cosine.
+    bias = np.array([5.0, 5.0, 5.0])
+    base_vecs = {i: v for i, v in vecs.items()}  # the earlier 3-D toy vecs
+    biased_vecs = {i: v + bias for i, v in base_vecs.items()}
+    mean_c = np.stack(list(biased_vecs.values())).mean(axis=0)
+    centered = {i: v - mean_c for i, v in biased_vecs.items()}
+    assert np.allclose(centered[list(base_vecs)[0]] + mean_c,
+                       biased_vecs[list(base_vecs)[0]])
+    # centering must remove the bias's inflation of the unrelated-pairs
+    # cosine (bias dominates raw cosine of near-orthogonal vectors when its
+    # magnitude is much larger than the signal).
+    raw_biased_cos = cosines_for(unrelated_pairs, biased_vecs)
+    centered_cos = cosines_for(unrelated_pairs, centered)
+    assert raw_biased_cos.mean() > 0.9  # bias swamps the signal before centering
+    assert centered_cos.mean() < 0.3    # centering recovers the true near-orthogonal result
 
     print("ambiguity_probe self-test OK")
 
