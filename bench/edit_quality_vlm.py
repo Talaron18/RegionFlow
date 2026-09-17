@@ -59,6 +59,17 @@ own convention -- yellow outline on the target, red on siblings, same source
 | edited panel a human judge sees -- and the judge prompt explicitly
 restricts SC and PQ to the region outlined in yellow.
 
+Restricting by INSTRUCTION alone was checked against 7 human-confirmed
+no_edit cases the judge scored Overall >= 9.4 anyway (GATE_C_REPORT.md SS5)
+and failed on every one, by at least three distinct mechanisms: crediting a
+decoy object named in the instruction's own text, crediting the SIBLING's
+own edit, and crediting an unrelated background change -- once even scoring
+a target left completely untouched by an "erase" instruction as a perfect
+10.0. `crop_to_target` now crops the panel to the target's own (padded)
+bounding box before judge_case ever calls the judge, so there is no
+outside-the-region content left for the model to (mis)credit. Re-run
+against those same 7 cases before trusting this on the full 302.
+
 JUDGE IS PLUGGABLE. The interface is one function:
     judge_fn(panel_image: PIL.Image, instruction: str) -> dict(sc: float,
         naturalness: float, artifacts: float)
@@ -161,15 +172,59 @@ def parse_scores(text: str, n: int) -> list[float]:
     return nums[:n]
 
 
+def crop_to_target(src: Image.Image, edited: Image.Image, tmask: np.ndarray,
+                   smasks: list, pad_frac: float = 0.6):
+    """Crop src/edited/masks to the target's bounding box, padded for context.
+
+    WHY. Visual inspection of 7 human-confirmed no_edit cases the judge
+    scored Overall >= 9.4 (GATE_C_REPORT.md SS5, "Calibration ... it fails")
+    found it crediting content ANYWHERE in the full frame to the target: a
+    decoy object named in the instruction's own landmark clause recoloured,
+    the SIBLING's own edit, an unrelated background change, even a target
+    left completely untouched by an "erase" instruction. This happened
+    despite SC_PROMPT/PQ_PROMPT explicitly saying "ignore everything outside
+    [the yellow region]" -- asking the model to selectively ignore visible
+    pixels did not work in any of the 7 cases checked. Cropping removes the
+    option mechanically instead of relying on instruction-following for it.
+
+    pad_frac=0.6 (60% of the target's own bbox height/width, per side) is a
+    first guess, not a validated constant -- enough context to recognise the
+    object and its immediate surroundings, chosen to exclude the far
+    background and most siblings without re-deriving OFF_INSTANCE_EDIT_RATIO's
+    calibration discipline for a threshold this module does not have data to
+    tune yet. A sibling entirely outside the crop is simply absent from the
+    cropped smasks (an all-False mask, outline of nothing) rather than
+    needing separate handling -- it is out of frame, which is the point.
+    """
+    ys, xs = np.nonzero(tmask)
+    y0, y1, x0, x1 = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
+    h, w = tmask.shape
+    pad_y = int((y1 - y0 + 1) * pad_frac)
+    pad_x = int((x1 - x0 + 1) * pad_frac)
+    cy0, cy1 = max(0, y0 - pad_y), min(h, y1 + 1 + pad_y)
+    cx0, cx1 = max(0, x0 - pad_x), min(w, x1 + 1 + pad_x)
+
+    def crop_img(im: Image.Image) -> Image.Image:
+        a = np.asarray(im.convert("RGB"))
+        if a.shape[:2] != tmask.shape:
+            a = np.asarray(im.convert("RGB").resize((w, h), Image.BILINEAR))
+        return Image.fromarray(a[cy0:cy1, cx0:cx1])
+
+    return (crop_img(src), crop_img(edited), tmask[cy0:cy1, cx0:cx1],
+           [m[cy0:cy1, cx0:cx1] for m in smasks])
+
+
 def judge_case(judge_fn, src: Image.Image, edited: Image.Image,
                tmask: np.ndarray, smasks: list, instruction: str) -> dict:
     """Score one edit. Returns sc, naturalness, artifacts, pq, overall.
 
     ONE panel, ONE outline convention, for both calls -- side_by_side is
     quality_audit's own function, imported not restated, so a human re-check
-    of a VLM score sees exactly the image the judge saw.
+    of a VLM score sees exactly the image the judge saw, modulo the crop
+    applied first (see crop_to_target).
     """
-    panel = side_by_side(src, edited, tmask, smasks)
+    c_src, c_edited, c_tmask, c_smasks = crop_to_target(src, edited, tmask, smasks)
+    panel = side_by_side(c_src, c_edited, c_tmask, c_smasks)
     sc_text = judge_fn(panel, SC_PROMPT.format(instruction=instruction))
     pq_text = judge_fn(panel, PQ_PROMPT)
     sc = float(np.clip(parse_scores(sc_text, 1)[0], 0.0, 10.0))
@@ -465,6 +520,21 @@ def self_test() -> None:
     # distinguishable by _fake_judge's own routing key ("naturalness").
     assert "make it blue" in SC_PROMPT.format(instruction="make it blue")
     assert "naturalness" in PQ_PROMPT and "naturalness" not in SC_PROMPT
+
+    # crop_to_target: bbox + padding math, and a far sibling is fully
+    # excluded by the crop rather than needing separate handling.
+    big_src = Image.fromarray(np.full((300, 300, 3), 90, np.uint8))
+    big_edited = Image.fromarray(np.full((300, 300, 3), 90, np.uint8))
+    t2 = np.zeros((300, 300), bool); t2[100:150, 100:150] = True
+    s2_near = np.zeros((300, 300), bool); s2_near[150:170, 150:170] = True
+    s2_far = np.zeros((300, 300), bool); s2_far[280:295, 280:295] = True
+
+    c_src, c_edited, c_t, c_s = crop_to_target(big_src, big_edited, t2,
+                                               [s2_near, s2_far])
+    assert c_t.shape == (110, 110), c_t.shape  # bbox 100:150 + 60% pad -> 70:180
+    assert c_src.size == (110, 110) == c_edited.size
+    assert c_s[0].sum() > 0, "near sibling should survive the crop"
+    assert c_s[1].sum() == 0, "far sibling should be fully excluded by the crop"
 
     print("edit_quality_vlm self-test OK")
 
