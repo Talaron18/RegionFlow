@@ -112,10 +112,16 @@ from run_gate_c import outcome_class
 PROMPT_COLS = {"full": "editing_instruction", "single": "edit_instruction_single"}
 
 # VIEScore's own TIE-task SC prompt, quoted verbatim from
-# viescore/vie_prompts.py (TIGER-AI-Lab/VIEScore). The instruction and the
-# target-region restriction are this project's additions, appended rather
-# than interleaved, so the VIEScore text itself stays byte-identical to the
-# source and any future diff against it is a diff, not a rewrite.
+# viescore/vie_prompts.py (TIGER-AI-Lab/VIEScore). The instruction, the
+# target-region restriction, and the closing commit instruction below are
+# this project's additions, appended rather than interleaved, so the
+# VIEScore text itself stays byte-identical to the source and any future
+# diff against it is a diff, not a rewrite. The commit instruction was
+# added after a raw judge response (Qwen3.6-35B-A3B, refedit-172) reasoned
+# CORRECTLY through region restriction -- "within the yellow region, no
+# change occurred... the edit did not occur inside the yellow region" --
+# then kept re-litigating its own conclusion for 600 tokens and never
+# emitted "[[score]]" at all, a parse failure rather than a wrong answer.
 SC_PROMPT = """You are given a source image and an edited image, side by \
 side (source on the left, edited on the right). The instance the editing \
 instruction refers to is outlined in YELLOW on both panels; any other \
@@ -129,10 +135,13 @@ A score from 0 to 10 will be given based on the success of the editing. \
 (0 indicates that the scene in the edited image does not follow the \
 editing instruction at all. 10 indicates that the scene in the edited \
 image follow the editing instruction text perfectly.) Give a float score \
-strictly following this format: "[[score]]", e.g., "[[5.0]]"."""
+strictly following this format: "[[score]]", e.g., "[[5.0]]".
 
-# VIEScore's own PQ prompt, same sourcing. The target-region restriction is
-# the same addition as SC_PROMPT's.
+State your reasoning in at most two sentences, then give the score. Commit \
+to it and stop -- do not reconsider or re-litigate your own answer."""
+
+# VIEScore's own PQ prompt, same sourcing. The target-region restriction and
+# the commit instruction are the same additions as SC_PROMPT's.
 PQ_PROMPT = """You are given an edited image. The instance the editing \
 instruction targeted is outlined in YELLOW. Judge quality ONLY within the \
 yellow-outlined region.
@@ -146,7 +155,10 @@ region. (0 indicates that the image contains a large portion of \
 distortion, or watermark, or scratches, or blurred faces, or unusual body \
 parts. 10 indicates the image has no artifacts.)
 Put the score in this format: "[[naturalness, artifacts]]", e.g., \
-"[[9.0, 8.0]]"."""
+"[[9.0, 8.0]]".
+
+State your reasoning in at most two sentences, then give the scores. Commit \
+to them and stop -- do not reconsider or re-litigate your own answer."""
 
 _SCORE_RE = re.compile(r"-?\d+(?:\.\d+)?")
 
