@@ -843,26 +843,131 @@ constraints before writing that code, not after:
   different training target at intermediate points, and the merge is
   better justified.
 
-**Next: the real work queue.**
+### The Gate C wrapper — built, then a real bug found by trying to run it
 
-1. The multi-step Euler pre-check above — cheap, uses the checkpoint and
-   tooling already in hand, and decides how much of the JVP-based merge
-   is actually necessary before committing to it.
-2. Merge Direction A's machinery with Gate B's multi-step readout,
-   informed by (1) and preserving the operating-point constraint above.
-3. The Gate C scoreboard wrapper (`bench/gate_a_model.py`), regardless of
-   how (1)–(2) turn out — neither path can be judged on the 3-case
-   Stage-0-comparable sweep alone. Code-complete since earlier in this
-   document; run:
-   ```
-   python bench/run_gate_c.py --model gate-a-transport \
-       --gate-a-ckpt runs/gate_a_sigma_0.0/ckpt_latest.pt \
-       --gate-a-sigma0 0.0 --mask-mode oracle \
-       --out runs/gate_c/gate_a_sigma0.0_oracle.jsonl
-   ```
-   on the σ0=0.0 checkpoint (this document's winning arm across every
-   diagnostic run against it) — repeat per `--mask-mode` as the existing
-   151-case harness requires for a scoreboard-comparable result.
+`bench/gate_a_model.py` was committed earlier in this document's history
+but never actually invoked end to end. Doing that surfaced a genuine bug:
+`run_gate_c.py`'s own imports are bare (`from off_instance import ...`)
+and correctly resolve against `bench/` as `sys.path[0]` for
+`python bench/run_gate_c.py` — but `gate_a_model.py`'s imports are
+package-qualified from the repo root (`from bench.inversion import
+...`, `from transport.adapter import ...`), which is not on `sys.path`
+in that invocation. Confirmed directly (`ModuleNotFoundError: No module
+named 'bench'`) and fixed with the same `sys.path` insert
+`scripts/gate_a_transport.py` already carried for the identical reason.
+**Reading the code was not enough to call this done; running it was.**
+
+```
+python bench/run_gate_c.py --model gate-a-transport \
+    --gate-a-ckpt runs/gate_a_sigma_0.0/ckpt_latest.pt \
+    --gate-a-sigma0 0.0 --mask-mode oracle \
+    --out runs/gate_c/gate_a_sigma0.0_oracle.jsonl
+```
+
+on the σ0=0.0 checkpoint (this document's winning arm across every
+diagnostic run against it) — repeat per `--mask-mode` as the existing
+151-case harness requires for a scoreboard-comparable result. This is
+the highest-priority item in the work queue below: nothing else here can
+be judged against real edit quality until it runs, and every candidate
+fix (global/local decomposition, any future merge) needs the same
+wrapper regardless of which mechanism wins.
+
+### The localisation-metric trap, closed before it could drive an experiment
+
+The inside/outside RMS ratio (0.21) is **not a target for any future run
+to raise.** It is dominated by `mask_enc`'s DC component, which the
+ablation above showed is load-bearing (pooled 0.769 → 0.211 when
+removed) — the most direct way to raise the ratio is to suppress that
+same DC term, exactly the destructive move already ruled out. A run
+whose loss or selection criterion targeted this ratio could look better
+on its own metric while getting substantially worse at everything else,
+and nothing would flag it. `classify_localisation()`'s docstring and
+`inspect --cache`'s printed output now both carry this warning inline,
+pointing at `mask_outside_structure()`'s **structured fraction**
+(measured at 0.075 on the σ0=0.0 checkpoint — the part of the outside-mask
+signal that genuinely varies pixel to pixel,
+not the constant component) as the metric to track and improve instead.
+
+### Global/local decomposition — built, architecturally enforced
+
+`transport/conditioning.py::GlobalLocalMaskEncoder` (new;
+`AdapterConfig.mask_encoder_kind="global_local"`, default stays
+`"single"`/`MaskEncoder`, byte-identical for every existing checkpoint):
+
+```
+delta_z = global_bias + (local(mask) − local(mask).mean(over H, W))
+```
+
+`global_bias` is a single learned `(C,)` vector with **no input at
+all** — it cannot become a disguised, mask-conditioned copy of the local
+signal, because it has nothing to condition on. `local` is the existing
+`MaskEncoder` CNN with its own spatial mean subtracted **every forward
+pass**, not as a post-hoc ablation — architecturally impossible for it to
+leak into the operating point regardless of what it learns. This is the
+split forced by construction, not by a learning-rate schedule or a loss
+penalty that two heads summed under plain MSE could learn around and
+collapse back to the current allocation, telling nothing new. Self-tested
+directly: the output's own spatial mean equals `global_bias` exactly, for
+two different masks and randomly re-initialised local-head weights, while
+the local-only residual still genuinely differs between them (confirming
+the split doesn't also make the whole output mask-insensitive).
+
+```
+python scripts/gate_a_transport.py train --cache /data/cache/13061d51aee4 \
+    --out runs/gate_a_global_local --steps 8000 --sigma0 0.0 \
+    --mask-encoder-kind global_local
+```
+
+`--sigma0 0.0` deliberately — Direction A is closed; this is testing the
+decomposition, not reopening the noise question. Read `global_bias` and
+`local`'s own weights off the resulting checkpoint with `inspect
+--mask-encoder-kind global_local` once one exists, and re-run the
+`diagnose` raw/pooled/centered comparison against the `σ0=0.0` `"single"`
+baseline (0.541/0.769/0.664) to see whether forcing the split changes
+anything, before reading too much into `global_bias`'s learned value on
+its own.
+
+### Held from earlier, still outstanding
+
+**The held-out mean-centering distribution was built
+(`held_out_centered_gap()`, wired into `ambiguity_probe.py
+--mask-restrict`) but never actually run and reported.** The `+0.451`
+mean-centered ceiling gap recorded in §7 is still the in-sample number —
+fit and scored on the same 177 pairs, the exact confound the held-out
+version exists to remove. Re-run before citing `+0.451` (or any number
+derived from it) anywhere outside this document:
+
+```
+python scripts/ambiguity_probe.py --cache /data/cache/13061d51aee4 --mask-restrict
+```
+
+look for the `held-out mean-centered ceiling gap` line (median + range
+across 20 random splits) and record it here in place of the in-sample
+figure.
+
+### Next: the real work queue
+
+1. **Run the Gate C wrapper** (command above) — first, because nothing
+   else can be judged against real edit quality without it, and it's
+   needed regardless of which mechanism below wins.
+2. The held-out mean-centering re-run above — cheap, closes the one
+   remaining loose end from the ambiguity-probe line of work.
+3. The multi-step Euler pre-check (`diagnose --steps N`, §"What the
+   DC-ablation result requires" above) — decides how much of a full
+   JVP-based merge is actually necessary before paying for it.
+4. Train and diagnose the `global_local` decomposition (command above) —
+   before the MeanFlow merge, per the ordering above: decompose first,
+   then decide how each component composes across steps, rather than
+   inheriting whatever the current single-head entanglement happens to
+   do under a multi-step schedule.
+5. The MeanFlow merge itself, informed by (3) and (4), respecting the
+   gate-must-stay-≡1 constraint already established.
+
+**Not in scope, don't re-run as if new:** training on `z_t = (1−t)z_0 +
+t·z_1` with target `z_1 − z_0` is exactly what `sample_path` already
+does and what all six `σ0` runs already trained on. Any "interpolated
+input" experiment worth running needs to be stated as something that
+differs from that existing baseline, not a restatement of it.
 
 ### What to keep, what to drop
 
