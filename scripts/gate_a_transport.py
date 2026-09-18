@@ -728,6 +728,26 @@ def _inside_outside_rms(delta_z, mask) -> tuple[float | None, float | None]:
     return inside, outside
 
 
+def classify_localisation(ratio_io: float) -> str:
+    """Label for an inside/outside RMS ratio. A ratio far from 1 in
+    EITHER direction is a strongly differentiated signal -- the model
+    could use it to tell mask from background either way. Only a ratio
+    close to 1 (roughly uniform everywhere) is genuinely undifferentiated.
+    An earlier version of this classification only checked "> 3" for
+    localised and flagged everything else including strongly inverted
+    ratios (e.g. 0.2, background 5x stronger than inside) as "weak" --
+    wrong, since 0.2 is just as differentiated as 5.0, only in the other
+    direction; caught when a real checkpoint measured 0.21 and the label
+    didn't match the number.
+    """
+    if ratio_io >= 3.0:
+        return "edit-region-dominant localisation"
+    if ratio_io <= 1.0 / 3.0:
+        return "background-dominant (inverted) localisation -- still " \
+              "strongly differentiated, not weak"
+    return "weak spatial differentiation (inside and outside are similar magnitude)"
+
+
 def mask_injection_spatial_breakdown(adapter_sd: dict, cache_root, latent_ch: int,
                                      n_items: int = 64) -> dict:
     """WHERE-axis question about mask_enc's own output: is delta_z spatially
@@ -846,10 +866,8 @@ def cmd_inspect(args) -> int:
                       f"median {ins['median']:.5f}  (n={ins['n']})")
                 print(f"  delta_z RMS outside mask: mean {outs['mean']:.5f}  "
                       f"median {outs['median']:.5f}  (n={outs['n']})")
-                print(f"  inside/outside RMS ratio: {ratio_io:.2f}"
-                     + ("  <-- well localised" if ratio_io > 3 else
-                        "  <-- weak/no spatial localisation" if ratio_io < 1.5
-                        else ""))
+                print(f"  inside/outside RMS ratio: {ratio_io:.2f}  "
+                      f"<-- {classify_localisation(ratio_io)}")
     return 0
 
 
@@ -1346,6 +1364,17 @@ def self_test() -> None:
         assert spatial_zero["outside"]["mean"] == 0.0, spatial_zero
         spatial_empty = mask_injection_spatial_breakdown({}, cache_root, latent_ch)
         assert spatial_empty == {"n": 0}
+
+    # classify_localisation: a strongly INVERTED ratio (background >>
+    # inside, e.g. the real 0.21 that first exposed this) must be labelled
+    # as differentiated, not "weak" -- an earlier version of this
+    # classification only checked ">3" and mislabelled everything below
+    # 1.5 including strongly inverted ratios as weak.
+    assert "background-dominant" in classify_localisation(0.21)
+    assert "edit-region-dominant" in classify_localisation(5.0)
+    assert "weak" in classify_localisation(1.0)
+    assert "background-dominant" in classify_localisation(1.0 / 3.0)  # boundary
+    assert "edit-region-dominant" in classify_localisation(3.0)       # boundary
 
     print("gate_a_transport self-test OK")
 
