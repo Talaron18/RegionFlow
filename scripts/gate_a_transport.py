@@ -124,6 +124,19 @@ def cmd_train(args) -> int:
 
     adapter = build_adapter(args.model, args.device, args.rank, args.max_blocks,
                             mask_encoder_kind=args.mask_encoder_kind)
+    vae = None
+    lpips_fn = None
+    if args.perceptual_weight > 0:
+        from diffusers import AutoencoderKL
+        import lpips as lpips_lib
+        print(f"[train] loading VAE and LPIPS for perceptual loss "
+              f"(weight={args.perceptual_weight})")
+        vae = AutoencoderKL.from_pretrained(
+            args.model, subfolder="vae", torch_dtype=torch.float32
+        ).to(args.device).eval()
+        vae.requires_grad_(False)
+        lpips_fn = lpips_lib.LPIPS(net="alex").to(args.device).eval()
+        lpips_fn.requires_grad_(False)
     # Gradient checkpointing trades ~30-40% step time for activation memory,
     # same as gate_b_meanflow.py's own dial -- but Gate A never needs
     # forward-mode AD (pairflow_loss has no JVP estimator at all), so unlike
@@ -166,7 +179,8 @@ def cmd_train(args) -> int:
 
     pf = PairFlowConfig(mask_dropout=args.mask_dropout,
                         cond_dropout=args.cond_dropout,
-                        sigma0=args.sigma0)
+                        sigma0=args.sigma0,
+                        perceptual_weight=args.perceptual_weight)
 
     def loss_fn(model, batch, step, cfg):
         dev, mdt = args.device, model.model_dtype
@@ -178,6 +192,8 @@ def cmd_train(args) -> int:
             batch["prompt_embeds"].to(dev, mdt),
             batch["pooled"].to(dev, mdt),
             pf,
+            vae=vae,
+            lpips_fn=lpips_fn,
         )
 
     tcfg = TrainConfig(gate="a", out_dir=args.out, steps=args.steps,
@@ -480,9 +496,39 @@ def _load_diagnose_checkpoint(adapter, ckpt_path: str,
             "the pretrained model, diagnosing it would produce a confident null")
     return sd
 
+def _teacher_forced_rollout(adapter, z_src, z_tgt, mask, pe, pooled, steps):
+    """Teacher-forced multi-step rollout: query the model only at points on
+    the ground-truth straight line z*(t) = (1-t) z_src + t z_tgt, never at
+    points produced by previous predictions.
+
+    Isolates trajectory-distribution mismatch (state OOD) from integration
+    error (u not self-consistent). Matches apply_transport(strength=1.0,
+    pin_background=False)'s own u_eff = sum_i dt * u_i convention, so the
+    result is directly comparable to both the single-step query and the
+    free rollout.
+
+    - If cos_raw recovers to the single-step value: multi-step collapse is
+      entirely off-path state.
+    - If cos_raw stays low: the model fails on the full interval even when
+      queried on-path; the problem is elsewhere (interval-embedding
+      extrapolation to Delta = -1, or the integration scheme itself).
+    """
+    import torch
+    b = z_src.shape[0]
+    dev = z_src.device
+    grid = torch.linspace(0.0, 1.0, steps + 1, device=dev)
+    acc = torch.zeros_like(z_src)
+    for i in range(steps):
+        t = float(grid[i])
+        s = torch.full((b,), t, device=dev)
+        r = torch.full((b,), float(grid[i + 1]), device=dev)
+        z_q = (1.0 - t) * z_src + t * z_tgt        
+        u = adapter(z_q, s, r, pe, pooled, mask=mask)
+        acc = acc + float(grid[i + 1] - grid[i]) * u
+    return acc
 
 def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False,
-                         ablate_mask_dc: bool = False, steps: int = 1) -> dict:
+                         ablate_mask_dc: bool = False, steps: int = 1, teacher_forcing: bool = False) -> dict:
     """Run one already-loaded checkpoint over the whole dataloader and
     return summarize_diagnostics()' summary dict. Pulled out of
     cmd_diagnose so multiple --ckpt values share one adapter/dataloader
@@ -532,7 +578,9 @@ def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False,
             pooled = batch["pooled"].to(device)
             b = z_src.shape[0]
 
-            if steps > 1:
+            if steps > 1 and teacher_forcing:
+                u_eff = _teacher_forced_rollout(adapter, z_src, z_tgt, mask, pe, pooled, steps)
+            elif steps > 1:
                 z_edit = apply_transport(adapter, z_src, mask, pe, pooled,
                                          strength=1.0, steps=steps,
                                          pin_background=False)
@@ -557,8 +605,51 @@ def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False,
     pooled_arr = np.concatenate(pooleds)
     centered_arr = np.concatenate(centereds) if centereds else None
     return summarize_diagnostics(raw_arr, pooled_arr, centered_arr)
+    
+def _s_sweep_diagnostic(adapter, dl, device, bias, delta_fixed: float = 0.25,
+                        s_vals=(0.0, 0.25, 0.5, 0.75)) -> dict:
+    """Fix Delta = t - r = -delta_fixed and sweep s, scoring cos(u, v_clean)
+    at each s with the query point FORCED onto the ground-truth line
+    z*(s) = (1-s) z_src + s z_tgt. Isolates whether s=0 is intrinsically
+    harder than s>0 -- the hypothesis that the one-step readout's low cos
+    is a property of the query point, not of the interval length or the
+    interval embedding (which the post-training embedding cos matrix
+    showed the model has learned to ignore).
 
+    delta_fixed chosen small enough that s + delta_fixed <= 1 for every
+    s in s_vals, so r stays a valid endpoint.
+    """
+    import torch
 
+    from transport.pairflow import direction_position_diagnostics
+
+    acc = {s: {"raw": [], "pooled": [], "centered": []} for s in s_vals}
+    with torch.no_grad():
+        for batch in dl:
+            z_src = batch["z_src"].to(device).float()
+            z_tgt = batch["z_tgt"].to(device).float()
+            mask = batch["mask"].to(device).float()
+            pe = batch["prompt_embeds"].to(device)
+            pooled = batch["pooled"].to(device)
+            b = z_src.shape[0]
+            v_clean = z_tgt - z_src
+            for s_val in s_vals:
+                s = torch.full((b,), s_val, device=device)
+                r = s + delta_fixed
+                z_q = (1.0 - s_val) * z_src + s_val * z_tgt
+                u = adapter(z_q, s, r, pe, pooled, mask=mask)
+                diag = direction_position_diagnostics(
+                    u.float(), v_clean, mask, bias=bias)
+                acc[s_val]["raw"].append(diag["raw"].cpu().numpy())
+                acc[s_val]["pooled"].append(diag["pooled"].cpu().numpy())
+                if "centered" in diag:
+                    acc[s_val]["centered"].append(diag["centered"].cpu().numpy())
+
+    return {s: summarize_diagnostics(
+        np.concatenate(v["raw"]), np.concatenate(v["pooled"]),
+        np.concatenate(v["centered"]) if v["centered"] else None)
+        for s, v in acc.items()}
+    
 def cmd_diagnose(args) -> int:
     """WHERE/WHAT breakdown of one or more trained checkpoints' own
     predictions (GATE_A_REOPENING_PLAN.md SS2), following the ambiguity
@@ -592,7 +683,20 @@ def cmd_diagnose(args) -> int:
                          "lambda=1, DC-intact path help?) and doesn't "
                          "compose with --ablate-mask/--ablate-mask-dc -- "
                          "run them separately.")
-
+    
+    if args.teacher_forcing and args.steps <= 1:
+        raise SystemExit("--teacher-forcing requires --steps > 1")
+    if args.teacher_forcing and (args.ablate_mask or args.ablate_mask_dc):
+        raise SystemExit("--teacher-forcing doesn't compose with "
+                         "--ablate-mask/--ablate-mask-dc -- run separately.")
+    if args.teacher_forcing:
+        print("[diagnose] --teacher-forcing: query points are forced back onto "
+              "the ground-truth line at every step. Compare against the same "
+              "--steps N WITHOUT this flag: if cos_raw recovers to the "
+              "single-step value, the multi-step collapse is entirely off-path "
+              "state; if it stays low, the model fails on the full interval "
+              "even when queried on-path.")    
+        
     cache = TripletCache(args.cache)
     ds = torch_dataset(cache)
     dl = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
@@ -630,6 +734,29 @@ def cmd_diagnose(args) -> int:
     adapter = build_adapter(args.model, args.device, args.rank,
                             mask_encoder_kind=args.mask_encoder_kind)
     adapter.eval()
+    if args.s_sweep and (args.ablate_mask or args.ablate_mask_dc
+                         or args.steps > 1):
+        raise SystemExit("--s-sweep doesn't compose with --ablate-mask/"
+                         "--ablate-mask-dc/--steps > 1 -- run separately.")
+
+    if args.s_sweep:
+        if not args.ckpt:
+            raise SystemExit("--s-sweep needs a --ckpt")
+        _load_diagnose_checkpoint(adapter, args.ckpt[0], args.mask_encoder_kind)
+        print(f"[diagnose] --s-sweep: Delta fixed at -{args.s_sweep_delta}, "
+              f"query point on the ground-truth line, sweeping s. Isolates "
+              f"the s=0 intrinsic-difficulty hypothesis.")
+        sweep = _s_sweep_diagnostic(adapter, dl, args.device, bias,
+                                    delta_fixed=args.s_sweep_delta)
+        print(f"\n{'s':>6}{'raw':>9}{'pooled':>9}{'centered':>10}")
+        for s_val in sorted(sweep):
+            def _m(d):
+                return f"{d['median']:+.3f}" if d.get("n", 0) > 0 else "--"
+            print(f"{s_val:>6.2f}"
+                  f"{_m(sweep[s_val].get('raw', {})):>9}"
+                  f"{_m(sweep[s_val].get('pooled', {})):>9}"
+                  f"{_m(sweep[s_val].get('centered', {})):>10}")
+        return 0
 
     summaries = {}
     for ckpt_path in args.ckpt:
@@ -637,7 +764,8 @@ def cmd_diagnose(args) -> int:
         summary = _diagnose_checkpoint(adapter, dl, args.device, bias,
                                        ablate_mask=args.ablate_mask,
                                        ablate_mask_dc=args.ablate_mask_dc,
-                                       steps=args.steps)
+                                       steps=args.steps,
+                                       teacher_forcing=args.teacher_forcing)
         summaries[ckpt_path] = summary
         n = summary["raw"]["n"]
         tag = (" [lambda=0, mask ablated]" if args.ablate_mask else
@@ -1966,6 +2094,11 @@ def main() -> int:
                         "the model's instruction-specific signal. Kept for "
                         "reproducibility, not as a live recommendation to "
                         "sweep further.")
+    t.add_argument("--interval-delta-power", type=float, default=1.0,
+                   help="< 1 biases the interval endpoint delta toward the "
+                        "full remaining interval (see PairFlowConfig's own "
+                        "docstring). 1.0 (default) is the original uniform "
+                        "schedule. Try 0.5.")
     t.add_argument("--mask-encoder-kind", default="single",
                    choices=("single", "global_local"),
                    help="'single' (default, MaskEncoder) is byte-identical "
@@ -2068,11 +2201,32 @@ def main() -> int:
     ws.set_defaults(fn=cmd_watch_sweep)
 
     d = sub.add_parser("diagnose")
+    t.add_argument("--perceptual-weight", type=float, default=0.0,
+                   help="weight on LPIPS perceptual loss computed on VAE-"
+                        "decoded images. 0.0 (default) is the original "
+                        "MSE-only objective. 0.1 is the recommended "
+                        "starting point -- the MSE-vs-LPIPS correlation "
+                        "check (r=0.23) shows these measure almost "
+                        "independent things, so the optimum moves. "
+                        "Requires `pip install lpips`.")
+    d.add_argument("--s-sweep", action="store_true",
+                   help="diagnose mode: fix Delta and sweep the query "
+                        "point s along the ground-truth line. Isolates "
+                        "whether s=0 is intrinsically harder than s>0.")
+    d.add_argument("--s-sweep-delta", type=float, default=0.25,
+                   help="|Delta| held fixed during --s-sweep (default 0.25, "
+                        "chosen so s+delta <= 1 for s in {0, 0.25, 0.5, 0.75})")
     d.add_argument("--ckpt", nargs="+", required=True,
                    help="one or more checkpoint paths; the base transformer "
                         "loads once and each checkpoint's adapter weights "
                         "are swapped in, with a comparison table printed "
                         "when more than one is given")
+    d.add_argument("--teacher-forcing", action="store_true",
+                   help="multi-step rollout with every query point forced back "
+                    "onto the ground-truth straight line z*(t)=(1-t)z_src+t*z_tgt, "
+                    "instead of using the previous prediction. Isolates "
+                    "trajectory-distribution mismatch (off-path state) from "
+                    "integration error. Requires --steps > 1.")
     d.add_argument("--cache", required=True,
                    help="TripletCache directory -- the same one used for "
                         "training/ambiguity_probe.py, no VAE or text "

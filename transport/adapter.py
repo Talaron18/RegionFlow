@@ -216,7 +216,7 @@ class TransportAdapter(nn.Module):
         self,
         z: torch.Tensor,                 # (B, C, h, w) fp32 ODE state
         t: torch.Tensor,                 # (B,) in [0, 1]
-        r: torch.Tensor,                 # (B,) in [0, 1], r <= t
+        r: torch.Tensor,                 # (B,) interval endpoint; used by interval-conditioned transport
         prompt_embeds: torch.Tensor,     # (B, L, D)
         pooled: torch.Tensor,            # (B, P)
         mask: torch.Tensor | None = None,   # (B, 1, h, w) on the LATENT grid
@@ -246,7 +246,14 @@ class TransportAdapter(nn.Module):
         pooled_in = pooled
         if self.interval is not None:
             d_pool = self.interval(t, r).to(pooled.dtype)
-            pooled_in = pooled + gate.reshape(-1, 1).to(pooled.dtype) * d_pool
+
+            # PairFlow interval conditioning:
+            # r-t (or t-r depending on the convention used by the caller)
+            # must remain visible in pair mode.  The old implementation
+            # multiplied by the mask gate, which is intentionally constant 1
+            # for pair mode but still made the interval branch coupled to the
+            # gate design. Keep the interval embedding explicit.
+            pooled_in = pooled + d_pool
 
         timestep = (t.float() * self.cfg.num_train_timesteps)
 

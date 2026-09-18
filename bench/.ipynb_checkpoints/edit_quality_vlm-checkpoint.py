@@ -59,6 +59,17 @@ own convention -- yellow outline on the target, red on siblings, same source
 | edited panel a human judge sees -- and the judge prompt explicitly
 restricts SC and PQ to the region outlined in yellow.
 
+Restricting by INSTRUCTION alone was checked against 7 human-confirmed
+no_edit cases the judge scored Overall >= 9.4 anyway (GATE_C_REPORT.md SS5)
+and failed on every one, by at least three distinct mechanisms: crediting a
+decoy object named in the instruction's own text, crediting the SIBLING's
+own edit, and crediting an unrelated background change -- once even scoring
+a target left completely untouched by an "erase" instruction as a perfect
+10.0. `crop_to_target` now crops the panel to the target's own (padded)
+bounding box before judge_case ever calls the judge, so there is no
+outside-the-region content left for the model to (mis)credit. Re-run
+against those same 7 cases before trusting this on the full 302.
+
 JUDGE IS PLUGGABLE. The interface is one function:
     judge_fn(panel_image: PIL.Image, instruction: str) -> dict(sc: float,
         naturalness: float, artifacts: float)
@@ -101,16 +112,33 @@ from run_gate_c import outcome_class
 PROMPT_COLS = {"full": "editing_instruction", "single": "edit_instruction_single"}
 
 # VIEScore's own TIE-task SC prompt, quoted verbatim from
-# viescore/vie_prompts.py (TIGER-AI-Lab/VIEScore). The instruction and the
-# target-region restriction are this project's additions, appended rather
-# than interleaved, so the VIEScore text itself stays byte-identical to the
-# source and any future diff against it is a diff, not a rewrite.
+# viescore/vie_prompts.py (TIGER-AI-Lab/VIEScore). The instruction, the
+# target-region restriction, and the closing commit instruction below are
+# this project's additions, appended rather than interleaved, so the
+# VIEScore text itself stays byte-identical to the source and any future
+# diff against it is a diff, not a rewrite. The commit instruction was
+# added after a raw judge response (Qwen3.6-35B-A3B, refedit-172) reasoned
+# CORRECTLY through region restriction -- "within the yellow region, no
+# change occurred... the edit did not occur inside the yellow region" --
+# then kept re-litigating its own conclusion for 600 tokens and never
+# emitted "[[score]]" at all, a parse failure rather than a wrong answer.
+# The outline-authority sentence was added after refedit-119 (a scarf added
+# to the RED dog, not the yellow one): the judge's own text showed it
+# re-deriving "the dog in the passenger seat" from the instruction's
+# wording, deciding that meant the red-outlined dog, and scoring success
+# against ITS OWN re-derived target instead of the yellow one it was told
+# to trust -- overriding the region restriction when its own reading of
+# the instruction disagreed with which instance the case assigned.
 SC_PROMPT = """You are given a source image and an edited image, side by \
 side (source on the left, edited on the right). The instance the editing \
 instruction refers to is outlined in YELLOW on both panels; any other \
 instances of the same category are outlined in RED. Judge the edit ONLY \
 within the yellow-outlined region -- ignore everything outside it, \
-including the red-outlined siblings and the rest of the frame.
+including the red-outlined siblings and the rest of the frame. The yellow \
+outline is the definitive target, chosen independently of the instruction's \
+exact wording. Even if the instruction's description seems to fit the \
+red-outlined instance better, trust the yellow outline and judge only what \
+happened there -- do not re-derive the target from the instruction text.
 
 The editing instruction was: "{instruction}"
 
@@ -118,10 +146,13 @@ A score from 0 to 10 will be given based on the success of the editing. \
 (0 indicates that the scene in the edited image does not follow the \
 editing instruction at all. 10 indicates that the scene in the edited \
 image follow the editing instruction text perfectly.) Give a float score \
-strictly following this format: "[[score]]", e.g., "[[5.0]]"."""
+strictly following this format: "[[score]]", e.g., "[[5.0]]".
 
-# VIEScore's own PQ prompt, same sourcing. The target-region restriction is
-# the same addition as SC_PROMPT's.
+State your reasoning in at most two sentences, then give the score. Commit \
+to it and stop -- do not reconsider or re-litigate your own answer."""
+
+# VIEScore's own PQ prompt, same sourcing. The target-region restriction and
+# the commit instruction are the same additions as SC_PROMPT's.
 PQ_PROMPT = """You are given an edited image. The instance the editing \
 instruction targeted is outlined in YELLOW. Judge quality ONLY within the \
 yellow-outlined region.
@@ -135,7 +166,10 @@ region. (0 indicates that the image contains a large portion of \
 distortion, or watermark, or scratches, or blurred faces, or unusual body \
 parts. 10 indicates the image has no artifacts.)
 Put the score in this format: "[[naturalness, artifacts]]", e.g., \
-"[[9.0, 8.0]]"."""
+"[[9.0, 8.0]]".
+
+State your reasoning in at most two sentences, then give the scores. Commit \
+to them and stop -- do not reconsider or re-litigate your own answer."""
 
 _SCORE_RE = re.compile(r"-?\d+(?:\.\d+)?")
 
@@ -161,15 +195,59 @@ def parse_scores(text: str, n: int) -> list[float]:
     return nums[:n]
 
 
+def crop_to_target(src: Image.Image, edited: Image.Image, tmask: np.ndarray,
+                   smasks: list, pad_frac: float = 0.6):
+    """Crop src/edited/masks to the target's bounding box, padded for context.
+
+    WHY. Visual inspection of 7 human-confirmed no_edit cases the judge
+    scored Overall >= 9.4 (GATE_C_REPORT.md SS5, "Calibration ... it fails")
+    found it crediting content ANYWHERE in the full frame to the target: a
+    decoy object named in the instruction's own landmark clause recoloured,
+    the SIBLING's own edit, an unrelated background change, even a target
+    left completely untouched by an "erase" instruction. This happened
+    despite SC_PROMPT/PQ_PROMPT explicitly saying "ignore everything outside
+    [the yellow region]" -- asking the model to selectively ignore visible
+    pixels did not work in any of the 7 cases checked. Cropping removes the
+    option mechanically instead of relying on instruction-following for it.
+
+    pad_frac=0.6 (60% of the target's own bbox height/width, per side) is a
+    first guess, not a validated constant -- enough context to recognise the
+    object and its immediate surroundings, chosen to exclude the far
+    background and most siblings without re-deriving OFF_INSTANCE_EDIT_RATIO's
+    calibration discipline for a threshold this module does not have data to
+    tune yet. A sibling entirely outside the crop is simply absent from the
+    cropped smasks (an all-False mask, outline of nothing) rather than
+    needing separate handling -- it is out of frame, which is the point.
+    """
+    ys, xs = np.nonzero(tmask)
+    y0, y1, x0, x1 = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
+    h, w = tmask.shape
+    pad_y = int((y1 - y0 + 1) * pad_frac)
+    pad_x = int((x1 - x0 + 1) * pad_frac)
+    cy0, cy1 = max(0, y0 - pad_y), min(h, y1 + 1 + pad_y)
+    cx0, cx1 = max(0, x0 - pad_x), min(w, x1 + 1 + pad_x)
+
+    def crop_img(im: Image.Image) -> Image.Image:
+        a = np.asarray(im.convert("RGB"))
+        if a.shape[:2] != tmask.shape:
+            a = np.asarray(im.convert("RGB").resize((w, h), Image.BILINEAR))
+        return Image.fromarray(a[cy0:cy1, cx0:cx1])
+
+    return (crop_img(src), crop_img(edited), tmask[cy0:cy1, cx0:cx1],
+           [m[cy0:cy1, cx0:cx1] for m in smasks])
+
+
 def judge_case(judge_fn, src: Image.Image, edited: Image.Image,
                tmask: np.ndarray, smasks: list, instruction: str) -> dict:
     """Score one edit. Returns sc, naturalness, artifacts, pq, overall.
 
     ONE panel, ONE outline convention, for both calls -- side_by_side is
     quality_audit's own function, imported not restated, so a human re-check
-    of a VLM score sees exactly the image the judge saw.
+    of a VLM score sees exactly the image the judge saw, modulo the crop
+    applied first (see crop_to_target).
     """
-    panel = side_by_side(src, edited, tmask, smasks)
+    c_src, c_edited, c_tmask, c_smasks = crop_to_target(src, edited, tmask, smasks)
+    panel = side_by_side(c_src, c_edited, c_tmask, c_smasks)
     sc_text = judge_fn(panel, SC_PROMPT.format(instruction=instruction))
     pq_text = judge_fn(panel, PQ_PROMPT)
     sc = float(np.clip(parse_scores(sc_text, 1)[0], 0.0, 10.0))
@@ -216,7 +294,7 @@ def claude_judge(model: str = "claude-opus-5"):
     return fn
 
 
-def siliconflow_judge(model: str = "Qwen/Qwen3.6-35B-A3B"):
+def siliconflow_judge(model: str = "zai-org/GLM-5.3-Flash"):
     """SiliconFlow-hosted VLM judge, OpenAI-compatible chat/completions.
 
     Budget substitute for claude_judge -- NOT a claim of parity with
@@ -238,12 +316,27 @@ def siliconflow_judge(model: str = "Qwen/Qwen3.6-35B-A3B"):
     and would produce plausible-looking scores from the instruction text
     alone.
 
-    enable_thinking=False cuts reasoning-token overhead for models that
-    honor it (confirmed: Qwen3.6-35B-A3B goes to 2 completion tokens for a
-    trivial answer; Kimi-K3 still spends ~24 regardless). Some
-    reasoning-only models (zai-org/GLM-5.3-Flash) 400 on this flag entirely
-    ("model always thinks, use thinking_budget low/high/max instead") --
-    drop the flag from the payload if you point `model` at one of those.
+    Default is GLM-5.3-Flash, switched from Qwen3.6-35B-A3B after extensive
+    calibration work on Qwen (crop_to_target, temperature=0.0, a
+    closing-commit instruction, an outline-authority instruction -- see
+    GATE_C_REPORT.md SS5) got Spearman rho only to ~0.3 against the 40 human
+    blind verdicts, with several residual failure modes (apparent
+    fabrication, imprecise credit) that did not look prompt-fixable.
+    GLM-5.3-Flash is a REASONING-ONLY model: it 400s on enable_thinking=False
+    ("model always thinks, use thinking_budget low/high/max instead").
+    thinking_budget="low" DID work -- for one full 36-case run -- then
+    started 400ing on every request to every model (Qwen3.6-35B-A3B
+    included, which never used this parameter), ruling out payload content,
+    balance and rate-limiting by isolated test. Most likely a SiliconFlow-
+    side schema change for this still-new parameter/model. The payload
+    below sends neither enable_thinking nor thinking_budget at all, which
+    is what actually works right now for both models -- if you hit a 400
+    with "parameter is invalid" again, suspect this parameter first and
+    try removing it before adding it back differently. Re-run the same
+    calibration check
+    (GATE_C_REPORT.md SS5's re-test scripts) against this model before
+    trusting it any further than Qwen was trusted -- switching models is not
+    itself validation.
     """
     import base64
     import io
@@ -251,29 +344,87 @@ def siliconflow_judge(model: str = "Qwen/Qwen3.6-35B-A3B"):
 
     import requests  # noqa: PLC0415
 
-    api_key = "fill your own api-key"
+    # bench/.env, SILICONFLOW_API_KEY=... -- gitignored (.gitignore's ".env"
+    # line has no leading slash, so it matches at any depth, this path
+    # included). Falls back to an already-exported env var if the file is
+    # absent, so either way of setting the key keeps working.
+    env_path = Path(__file__).parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            if k.strip() == "SILICONFLOW_API_KEY":
+                os.environ.setdefault("SILICONFLOW_API_KEY", v.strip().strip('"\''))
+                break
+    api_key = os.environ["SILICONFLOW_API_KEY"]
 
     def fn(panel: Image.Image, prompt: str) -> str:
         buf = io.BytesIO()
         panel.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode()
-        resp = requests.post(
-            "https://api.siliconflow.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": [
-                    {"type": "image_url",
-                     "image_url": {"url": f"data:image/png;base64,{b64}"}},
-                    {"type": "text", "text": prompt},
-                ]}],
-                "max_tokens": 600,
-                "enable_thinking": False,
-            },
-            timeout=120,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": [
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                {"type": "text", "text": prompt},
+            ]}],
+            "max_tokens": 2000,
+            # Deliberately no enable_thinking / thinking_budget at all.
+            # enable_thinking=False 400s on GLM-5.3-Flash ("model always
+            # thinks"); its own error message says to use
+            # thinking_budget="low"/"high"/"max" instead, which worked for
+            # one full 36-case run and then started 400ing on EVERY request
+            # to EITHER model (Qwen included, which never used this param)
+            # -- ruled out balance, rate-limiting and payload content by
+            # isolated test, leaving a SiliconFlow-side schema change for
+            # this parameter as the most likely cause (GLM-5.3-Flash is
+            # new enough that it postdates their own published model
+            # enum). Omitting the parameter entirely is what actually
+            # works for both models right now; max_tokens raised 800->1000
+            # since GLM's mandatory reasoning trace is no longer capped.
+            # A scorer that samples is not a scorer -- two calls on the
+            # IDENTICAL panel+prompt returned 4.3 and 0.0 Overall before
+            # this was set (refedit-144, temperature defaults to 0.7 per
+            # SiliconFlow's own docs). 0.0 asks for the argmax response,
+            # not "less random"; if this model still varies at 0.0 that is
+            # itself a finding, not something to raise further.
+            "temperature": 0.0,
+        }
+        last_exc = None
+        for attempt in range(4):
+            try:
+                resp = requests.post(
+                    "https://api.siliconflow.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json=payload, timeout=120,
+                )
+                if not resp.ok:
+                    # raise_for_status()'s own message is just "400 Client
+                    # Error: Bad Request for url: ..." -- it drops the
+                    # response body, which is where SiliconFlow actually
+                    # says what was wrong (e.g. {"code": 20015, "message":
+                    # "..."} for the GLM-5.3-Flash thinking-budget error
+                    # found earlier). Surface it instead of re-discovering
+                    # this every time a 4xx/5xx shows up.
+                    detail = RuntimeError(
+                        f"{resp.status_code} from SiliconFlow: {resp.text[:1000]}")
+                    if resp.status_code == 429 or resp.status_code >= 500:
+                        last_exc = detail  # transient-ish, worth retrying
+                        if attempt < 3:
+                            time.sleep(2 ** attempt)
+                        continue
+                    raise detail  # a real 4xx (bad request, etc.): fatal, don't retry
+                return resp.json()["choices"][0]["message"]["content"]
+            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout) as exc:
+                # Transient network failure, not a judge/parsing problem.
+                last_exc = exc
+                if attempt < 3:
+                    time.sleep(2 ** attempt)
+        raise last_exc
 
     return fn
 
@@ -451,6 +602,21 @@ def self_test() -> None:
     # distinguishable by _fake_judge's own routing key ("naturalness").
     assert "make it blue" in SC_PROMPT.format(instruction="make it blue")
     assert "naturalness" in PQ_PROMPT and "naturalness" not in SC_PROMPT
+
+    # crop_to_target: bbox + padding math, and a far sibling is fully
+    # excluded by the crop rather than needing separate handling.
+    big_src = Image.fromarray(np.full((300, 300, 3), 90, np.uint8))
+    big_edited = Image.fromarray(np.full((300, 300, 3), 90, np.uint8))
+    t2 = np.zeros((300, 300), bool); t2[100:150, 100:150] = True
+    s2_near = np.zeros((300, 300), bool); s2_near[150:170, 150:170] = True
+    s2_far = np.zeros((300, 300), bool); s2_far[280:295, 280:295] = True
+
+    c_src, c_edited, c_t, c_s = crop_to_target(big_src, big_edited, t2,
+                                               [s2_near, s2_far])
+    assert c_t.shape == (110, 110), c_t.shape  # bbox 100:150 + 60% pad -> 70:180
+    assert c_src.size == (110, 110) == c_edited.size
+    assert c_s[0].sum() > 0, "near sibling should survive the crop"
+    assert c_s[1].sum() == 0, "far sibling should be fully excluded by the crop"
 
     print("edit_quality_vlm self-test OK")
 

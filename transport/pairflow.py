@@ -85,8 +85,16 @@ class PairFlowConfig:
     #: sigma0 has to be > 0 at s=0 specifically, not just somewhere on the
     #: path, for this to do anything at the one-step readout.
     sigma0: float = 0.0
-
-
+    #: Interval conditioning: train the velocity over a random sub-interval
+    #: [s, r] instead of always predicting the full displacement to s=1.
+    #: This keeps inference-time multi-step trajectories closer to the
+    #: distribution seen during training.
+    interval_conditioning: bool = True
+    interval_min: float = 0.1
+    interval_delta_power: float = 1.0
+    perceptual_weight: float = 0.0
+    perceptual_mode: str = "full"
+    
 def sample_path(
     z_src: torch.Tensor,
     z_tgt: torch.Tensor,
@@ -146,6 +154,49 @@ def sample_path(
     v = z_tgt - z_src_eff
     return z_s, s, v
 
+def sample_interval_path(
+    z_src: torch.Tensor,
+    z_tgt: torch.Tensor,
+    min_interval: float = 0.1,
+    delta_power: float = 1.0,
+    generator: torch.Generator | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Sample an interval-conditioned straight-line transport target.
+
+    Instead of always training:
+        u(z_s, s) = z_tgt - z_src
+
+    this trains:
+        u(z_s, s, r) = (z_r - z_s) / (r-s)
+
+    where r > s.  The state z_s is still sampled from the original
+    source-target line, but the model learns local transport over arbitrary
+    intervals.
+    """
+    b = z_src.shape[0]
+    device = z_src.device
+
+    s = torch.rand(b, device=device, generator=generator)
+    remaining = 1.0 - s
+    u = torch.rand(b, device=device, generator=generator)
+    if delta_power != 1:
+        u = u ** delta_power
+    # ensure r > s and avoid tiny intervals
+    delta = min_interval + (remaining - min_interval).clamp(min=0) * u
+    delta = torch.minimum(delta, remaining.clamp(min=1e-4))
+    r = s + delta
+
+    s_ = s.reshape(-1, 1, 1, 1)
+    r_ = r.reshape(-1, 1, 1, 1)
+
+    z_s = (1 - s_) * z_src + s_ * z_tgt
+    z_r = (1 - r_) * z_src + r_ * z_tgt
+
+    v = (z_r - z_s) / (r_ - s_)
+
+    return z_s, s, r, v
+
+
 
 def pairflow_loss(
     model,
@@ -156,6 +207,8 @@ def pairflow_loss(
     pooled: torch.Tensor,
     cfg: PairFlowConfig,
     generator: torch.Generator | None = None,
+    vae=None,
+    lpips_fn=None,
 ) -> tuple[torch.Tensor, dict]:
     """Masked rectified-flow regression from source to target.
 
@@ -163,8 +216,17 @@ def pairflow_loss(
     satisfy the signature; in pair mode the gate ignores it (gate = 1), which
     is the whole reason that mode exists.
     """
-    z_s, s, v = sample_path(z_src, z_tgt, mask=mask, sigma0=cfg.sigma0,
-                            generator=generator)
+    if cfg.interval_conditioning:
+        z_s, s, r, v = sample_interval_path(
+            z_src, z_tgt, min_interval=cfg.interval_min,
+            delta_power=cfg.interval_delta_power,
+            generator=generator,
+        )
+    else:
+        z_s, s, v = sample_path(
+            z_src, z_tgt, mask=mask, sigma0=cfg.sigma0, generator=generator
+        )
+        r = torch.ones_like(s)
 
     m = mask
     if cfg.mask_dropout > 0:
@@ -185,7 +247,7 @@ def pairflow_loss(
         pe = pe * keep.reshape(-1, 1, 1)
         po = po * keep.to(po.dtype).reshape(-1, 1)
 
-    u = model(z_s, s, s, pe, po, mask=m)
+    u = model(z_s, s, r, pe, po, mask=m)
 
     err = (u - v).pow(2)
     inside = mask
@@ -198,6 +260,34 @@ def pairflow_loss(
 
     loss = cfg.inside_weight * l_in + cfg.outside_weight * l_out
 
+    if cfg.perceptual_weight > 0:
+        if vae is None or lpips_fn is None:
+            raise RuntimeError(
+                f"perceptual_weight={cfg.perceptual_weight} > 0 but "
+                f"vae={'None' if vae is None else 'set'}, "
+                f"lpips_fn={'None' if lpips_fn is None else 'set'}. "
+                "The caller must pass both. Fix the train loop or set "
+                "perceptual_weight=0.")
+        if cfg.perceptual_mode != "full":
+            raise NotImplementedError(
+                f"perceptual_mode={cfg.perceptual_mode!r} not implemented; "
+                "only 'full' is supported.")
+
+        vae_dtype = next(vae.parameters()).dtype
+        scaling = float(vae.config.scaling_factor)
+        shift = float(getattr(vae.config, "shift_factor", 0.0) or 0.0)
+
+        z_pred = (z_src + u * mask) / scaling + shift
+        img_pred = vae.decode(z_pred.to(vae_dtype)).sample.float().clamp(-1, 1)
+
+        with torch.no_grad():
+            z_ref = z_tgt / scaling + shift
+            img_tgt = vae.decode(z_ref.to(vae_dtype)).sample.float().clamp(-1, 1)
+
+        l_percept = lpips_fn(img_pred, img_tgt).mean()
+        loss = loss + cfg.perceptual_weight * l_percept
+    else:
+        l_percept = None
     with torch.no_grad():
         # Per-element means throughout. The first version reported u_norm_in
         # and v_norm_in as sqrt(sum/n_in) while summing over all 16 latent
@@ -213,6 +303,8 @@ def pairflow_loss(
             "loss": float(loss),
             "loss_in": float(l_in),
             "loss_out": float(l_out),
+            "loss_percept": (float(l_percept) if l_percept is not None
+                             else float("nan")),
             # THE NUMBER TO WATCH. loss_in divided by the error a model that
             # predicts u=0 would incur. Above 1.0 the model is worse than
             # doing nothing; below 1.0 it has learned something. A run whose
@@ -412,7 +504,8 @@ def apply_transport(
     grid = torch.linspace(0.0, strength, steps + 1, device=z.device)
     for i in range(steps):
         s = torch.full((b,), float(grid[i]), device=z.device)
-        u = model(z, s, s, prompt_embeds, pooled, mask=mask)
+        r = torch.full((b,), float(grid[i + 1]), device=z.device)
+        u = model(z, s, r, prompt_embeds, pooled, mask=mask)
         z = z + float(grid[i + 1] - grid[i]) * u * m
     return z
 

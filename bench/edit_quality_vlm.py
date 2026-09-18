@@ -371,7 +371,7 @@ def siliconflow_judge(model: str = "zai-org/GLM-5.3-Flash"):
                  "image_url": {"url": f"data:image/png;base64,{b64}"}},
                 {"type": "text", "text": prompt},
             ]}],
-            "max_tokens": 1000,
+            "max_tokens": 2000,
             # Deliberately no enable_thinking / thinking_budget at all.
             # enable_thinking=False 400s on GLM-5.3-Flash ("model always
             # thinks"); its own error message says to use
