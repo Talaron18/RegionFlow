@@ -927,6 +927,73 @@ baseline (0.541/0.769/0.664) to see whether forcing the split changes
 anything, before reading too much into `global_bias`'s learned value on
 its own.
 
+**Trained and diagnosed (step 8000). Verifying the tooling itself against
+this checkpoint surfaced a real gap first**: every `inspect --cache`
+mask-only check was written for `MaskEncoder`'s key structure before
+`GlobalLocalMaskEncoder` existed, and would have failed outright on this
+exact checkpoint (a `KeyError` inferring `latent_ch`, then a strict
+`load_state_dict` mismatch in all five checks). Fixed — `_load_mask_enc`
+and every caller now take `mask_encoder_kind`, `mask_enc_status` flags
+`global_bias` as a zero-init parameter in its own right, and `inspect`'s
+`latent_ch` inference no longer hardcodes the "single" key name.
+
+**The architectural split worked exactly as designed, structurally:**
+
+| check | `"single"` σ0=0.0 | `"global_local"` |
+|---|---|---|
+| `‖delta_z‖/‖z_src‖` | 0.726 | **0.097** |
+| inside/outside RMS ratio | 0.21 (background-dominant) | **4.10 (edit-region-dominant)** |
+| in-mask relative change under a rolled mask | — (not measured) | **1.125 — clearly mask-position-sensitive** |
+| `global_bias` moved from zero-init | n/a | yes (`abs_max` 0.0155) |
+
+The huge, diffuse background-dominant signal that made the `"single"`
+encoder's localisation ratio read 0.21 is gone — RMS outside the mask
+dropped from 0.802 to **0.059**, RMS inside actually *rose* slightly
+(0.171 → 0.243), and the local head is confirmed genuinely responsive to
+where the mask is. This is the clean separation the DC-ablation finding
+called for.
+
+**But ground-truth accuracy did not improve — a small, likely noise-level
+regression, not a win:**
+
+| treatment | `"single"` σ0=0.0 (median) | `"global_local"` (median) | relative |
+|---|---|---|---|
+| raw | 0.541 | 0.517 | −4.4% |
+| pooled | 0.769 | 0.752 | −2.2% |
+| centered | 0.664 | 0.644 | −3.0% |
+
+All three treatments land slightly below the baseline, by a margin
+comparable in size to the `σ0=0.1`-vs-`σ0=0.0` gap this document already
+called a tie given single-run noise (§ six-point sweep) — so this reads
+the same way: **not a demonstrated win, and not clearly a loss either**,
+on one training run each. The honest statement is that forcing a
+structurally cleaner mask signal did not translate into better one-step
+readout accuracy here, at least not yet and not alone.
+
+One nuance worth flagging rather than letting the raw number mislead:
+`mask_outside_structure`'s fraction went *up* (0.075 → 0.217, "single" vs
+"global_local") — the leaked outside-mask signal is now proportionally
+*more* structured, not less. But the RMS it's a fraction *of* fell by
+~13× (0.802 → 0.059), so the absolute amount of structured leakage is far
+smaller even though its share of a much smaller total rose. Removing the
+huge uniform bias didn't newly introduce structure; it stopped diluting
+whatever structure the local head already had outside the mask.
+
+**Reading on what this means:** the decomposition's value may not be a
+standalone single-step accuracy win at all — its actual purpose per
+"What the DC-ablation result requires of any multi-step redesign" above
+was to give a multi-step or merged readout a well-behaved, cleanly
+separated operating point to compose across steps, not to improve the
+existing one-step query on its own. A tie-or-slight-regression here does
+not rule that out. Before concluding anything stronger: (1) this is one
+seed each side, and the gap is within the range this document has
+already treated as noise once; (2) the real test of the decomposition's
+purpose is whether it helps *once combined* with the multi-step Euler
+pre-check (`diagnose --steps N`) — run that against this checkpoint too,
+since a well-localised, position-sensitive local signal is exactly the
+precondition multi-step composition needs and the `"single"` encoder's
+diffuse background term may have been working against.
+
 ### Held from earlier, still outstanding
 
 **The held-out mean-centering distribution was built
@@ -952,15 +1019,21 @@ figure.
    needed regardless of which mechanism below wins.
 2. The held-out mean-centering re-run above — cheap, closes the one
    remaining loose end from the ambiguity-probe line of work.
-3. The multi-step Euler pre-check (`diagnose --steps N`, §"What the
-   DC-ablation result requires" above) — decides how much of a full
-   JVP-based merge is actually necessary before paying for it.
-4. Train and diagnose the `global_local` decomposition (command above) —
-   before the MeanFlow merge, per the ordering above: decompose first,
-   then decide how each component composes across steps, rather than
-   inheriting whatever the current single-head entanglement happens to
-   do under a multi-step schedule.
-5. The MeanFlow merge itself, informed by (3) and (4), respecting the
+3. ~~Train and diagnose the `global_local` decomposition~~ — **done**: the
+   split worked structurally (localisation ratio 0.21 → 4.10, injection
+   magnitude down 7.5×, confirmed mask-position-sensitive) but ground-
+   truth accuracy came back a small, likely noise-level regression
+   (raw/pooled/centered all −2 to −4%, comparable in size to a gap this
+   document already called a tie). Not a standalone win — see the
+   "Reading on what this means" note above for why that doesn't settle
+   the decomposition's actual purpose.
+4. **The multi-step Euler pre-check, on the `global_local` checkpoint
+   specifically** (`diagnose --steps N --mask-encoder-kind global_local`)
+   — the decomposition's payoff, if there is one, is plausibly only
+   visible once combined with multi-step composition, not as a
+   standalone single-step number. Do this before the `"single"`-only
+   version of this check would have been the whole story.
+5. The MeanFlow merge itself, informed by (4), respecting the
    gate-must-stay-≡1 constraint already established.
 
 **Not in scope, don't re-run as if new:** training on `z_t = (1−t)z_0 +
