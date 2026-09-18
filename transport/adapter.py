@@ -55,6 +55,42 @@ from .conditioning import MaskEncoder, make_interval_embedding
 from .gating import GateHolder, adapter_parameters, inject_lora
 
 
+def apply_mask_conditioning(
+    z: torch.Tensor,
+    mask: torch.Tensor | None,
+    mask_enc: nn.Module | None,
+    gate: torch.Tensor,
+    dc_ablate: bool = False,
+) -> torch.Tensor:
+    """z + gate * mask_enc(mask), the "mask into the latent" step of
+    TransportAdapter.forward -- pulled out so it's testable without a
+    transformer or GPU (mask_enc alone is a small CNN; z, mask, gate are
+    plain tensors). Returns z unchanged if mask_enc or mask is None.
+
+    dc_ablate=True subtracts mask_enc's own per-channel SPATIAL MEAN
+    (averaged over every pixel, its DC offset) from delta_z before adding
+    it -- the ablation GATE_A_REOPENING_PLAN.md's mask_enc-vs-bias.npy
+    correlation finding calls for: cos(delta_z's spatial mean, the
+    dataset-wide edit-direction bias) measured at -0.579 with std 0.025
+    across 64 items on a real checkpoint -- tight enough to be a fixed
+    geometric property of the trained model, not per-item noise, but not
+    -1.0 either (partial, not pure, cancellation). This isolates whether
+    that DC offset is load-bearing (removing it should hurt downstream
+    cosine) or wasted/inert capacity (removing it should help or do
+    nothing) -- ambiguous from the correlation number alone. Preserves
+    mask_enc's spatial PATTERN (its variation across pixels, including
+    whatever in-mask/out-of-mask differentiation it has) exactly; only
+    the constant component changes.
+    """
+    if mask_enc is None or mask is None:
+        return z
+    delta_z = mask_enc(mask.float()).to(z.dtype)
+    if dc_ablate:
+        dc = delta_z.mean(dim=(2, 3), keepdim=True)
+        delta_z = delta_z - dc
+    return z + gate.reshape(-1, 1, 1, 1).to(z.dtype) * delta_z
+
+
 @contextlib.contextmanager
 def no_checkpoint_without_grad(transformer):
     """Disable gradient checkpointing for the duration of a no-grad forward.
@@ -166,6 +202,7 @@ class TransportAdapter(nn.Module):
         guidance: float = 1.0,
         negative_embeds: torch.Tensor | None = None,
         negative_pooled: torch.Tensor | None = None,
+        mask_dc_ablate: bool = False,
     ) -> torch.Tensor:
         """Return u(z, r, t, c, M) in fp32.
 
@@ -173,15 +210,16 @@ class TransportAdapter(nn.Module):
         cast down for the transformer, fp32 out. The narrow dtype stays
         confined to the forward pass. Stage 0 bug 3 is what this costs to get
         wrong -- euler-200 moved 12.36 -> 21.16 dB on this one rule.
+
+        mask_dc_ablate -- see apply_mask_conditioning's own docstring.
+        Diagnostic only, default False (unchanged behaviour).
         """
         dtype = self.model_dtype
         gate = self._gate(t, r)
 
         # --- mask into the latent (zero-init conv; nothing at step 0) -------
-        z_in = z
-        if self.mask_enc is not None and mask is not None:
-            delta_z = self.mask_enc(mask.float()).to(z.dtype)
-            z_in = z + gate.reshape(-1, 1, 1, 1).to(z.dtype) * delta_z
+        z_in = apply_mask_conditioning(z, mask, self.mask_enc, gate,
+                                       dc_ablate=mask_dc_ablate)
 
         # --- interval into pooled projections ------------------------------
         pooled_in = pooled
@@ -313,3 +351,84 @@ def freeze_and_report(adapter: TransportAdapter) -> str:
         f"trainable {train/1e6:.2f}M / {total/1e6:.1f}M "
         f"({100*train/total:.3f}%)  mode={adapter.cfg.mode}"
     )
+
+
+# --------------------------------------------------------------- self-test --
+
+def self_test() -> None:
+    """apply_mask_conditioning, CPU-only, no transformer/GPU needed -- run
+    before trusting `diagnose --ablate-mask-dc` on a live checkpoint. The
+    rest of this module (forward's transformer path, check_identity)
+    needs a loaded SD3Transformer2DModel and isn't covered here.
+    """
+    torch.manual_seed(0)
+    B, C, H, W = 2, 4, 16, 16
+    z = torch.randn(B, C, H, W)
+    mask = torch.zeros(B, 1, H, W)
+    mask[:, :, 4:12, 4:12] = 1.0
+    gate = torch.ones(B)
+
+    mask_enc = MaskEncoder(C)
+    # Give it a non-trivial (non-zero-init) output so dc_ablate has
+    # something real to remove -- at true zero-init, delta_z==0 and every
+    # variant of this test would trivially coincide.
+    mask_enc.out.weight.data = torch.randn_like(mask_enc.out.weight)
+    mask_enc.out.bias.data = torch.randn_like(mask_enc.out.bias)
+    mask_enc.eval()
+
+    # mask_enc=None or mask=None must return z UNCHANGED, dc_ablate
+    # notwithstanding -- this is what lets diagnose --ablate-mask (mask=
+    # None entirely) and --ablate-mask-dc compose without surprises.
+    assert torch.equal(apply_mask_conditioning(z, mask, None, gate), z)
+    assert torch.equal(apply_mask_conditioning(z, None, mask_enc, gate), z)
+    assert torch.equal(
+        apply_mask_conditioning(z, mask, None, gate, dc_ablate=True), z)
+
+    # dc_ablate=False must be BYTE-IDENTICAL to the original inline formula
+    # every existing checkpoint depends on.
+    with torch.no_grad():
+        delta_z = mask_enc(mask.float()).to(z.dtype)
+    expected = z + gate.reshape(-1, 1, 1, 1) * delta_z
+    got = apply_mask_conditioning(z, mask, mask_enc, gate, dc_ablate=False)
+    assert torch.allclose(got, expected)
+
+    # dc_ablate=True: the INJECTED contribution (z_in - z, dividing out
+    # gate==1 here) must have EXACTLY zero per-channel spatial mean --
+    # the whole point of the ablation.
+    ablated = apply_mask_conditioning(z, mask, mask_enc, gate, dc_ablate=True)
+    injected = ablated - z
+    spatial_mean = injected.mean(dim=(2, 3))
+    assert torch.allclose(spatial_mean, torch.zeros_like(spatial_mean), atol=1e-5), \
+        spatial_mean
+
+    # dc_ablate=True must preserve the SPATIAL PATTERN exactly -- only the
+    # constant (per-channel, per-example) component should change, so
+    # delta_z minus its own mean must be identical whether or not the
+    # ablation ran (it's a pure shift, not a rescale or a different
+    # signal).
+    with torch.no_grad():
+        delta_z_direct = mask_enc(mask.float()).to(z.dtype)
+    delta_z_centered_direct = delta_z_direct - delta_z_direct.mean(dim=(2, 3), keepdim=True)
+    assert torch.allclose(injected, delta_z_centered_direct, atol=1e-5)
+
+    # gate=0 must still return z exactly (an inert gate is inert
+    # regardless of dc_ablate) -- the "interval" mode's Delta=0 boundary
+    # guarantee depends on this.
+    gate0 = torch.zeros(B)
+    assert torch.allclose(
+        apply_mask_conditioning(z, mask, mask_enc, gate0, dc_ablate=True), z)
+    assert torch.allclose(
+        apply_mask_conditioning(z, mask, mask_enc, gate0, dc_ablate=False), z)
+
+    print("adapter self-test OK")
+
+
+if __name__ == "__main__":
+    import sys
+    # Run as `python -m transport.adapter --self-test`, not as a bare
+    # script -- this module uses relative imports (.conditioning,
+    # .gating), which only resolve inside the package.
+    if "--self-test" in sys.argv:
+        self_test()
+    else:
+        print(__doc__)

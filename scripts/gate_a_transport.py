@@ -456,7 +456,8 @@ def _load_diagnose_checkpoint(adapter, ckpt_path: str) -> dict:
     return sd
 
 
-def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False) -> dict:
+def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False,
+                         ablate_mask_dc: bool = False) -> dict:
     """Run one already-loaded checkpoint over the whole dataloader and
     return summarize_diagnostics()' summary dict. Pulled out of
     cmd_diagnose so multiple --ckpt values share one adapter/dataloader
@@ -471,6 +472,14 @@ def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False) -
     direction_position_diagnostics for pooling/scoring, unchanged --
     only what the MODEL sees is ablated, so the comparison against a
     lambda=1 run on the same items is apples-to-apples.
+
+    ablate_mask_dc=True is the DC-offset ablation
+    (transport/adapter.py::apply_mask_conditioning's mask_dc_ablate):
+    mask_enc's own per-channel spatial mean is subtracted from delta_z
+    before it's added to z, testing whether that constant component
+    (found correlated with the dataset-wide edit bias at cos=-0.579,
+    std=0.025 across 64 items) is load-bearing or wasted. Mutually
+    exclusive with ablate_mask -- caller should not set both.
     """
     import torch
 
@@ -489,7 +498,8 @@ def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False) -
             # s=0, z=z_src exactly: the one-step readout's actual query
             # point (apply_transport's first grid point, at sigma0=0).
             model_mask = None if ablate_mask else mask
-            u = adapter(z_src, s0, s0, pe, pooled, mask=model_mask)
+            u = adapter(z_src, s0, s0, pe, pooled, mask=model_mask,
+                       mask_dc_ablate=ablate_mask_dc)
             v_clean = z_tgt - z_src
             diag = direction_position_diagnostics(u.float(), v_clean, mask,
                                                   bias=bias)
@@ -525,6 +535,13 @@ def cmd_diagnose(args) -> int:
 
     import torch
 
+    if args.ablate_mask and args.ablate_mask_dc:
+        raise SystemExit("--ablate-mask and --ablate-mask-dc are mutually "
+                         "exclusive: the first removes the mask signal "
+                         "entirely (mask=None), which makes the second "
+                         "(subtract its DC offset) a no-op -- run them "
+                         "separately.")
+
     cache = TripletCache(args.cache)
     ds = torch_dataset(cache)
     dl = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
@@ -546,6 +563,11 @@ def cmd_diagnose(args) -> int:
               "(lambda=0) -- no mask conditioning reaches the transformer. "
               "Scoring still pools against the TRUE mask, so this isolates "
               "the mask path's contribution to accuracy.")
+    if args.ablate_mask_dc:
+        print("[diagnose] --ablate-mask-dc: subtracting mask_enc's own "
+              "per-channel spatial mean (its DC offset) from delta_z "
+              "before adding it to z. Compare against a normal run to see "
+              "whether that constant component is load-bearing or wasted.")
 
     adapter = build_adapter(args.model, args.device, args.rank)
     adapter.eval()
@@ -554,10 +576,12 @@ def cmd_diagnose(args) -> int:
     for ckpt_path in args.ckpt:
         sd = _load_diagnose_checkpoint(adapter, ckpt_path)
         summary = _diagnose_checkpoint(adapter, dl, args.device, bias,
-                                       ablate_mask=args.ablate_mask)
+                                       ablate_mask=args.ablate_mask,
+                                       ablate_mask_dc=args.ablate_mask_dc)
         summaries[ckpt_path] = summary
         n = summary["raw"]["n"]
-        tag = " [lambda=0, mask ablated]" if args.ablate_mask else ""
+        tag = (" [lambda=0, mask ablated]" if args.ablate_mask else
+              " [DC offset ablated]" if args.ablate_mask_dc else "")
         print(f"\n[diagnose] {ckpt_path} (step {sd.get('step', '?')}){tag} -- "
               f"model's own cos(u, v_clean) under three treatments "
               f"({n} examples):")
@@ -1869,6 +1893,14 @@ def main() -> int:
                         "isolate the mask path's contribution. Compare "
                         "against a normal (lambda=1) run on the same "
                         "checkpoint/cache.")
+    d.add_argument("--ablate-mask-dc", action="store_true",
+                   help="DC-offset ablation: subtract mask_enc's own "
+                        "per-channel spatial mean from delta_z before "
+                        "adding it to z, preserving its spatial pattern. "
+                        "Tests whether that constant component (found "
+                        "anti-correlated with the dataset-wide bias, "
+                        "cos=-0.579) is load-bearing or wasted. Mutually "
+                        "exclusive with --ablate-mask.")
     d.add_argument("--batch-size", type=int, default=8)
     d.add_argument("--num-workers", type=int, default=2)
     d.add_argument("--rank", type=int, default=16)
