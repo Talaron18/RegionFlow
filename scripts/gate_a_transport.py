@@ -798,6 +798,141 @@ def mask_injection_spatial_breakdown(adapter_sd: dict, cache_root, latent_ch: in
     return {"inside": _stats(inside_vals), "outside": _stats(outside_vals)}
 
 
+def _outside_structure_fraction(delta_z, mask) -> float | None:
+    """Fraction of delta_z's OUTSIDE-mask energy that is spatially
+    STRUCTURED (varies pixel to pixel) rather than a per-channel additive
+    constant. 0.0 = outside is a pure per-channel bias (the transformer
+    could learn to subtract it off in one step); 1.0 = outside varies as
+    much as the total signal there, i.e. genuinely competing spatial
+    content, not just a uniform offset.
+
+    sum((x-mu)^2) = sum(x^2) - n*mu^2 exactly, so this is computed in one
+    pass without a second loop over pixels.
+    """
+    m0 = mask.reshape(mask.shape[-2], mask.shape[-1])
+    outside = 1.0 - m0
+    n_out = float(outside.sum())
+    if n_out < 2:
+        return None
+    mu = (delta_z * outside).sum(dim=(1, 2)) / n_out  # (C,) per-channel mean
+    e_total = float((delta_z.pow(2) * outside).sum())
+    if e_total < 1e-12:
+        return 0.0
+    e_bias = n_out * float(mu.pow(2).sum())
+    return max(0.0, min(1.0, (e_total - e_bias) / e_total))
+
+
+def mask_outside_structure(adapter_sd: dict, cache_root, latent_ch: int,
+                           n_items: int = 64) -> dict:
+    """Is the background-dominant signal found by
+    mask_injection_spatial_breakdown a genuinely competing, spatially
+    varying component, or just a large per-channel additive bias the
+    transformer could learn to ignore in one step? No transformer, no
+    GPU -- mask_enc alone.
+    """
+    import numpy as np
+    import torch
+
+    from transport.data import TripletCache
+
+    mask_enc = _load_mask_enc(adapter_sd, latent_ch)
+    if mask_enc is None:
+        return {"n": 0}
+
+    cache = TripletCache(cache_root)
+    n = min(n_items, len(cache))
+    vals = []
+    with torch.no_grad():
+        for i in range(n):
+            rec = cache[i]
+            m = torch.from_numpy(rec["mask"]).float().unsqueeze(0)
+            delta_z = mask_enc(m)[0]
+            frac = _outside_structure_fraction(delta_z, m[0])
+            if frac is not None:
+                vals.append(frac)
+
+    arr = np.array(vals)
+    if arr.size == 0:
+        return {"n": 0}
+    return {"n": int(arr.size), "mean": float(arr.mean()),
+           "median": float(np.median(arr))}
+
+
+def _relative_change_in_region(a, b, mask) -> float | None:
+    """sqrt(energy of (a-b) inside mask / energy of a inside mask).
+    0 = identical there; ~1+ = as different as two unrelated signals of
+    similar scale. Pulled out for direct testing."""
+    m0 = mask.reshape(mask.shape[-2], mask.shape[-1])
+    n_in = float(m0.sum())
+    if n_in < 1:
+        return None
+    a_energy = float((a.pow(2) * m0).sum())
+    if a_energy < 1e-12:
+        return None
+    diff_energy = float(((a - b).pow(2) * m0).sum())
+    return (diff_energy / a_energy) ** 0.5
+
+
+def classify_mask_sensitivity(relative_change: float) -> str:
+    """Label for _relative_change_in_region's output at the TRUE mask's
+    location, comparing delta_z from the true mask vs. from the same
+    mask rolled to a different position. Deliberately conservative --
+    only the two extremes are labelled, matching the fix already applied
+    to classify_localisation rather than repeating an overclaim."""
+    if relative_change < 0.15:
+        return ("mask_enc's in-mask output is LARGELY INSENSITIVE to "
+                "where the mask actually is")
+    if relative_change > 0.6:
+        return "mask_enc's in-mask output is clearly mask-position-sensitive"
+    return "moderate sensitivity -- not clearly either way"
+
+
+def mask_sensitivity(adapter_sd: dict, cache_root, latent_ch: int,
+                     n_items: int = 64) -> dict:
+    """Does delta_z AT THE TRUE MASK'S LOCATION actually depend on where
+    the mask is, or does mask_enc produce something similar there
+    regardless -- consistent with the near-identical mask_enc weights
+    measured across six independently-trained sigma0 checkpoints (within
+    2%), which is what you'd see if the encoder learned a mask-insensitive
+    transformation the rest of the network routes around.
+
+    Compares delta_z at the true mask's pixels between the TRUE mask and
+    the SAME mask rolled by half the grid in both spatial dimensions
+    (same shape/area, different location) -- isolating position-
+    sensitivity specifically, not shape or area sensitivity. No
+    transformer, no GPU -- mask_enc alone.
+    """
+    import numpy as np
+    import torch
+
+    from transport.data import TripletCache
+
+    mask_enc = _load_mask_enc(adapter_sd, latent_ch)
+    if mask_enc is None:
+        return {"n": 0}
+
+    cache = TripletCache(cache_root)
+    n = min(n_items, len(cache))
+    vals = []
+    with torch.no_grad():
+        for i in range(n):
+            rec = cache[i]
+            m = torch.from_numpy(rec["mask"]).float().unsqueeze(0)
+            h, w = m.shape[-2:]
+            m_shift = torch.roll(m, shifts=(h // 2, w // 2), dims=(-2, -1))
+            delta_true = mask_enc(m)[0]
+            delta_shift = mask_enc(m_shift)[0]
+            rc = _relative_change_in_region(delta_true, delta_shift, m[0])
+            if rc is not None:
+                vals.append(rc)
+
+    arr = np.array(vals)
+    if arr.size == 0:
+        return {"n": 0}
+    return {"n": int(arr.size), "mean": float(arr.mean()),
+           "median": float(np.median(arr))}
+
+
 def cmd_inspect(args) -> int:
     """CPU-only checkpoint inspection: which lora_b block(s) are still at
     zero-init (if any), and did mask_enc's zero-init output layer ever
@@ -868,6 +1003,26 @@ def cmd_inspect(args) -> int:
                       f"median {outs['median']:.5f}  (n={outs['n']})")
                 print(f"  inside/outside RMS ratio: {ratio_io:.2f}  "
                       f"<-- {classify_localisation(ratio_io)}")
+
+            structure = mask_outside_structure(adapter_sd, args.cache, latent_ch,
+                                              n_items=args.cache_n)
+            if structure["n"] == 0:
+                print("  outside-mask structure fraction: could not compute")
+            else:
+                print(f"  outside-mask structure fraction (0=pure additive "
+                      f"bias, 1=fully structured): mean "
+                      f"{structure['mean']:.3f}  median "
+                      f"{structure['median']:.3f}  (n={structure['n']})")
+
+            sens = mask_sensitivity(adapter_sd, args.cache, latent_ch,
+                                    n_items=args.cache_n)
+            if sens["n"] == 0:
+                print("  mask-position sensitivity: could not compute")
+            else:
+                print(f"  in-mask relative change under a rolled mask: "
+                      f"mean {sens['mean']:.3f}  median {sens['median']:.3f}  "
+                      f"(n={sens['n']})  <-- "
+                      f"{classify_mask_sensitivity(sens['median'])}")
     return 0
 
 
@@ -1375,6 +1530,75 @@ def self_test() -> None:
     assert "weak" in classify_localisation(1.0)
     assert "background-dominant" in classify_localisation(1.0 / 3.0)  # boundary
     assert "edit-region-dominant" in classify_localisation(3.0)       # boundary
+
+    # _outside_structure_fraction: pure additive bias outside (same vector
+    # at every outside pixel) must give ~0; zero-mean alternating values
+    # (full variance, no bias component) must give exactly 1.0.
+    mask_hw2 = _torch.zeros(8, 8)
+    mask_hw2[2:6, 2:6] = 1.0
+    dz_bias = _torch.zeros(3, 8, 8)
+    dz_bias[:] = _torch.tensor([1.0, 2.0, 3.0]).reshape(3, 1, 1)  # constant everywhere
+    frac_bias = _outside_structure_fraction(dz_bias, mask_hw2)
+    assert frac_bias < 1e-6, frac_bias
+
+    dz_alt = _torch.zeros(1, 8, 8)
+    # checkerboard +1/-1 over the outside region -> per-channel mean 0,
+    # so E_bias=0 and the whole outside energy is "structured" by
+    # construction.
+    for hh in range(8):
+        for ww in range(8):
+            dz_alt[0, hh, ww] = 1.0 if (hh + ww) % 2 == 0 else -1.0
+    frac_alt = _outside_structure_fraction(dz_alt, mask_hw2)
+    assert abs(frac_alt - 1.0) < 1e-6, frac_alt
+
+    # _relative_change_in_region / classify_mask_sensitivity: identical
+    # tensors in the region -> relative change exactly 0 (insensitive);
+    # very different tensors -> a large relative change (sensitive).
+    region_mask = _torch.zeros(8, 8)
+    region_mask[2:6, 2:6] = 1.0
+    a_same = _torch.randn(3, 8, 8)
+    rc_same = _relative_change_in_region(a_same, a_same.clone(), region_mask)
+    assert abs(rc_same) < 1e-6, rc_same
+    assert "INSENSITIVE" in classify_mask_sensitivity(rc_same)
+
+    b_diff = a_same + 5.0 * _torch.randn(3, 8, 8)
+    rc_diff = _relative_change_in_region(a_same, b_diff, region_mask)
+    assert rc_diff > 0.6, rc_diff
+    assert "sensitive" in classify_mask_sensitivity(rc_diff)
+
+    with tempfile.TemporaryDirectory() as td2:
+        writer2 = TripletCacheWriter(td2, CacheConfig(context_length=1), "self-test-2")
+        rng_np2 = np.random.default_rng(1)
+        for i in range(3):
+            z_src = rng_np2.normal(size=(latent_ch, 16, 16)).astype(np.float32)
+            z_tgt = z_src + rng_np2.normal(scale=0.5, size=(latent_ch, 16, 16)).astype(np.float32)
+            mask = np.zeros((1, 16, 16), dtype=np.float32)
+            mask[:, 3:7, 3:7] = 1.0
+            writer2.add(f"item{i}", z_src, z_tgt, mask, "test instruction")
+        cache_root2 = writer2.close()
+
+        # both new checks must run end-to-end without raising on a
+        # zero-init mask_enc. mask_outside_structure's zero-energy branch
+        # returns 0.0 (not None) for every item, so n==3; mask_sensitivity
+        # divides by a_energy (always 0 for a zero-init encoder) and so
+        # skips every item, correctly returning {"n": 0} rather than a
+        # divide-by-zero.
+        structure_zero = mask_outside_structure(zero_sd, cache_root2, latent_ch)
+        assert structure_zero["n"] == 3, structure_zero
+        assert structure_zero["mean"] == 0.0, structure_zero
+        sens_zero = mask_sensitivity(zero_sd, cache_root2, latent_ch)
+        assert sens_zero == {"n": 0}, sens_zero
+
+        # a trained-looking mask_enc must produce usable (n=3) stats for
+        # both, without raising.
+        structure_trained = mask_outside_structure(trained_sd, cache_root2, latent_ch)
+        assert structure_trained["n"] == 3, structure_trained
+        sens_trained = mask_sensitivity(trained_sd, cache_root2, latent_ch)
+        assert sens_trained["n"] == 3, sens_trained
+
+        # no mask_enc keys -> {"n": 0} for both, not a crash.
+        assert mask_outside_structure({}, cache_root2, latent_ch) == {"n": 0}
+        assert mask_sensitivity({}, cache_root2, latent_ch) == {"n": 0}
 
     print("gate_a_transport self-test OK")
 
