@@ -456,11 +456,22 @@ def _load_diagnose_checkpoint(adapter, ckpt_path: str) -> dict:
     return sd
 
 
-def _diagnose_checkpoint(adapter, dl, device, bias) -> dict:
+def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False) -> dict:
     """Run one already-loaded checkpoint over the whole dataloader and
     return summarize_diagnostics()' summary dict. Pulled out of
     cmd_diagnose so multiple --ckpt values share one adapter/dataloader
-    without repeating the accumulation loop."""
+    without repeating the accumulation loop.
+
+    ablate_mask=True is the lambda=0 check: the adapter's forward is
+    called with mask=None, so transport/adapter.py::TransportAdapter's
+    `if self.mask_enc is not None and mask is not None` branch never
+    fires and z_in = z exactly -- no mask conditioning reaches the
+    transformer at all, isolating the mask path's actual contribution to
+    prediction accuracy. The TRUE mask is still passed to
+    direction_position_diagnostics for pooling/scoring, unchanged --
+    only what the MODEL sees is ablated, so the comparison against a
+    lambda=1 run on the same items is apples-to-apples.
+    """
     import torch
 
     from transport.pairflow import direction_position_diagnostics
@@ -477,7 +488,8 @@ def _diagnose_checkpoint(adapter, dl, device, bias) -> dict:
             s0 = torch.zeros(b, device=device)
             # s=0, z=z_src exactly: the one-step readout's actual query
             # point (apply_transport's first grid point, at sigma0=0).
-            u = adapter(z_src, s0, s0, pe, pooled, mask=mask)
+            model_mask = None if ablate_mask else mask
+            u = adapter(z_src, s0, s0, pe, pooled, mask=model_mask)
             v_clean = z_tgt - z_src
             diag = direction_position_diagnostics(u.float(), v_clean, mask,
                                                   bias=bias)
@@ -529,16 +541,24 @@ def cmd_diagnose(args) -> int:
               "treatment (generate one with: python scripts/"
               "ambiguity_probe.py --cache ... --save-bias PATH)")
 
+    if args.ablate_mask:
+        print("[diagnose] --ablate-mask: calling the adapter with mask=None "
+              "(lambda=0) -- no mask conditioning reaches the transformer. "
+              "Scoring still pools against the TRUE mask, so this isolates "
+              "the mask path's contribution to accuracy.")
+
     adapter = build_adapter(args.model, args.device, args.rank)
     adapter.eval()
 
     summaries = {}
     for ckpt_path in args.ckpt:
         sd = _load_diagnose_checkpoint(adapter, ckpt_path)
-        summary = _diagnose_checkpoint(adapter, dl, args.device, bias)
+        summary = _diagnose_checkpoint(adapter, dl, args.device, bias,
+                                       ablate_mask=args.ablate_mask)
         summaries[ckpt_path] = summary
         n = summary["raw"]["n"]
-        print(f"\n[diagnose] {ckpt_path} (step {sd.get('step', '?')}) -- "
+        tag = " [lambda=0, mask ablated]" if args.ablate_mask else ""
+        print(f"\n[diagnose] {ckpt_path} (step {sd.get('step', '?')}){tag} -- "
               f"model's own cos(u, v_clean) under three treatments "
               f"({n} examples):")
         print_diagnostics_summary(summary)
@@ -609,6 +629,25 @@ def mask_enc_status(adapter_sd: dict) -> dict:
     return out
 
 
+def _load_mask_enc(adapter_sd: dict, latent_ch: int):
+    """Build a standalone MaskEncoder (transport/conditioning.py) from
+    just the mask_enc.* keys of a checkpoint's adapter state dict -- no
+    transformer, no GPU, since MaskEncoder is a small CNN independent of
+    the frozen SD3 backbone. Returns None if the checkpoint has no
+    mask_enc keys (use_mask=False)."""
+    from transport.conditioning import MaskEncoder
+
+    prefix = "mask_enc."
+    mask_sd = {k[len(prefix):]: v for k, v in adapter_sd.items()
+              if k.startswith(prefix)}
+    if not mask_sd:
+        return None
+    mask_enc = MaskEncoder(latent_ch)
+    mask_enc.load_state_dict(mask_sd)
+    mask_enc.eval()
+    return mask_enc
+
+
 def compute_mask_injection_ratio(adapter_sd: dict, cache_root, latent_ch: int,
                                  n_items: int = 64) -> dict:
     """||delta_z|| / ||z_src|| over cached examples, using ONLY mask_enc's
@@ -625,21 +664,24 @@ def compute_mask_injection_ratio(adapter_sd: dict, cache_root, latent_ch: int,
     "architectural readout limit": conditioning present but too weak to
     matter, fixable by e.g. reweighting or removing a bottleneck rather
     than a training-objective change.
+
+    CAVEAT (found comparing this ratio across a sigma0 sweep): sigma0>0
+    checkpoints see a NOISED effective source z_src' = z_src + sigma0*eps*
+    mask at training time (transport/pairflow.py::sample_path), which has
+    a LARGER norm inside the mask than z_src itself -- so this ratio's
+    denominator is confounded by sigma0 and it should only be compared
+    WITHIN a matched sigma0, never across a sweep. This function always
+    uses the cache's un-noised z_src as the denominator (matching a
+    sigma0=0 query point); it is not sigma0-corrected.
     """
     import numpy as np
     import torch
 
-    from transport.conditioning import MaskEncoder
     from transport.data import TripletCache
 
-    mask_enc = MaskEncoder(latent_ch)
-    prefix = "mask_enc."
-    mask_sd = {k[len(prefix):]: v for k, v in adapter_sd.items()
-              if k.startswith(prefix)}
-    if not mask_sd:
+    mask_enc = _load_mask_enc(adapter_sd, latent_ch)
+    if mask_enc is None:
         return {"n": 0}
-    mask_enc.load_state_dict(mask_sd)
-    mask_enc.eval()
 
     cache = TripletCache(cache_root)
     n = min(n_items, len(cache))
@@ -662,6 +704,78 @@ def compute_mask_injection_ratio(adapter_sd: dict, cache_root, latent_ch: int,
            "median": float(np.median(arr)),
            "p10": float(np.percentile(arr, 10)),
            "p90": float(np.percentile(arr, 90))}
+
+
+def _inside_outside_rms(delta_z, mask) -> tuple[float | None, float | None]:
+    """RMS-per-pixel-per-channel of delta_z (C,H,W) inside vs outside a
+    binary mask ((H,W) or (1,H,W)). Pulled out of
+    mask_injection_spatial_breakdown so the arithmetic is directly
+    testable against synthetic tensors, independent of any trained
+    network's actual behaviour.
+
+    Per-pixel RMS (not raw summed energy) so the comparison isn't
+    trivially biased by the mask covering a different fraction of the
+    grid than the background does.
+    """
+    m0 = mask.reshape(mask.shape[-2], mask.shape[-1])
+    c = delta_z.shape[0]
+    n_in = float(m0.sum())
+    n_out = float((1 - m0).sum())
+    inside = (float((delta_z.pow(2) * m0).sum() / (n_in * c)) ** 0.5
+             if n_in > 0 else None)
+    outside = (float((delta_z.pow(2) * (1 - m0)).sum() / (n_out * c)) ** 0.5
+              if n_out > 0 else None)
+    return inside, outside
+
+
+def mask_injection_spatial_breakdown(adapter_sd: dict, cache_root, latent_ch: int,
+                                     n_items: int = 64) -> dict:
+    """WHERE-axis question about mask_enc's own output: is delta_z spatially
+    localised to the mask region (as intended -- editing should leave the
+    background alone), or does it leak signal outside it? No transformer,
+    no GPU -- mask_enc alone, same as compute_mask_injection_ratio.
+
+    Nothing in TransportAdapter.forward masks delta_z itself before adding
+    it to z (`z_in = z + gate * delta_z`, unmasked) -- mask_enc is fully
+    convolutional and conditioned on the mask, so localisation is
+    something it has to LEARN via the pairflow loss's outside_weight term
+    (which penalises any predicted movement outside the mask), not
+    something the architecture enforces. A high inside/outside RMS ratio
+    means it learned to localise; a ratio near 1 means it's injecting a
+    roughly uniform signal everywhere, which the outside-mask loss term
+    should have suppressed if it were working as intended.
+    """
+    import numpy as np
+    import torch
+
+    from transport.data import TripletCache
+
+    mask_enc = _load_mask_enc(adapter_sd, latent_ch)
+    if mask_enc is None:
+        return {"n": 0}
+
+    cache = TripletCache(cache_root)
+    n = min(n_items, len(cache))
+    inside_vals, outside_vals = [], []
+    with torch.no_grad():
+        for i in range(n):
+            rec = cache[i]
+            m = torch.from_numpy(rec["mask"]).float().unsqueeze(0)
+            delta_z = mask_enc(m)[0]
+            inside, outside = _inside_outside_rms(delta_z, m[0])
+            if inside is not None:
+                inside_vals.append(inside)
+            if outside is not None:
+                outside_vals.append(outside)
+
+    def _stats(vals: list[float]) -> dict:
+        arr = np.array(vals)
+        if arr.size == 0:
+            return {"n": 0}
+        return {"n": int(arr.size), "mean": float(arr.mean()),
+               "median": float(np.median(arr))}
+
+    return {"inside": _stats(inside_vals), "outside": _stats(outside_vals)}
 
 
 def cmd_inspect(args) -> int:
@@ -720,6 +834,22 @@ def cmd_inspect(args) -> int:
                       f"items): mean {ratio['mean']:.4f}  "
                       f"median {ratio['median']:.4f}  "
                       f"p10 {ratio['p10']:.4f}  p90 {ratio['p90']:.4f}")
+
+            spatial = mask_injection_spatial_breakdown(adapter_sd, args.cache,
+                                                       latent_ch, n_items=args.cache_n)
+            ins, outs = spatial.get("inside", {}), spatial.get("outside", {})
+            if ins.get("n", 0) == 0 or outs.get("n", 0) == 0:
+                print("  delta_z inside/outside mask RMS: could not compute")
+            else:
+                ratio_io = (ins["mean"] / outs["mean"]) if outs["mean"] > 1e-12 else float("inf")
+                print(f"  delta_z RMS inside mask:  mean {ins['mean']:.5f}  "
+                      f"median {ins['median']:.5f}  (n={ins['n']})")
+                print(f"  delta_z RMS outside mask: mean {outs['mean']:.5f}  "
+                      f"median {outs['median']:.5f}  (n={outs['n']})")
+                print(f"  inside/outside RMS ratio: {ratio_io:.2f}"
+                     + ("  <-- well localised" if ratio_io > 3 else
+                        "  <-- weak/no spatial localisation" if ratio_io < 1.5
+                        else ""))
     return 0
 
 
@@ -1190,6 +1320,33 @@ def self_test() -> None:
         # no mask_enc keys at all -> {"n": 0}, not a crash.
         assert compute_mask_injection_ratio({}, cache_root, latent_ch) == {"n": 0}
 
+        # _inside_outside_rms: the pure arithmetic, tested directly against
+        # synthetic delta_z tensors so it doesn't depend on a trained
+        # network's actual localisation behaviour.
+        mask_hw = _torch.zeros(8, 8)
+        mask_hw[2:6, 2:6] = 1.0
+        # perfectly localised: magnitude 2 inside, exactly 0 outside.
+        dz_localised = _torch.zeros(3, 8, 8)
+        dz_localised[:, 2:6, 2:6] = 2.0
+        ins, outs = _inside_outside_rms(dz_localised, mask_hw)
+        assert abs(ins - 2.0) < 1e-6, ins
+        assert abs(outs - 0.0) < 1e-6, outs
+        # not localised at all: uniform magnitude 1 everywhere.
+        dz_uniform = _torch.ones(3, 8, 8)
+        ins_u, outs_u = _inside_outside_rms(dz_uniform, mask_hw)
+        assert abs(ins_u - 1.0) < 1e-6, ins_u
+        assert abs(outs_u - 1.0) < 1e-6, outs_u
+
+        # mask_injection_spatial_breakdown: zero-init mask_enc must give
+        # exactly 0 both inside and outside (delta_z is identically zero);
+        # no mask_enc keys must give {"n": 0} on both sides, not raise.
+        spatial_zero = mask_injection_spatial_breakdown(zero_sd, cache_root, latent_ch)
+        assert spatial_zero["inside"]["n"] == 3, spatial_zero
+        assert spatial_zero["inside"]["mean"] == 0.0, spatial_zero
+        assert spatial_zero["outside"]["mean"] == 0.0, spatial_zero
+        spatial_empty = mask_injection_spatial_breakdown({}, cache_root, latent_ch)
+        assert spatial_empty == {"n": 0}
+
     print("gate_a_transport self-test OK")
 
 
@@ -1337,6 +1494,13 @@ def main() -> int:
                    help="per-channel bias vector (.npy) from "
                         "ambiguity_probe.py --save-bias, for the centered "
                         "treatment; omit to report raw+pooled only")
+    d.add_argument("--ablate-mask", action="store_true",
+                   help="lambda=0 check: call the adapter with mask=None "
+                        "(no mask conditioning reaches the transformer) "
+                        "while still scoring against the true mask, to "
+                        "isolate the mask path's contribution. Compare "
+                        "against a normal (lambda=1) run on the same "
+                        "checkpoint/cache.")
     d.add_argument("--batch-size", type=int, default=8)
     d.add_argument("--num-workers", type=int, default=2)
     d.add_argument("--rank", type=int, default=16)
