@@ -457,7 +457,7 @@ def _load_diagnose_checkpoint(adapter, ckpt_path: str) -> dict:
 
 
 def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False,
-                         ablate_mask_dc: bool = False) -> dict:
+                         ablate_mask_dc: bool = False, steps: int = 1) -> dict:
     """Run one already-loaded checkpoint over the whole dataloader and
     return summarize_diagnostics()' summary dict. Pulled out of
     cmd_diagnose so multiple --ckpt values share one adapter/dataloader
@@ -480,10 +480,22 @@ def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False,
     (found correlated with the dataset-wide edit bias at cos=-0.579,
     std=0.025 across 64 items) is load-bearing or wasted. Mutually
     exclusive with ablate_mask -- caller should not set both.
+
+    steps > 1 is the cheap pre-check for the Gate A/B merge decision
+    (GATE_A_REOPENING_PLAN.md): does naive multi-step Euler integration
+    (transport/pairflow.py::apply_transport, already-existing machinery,
+    no training change) recover any of the positional deficit, before
+    paying for a full MeanFlow JVP-based readout? Uses the TOTAL
+    displacement z_edit - z_src over `steps` sub-steps in place of the
+    single-step u, unpinned (pin_background=False) so it stays comparable
+    to the existing steps=1 numbers, which also score the model's raw,
+    unconstrained output rather than a masked one. Mutually exclusive
+    with ablate_mask/ablate_mask_dc (this checks the normal, lambda=1,
+    DC-intact path at various step counts, not a combination of ablations).
     """
     import torch
 
-    from transport.pairflow import direction_position_diagnostics
+    from transport.pairflow import apply_transport, direction_position_diagnostics
 
     raws, pooleds, centereds = [], [], []
     with torch.no_grad():
@@ -494,14 +506,22 @@ def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False,
             pe = batch["prompt_embeds"].to(device)
             pooled = batch["pooled"].to(device)
             b = z_src.shape[0]
-            s0 = torch.zeros(b, device=device)
-            # s=0, z=z_src exactly: the one-step readout's actual query
-            # point (apply_transport's first grid point, at sigma0=0).
-            model_mask = None if ablate_mask else mask
-            u = adapter(z_src, s0, s0, pe, pooled, mask=model_mask,
-                       mask_dc_ablate=ablate_mask_dc)
+
+            if steps > 1:
+                z_edit = apply_transport(adapter, z_src, mask, pe, pooled,
+                                         strength=1.0, steps=steps,
+                                         pin_background=False)
+                u_eff = z_edit - z_src
+            else:
+                s0 = torch.zeros(b, device=device)
+                # s=0, z=z_src exactly: the one-step readout's actual query
+                # point (apply_transport's first grid point, at sigma0=0).
+                model_mask = None if ablate_mask else mask
+                u_eff = adapter(z_src, s0, s0, pe, pooled, mask=model_mask,
+                               mask_dc_ablate=ablate_mask_dc)
+
             v_clean = z_tgt - z_src
-            diag = direction_position_diagnostics(u.float(), v_clean, mask,
+            diag = direction_position_diagnostics(u_eff.float(), v_clean, mask,
                                                   bias=bias)
             raws.append(diag["raw"].cpu().numpy())
             pooleds.append(diag["pooled"].cpu().numpy())
@@ -541,6 +561,12 @@ def cmd_diagnose(args) -> int:
                          "entirely (mask=None), which makes the second "
                          "(subtract its DC offset) a no-op -- run them "
                          "separately.")
+    if args.steps > 1 and (args.ablate_mask or args.ablate_mask_dc):
+        raise SystemExit("--steps > 1 is a separate check (does naive "
+                         "multi-step Euler integration on the normal, "
+                         "lambda=1, DC-intact path help?) and doesn't "
+                         "compose with --ablate-mask/--ablate-mask-dc -- "
+                         "run them separately.")
 
     cache = TripletCache(args.cache)
     ds = torch_dataset(cache)
@@ -568,6 +594,13 @@ def cmd_diagnose(args) -> int:
               "per-channel spatial mean (its DC offset) from delta_z "
               "before adding it to z. Compare against a normal run to see "
               "whether that constant component is load-bearing or wasted.")
+    if args.steps > 1:
+        print(f"[diagnose] --steps {args.steps}: naive multi-step Euler "
+              "integration (apply_transport, unpinned) in place of the "
+              "single s=0 query. Compare against the steps=1 numbers to "
+              "see whether iterative refinement recovers any of the "
+              "positional deficit before committing to a full MeanFlow "
+              "JVP-based readout (GATE_A_REOPENING_PLAN.md).")
 
     adapter = build_adapter(args.model, args.device, args.rank)
     adapter.eval()
@@ -577,11 +610,13 @@ def cmd_diagnose(args) -> int:
         sd = _load_diagnose_checkpoint(adapter, ckpt_path)
         summary = _diagnose_checkpoint(adapter, dl, args.device, bias,
                                        ablate_mask=args.ablate_mask,
-                                       ablate_mask_dc=args.ablate_mask_dc)
+                                       ablate_mask_dc=args.ablate_mask_dc,
+                                       steps=args.steps)
         summaries[ckpt_path] = summary
         n = summary["raw"]["n"]
         tag = (" [lambda=0, mask ablated]" if args.ablate_mask else
-              " [DC offset ablated]" if args.ablate_mask_dc else "")
+              " [DC offset ablated]" if args.ablate_mask_dc else
+              f" [{args.steps}-step Euler]" if args.steps > 1 else "")
         print(f"\n[diagnose] {ckpt_path} (step {sd.get('step', '?')}){tag} -- "
               f"model's own cos(u, v_clean) under three treatments "
               f"({n} examples):")
@@ -1901,6 +1936,14 @@ def main() -> int:
                         "anti-correlated with the dataset-wide bias, "
                         "cos=-0.579) is load-bearing or wasted. Mutually "
                         "exclusive with --ablate-mask.")
+    d.add_argument("--steps", type=int, default=1,
+                   help="naive multi-step Euler integration "
+                        "(transport.pairflow.apply_transport, unpinned) in "
+                        "place of the single s=0 query -- the cheap "
+                        "pre-check for whether iterative refinement alone "
+                        "recovers any of the positional deficit, before a "
+                        "full MeanFlow JVP-based readout. Mutually "
+                        "exclusive with --ablate-mask/--ablate-mask-dc.")
     d.add_argument("--batch-size", type=int, default=8)
     d.add_argument("--num-workers", type=int, default=2)
     d.add_argument("--rank", type=int, default=16)
