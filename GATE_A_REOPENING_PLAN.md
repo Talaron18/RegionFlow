@@ -598,33 +598,112 @@ existing liveness *count* couldn't:
   architectural readout limit": conditioning present but too faint to
   matter, and cheaper to fix than either if true.
 
-`scripts/gate_a_transport.py inspect --ckpt <...> --cache <cache>` now
-also reports `‖delta_z‖ / ‖z_src‖` via `mask_enc` alone (still no
-transformer, still no GPU — `MaskEncoder` is a small standalone CNN) to
-settle this directly. **Run this before deciding between a conditioning
-fix and a readout-architecture change:**
+`scripts/gate_a_transport.py inspect --ckpt <...> --cache <cache>` reports
+`‖delta_z‖ / ‖z_src‖` via `mask_enc` alone (no transformer, no GPU). Run
+against the full six-point σ0 sweep (0.0, 0.1, 0.3, 0.5, 0.7, 1.0), all at
+step 8000–8100:
+
+**Result: injection magnitude is not a quality lever, and the ratio
+itself turned out confounded.** σ0=0.1 has the *largest* `‖delta_z‖/‖z‖`
+and sits with the best-scoring group; σ0=0.7 and 1.0 have the *smallest*
+and are the worst on `cos_clean`. No monotonic or even directionally
+consistent relationship between injection magnitude and quality. Digging
+into why: `mask_enc`'s weights are identical to within 2% across all six
+checkpoints (`body` isn't changing), so the *encoder* isn't what's moving
+— the ratio itself is what varies, and predictably by σ0: flat-to-high at
+σ0 ≤ 0.3 (0.74–0.87), dropping sharply from σ0=0.5 (0.53 → 0.42 → 0.41).
+The likely cause: a σ0>0 checkpoint's effective source
+`z_src' = z_src + σ0·ε·mask` (`transport/pairflow.py::sample_path`) has a
+**larger norm inside the mask than the cache's un-noised `z_src`**, which
+is the denominator this function actually uses — so the ratio is
+confounded by σ0 and should never be compared across a sweep, only within
+a matched σ0. **This retires `‖delta_z‖/‖z_src‖` as a cross-arm
+diagnostic**; `compute_mask_injection_ratio`'s docstring now documents
+this caveat. The λ-sweep premise built on top of it is dead — kept only
+as a `λ=0` "what does the mask buy at all" measurement (below), not as a
+graded lever.
+
+**The real result from this run is the completed six-point `cos_clean`
+sweep, cleaner than any single-column argument:**
+
+| σ0 | raw | pooled | centered |
+|---|---|---|---|
+| 0.0 | 0.541 | 0.769 | 0.664 |
+| **0.1** | **0.546** | **0.775** | **0.681** |
+| 0.3 | 0.539 | 0.713 | 0.587 |
+| 0.5 | 0.321 | 0.362 | 0.137 |
+| 0.7 | 0.262 | 0.256 | 0.020 |
+| 1.0 | 0.261 | 0.258 | 0.031 |
+
+- **σ0=0.1 edges out σ0=0.0 on all three treatments**, including centered
+  (0.681 vs. 0.664) — the opposite of a clean monotone-decreasing
+  ordering. This is a 2.6% relative difference on a metric with no
+  measured seed-to-seed spread for Gate A (one run per σ0), so it's called
+  a **tie**, not a win for either side — claiming a direction here would
+  repeat the same overclaiming this document has already had to walk back
+  twice. The closure statement is NOT "zero is best": it's that no σ0 in
+  the range beats the deterministic baseline by more than noise, and σ0=0.1
+  is at worst indistinguishable from σ0=0.0.
+- **The cliff between σ0=0.3 and σ0=0.5, and the floor past it, are
+  unambiguous.** `centered` goes 0.587 → 0.137 → 0.020 → 0.031: by σ0 ≥ 0.7
+  the model retains essentially nothing instruction-specific once the
+  shared bias is removed — 0.020 and 0.031 are indistinguishable from
+  zero. Whatever those checkpoints still score on `raw` (~0.26) is the
+  dataset-wide constant, not a genuine edit. This is the ε-fitting
+  endpoint stated as starkly as it can be.
+- **σ0=0.7 and 1.0 are identical to within noise** on every treatment
+  (0.262/0.261, 0.256/0.258, 0.020/0.031) — the damage saturates; past
+  σ0≈0.7 there's nothing left to destroy.
+- **`pooled − raw` flips sign at the cliff, and is a cleaner cliff
+  indicator than any single column.** At σ0 ≤ 0.3, pooled > raw
+  (e.g. 0.775 > 0.546) — removing the positional burden helps, the
+  positional-deficit finding above. At σ0 ≥ 0.5, pooled < raw
+  (0.256 < 0.262): those checkpoints have no per-channel direction left to
+  recover, so pooling away spatial structure removes signal instead of
+  noise.
+
+**Closure statement, final form:** σ0 ≤ 0.1 is free (a tie with the
+deterministic baseline, not a win), σ0 ≥ 0.5 destroys the
+instruction-specific component entirely, and nothing anywhere in the
+range beats σ0=0 by more than noise. This table is the evidence — more
+convincing than any single-number argument, and it documents exactly
+where the cliff sits for anyone revisiting this.
+
+**Still outstanding, both cheap, now built:**
+
+- **In-mask vs. out-of-mask split of `delta_z`** — the WHERE-axis question
+  about `mask_enc`'s own output, and the one check in this line that could
+  still surprise. Nothing in `TransportAdapter.forward` masks `delta_z`
+  before adding it to `z` — localisation to the mask region has to be
+  *learned* via the pairflow loss's `outside_weight` term, not something
+  the architecture enforces. `mask_injection_spatial_breakdown()` /
+  `inspect --cache` reports RMS-per-pixel of `delta_z` inside vs. outside
+  the mask (still `mask_enc` alone, no transformer, no GPU).
+- **λ=0 on σ0=0.0** — the mask path's actual contribution to prediction
+  accuracy, isolated. `diagnose --ablate-mask` calls the adapter with
+  `mask=None` (no conditioning reaches the transformer at all) while still
+  scoring against the true mask, so it's directly comparable to the
+  σ0=0.0 row in the table above.
 
 ```
 python scripts/gate_a_transport.py inspect \
-    --ckpt runs/gate_a_direction_a/ckpt_final.pt \
-           runs/gate_a_direction_a_0.5/ckpt_final.pt \
-           runs/gate_a_sigma_0.0/ckpt_latest.pt \
-    --cache /data/cache/13061d51aee4
+    --ckpt runs/gate_a_sigma_0.0/ckpt_latest.pt --cache /data/cache/13061d51aee4
+python scripts/gate_a_transport.py diagnose --ablate-mask \
+    --ckpt runs/gate_a_sigma_0.0/ckpt_latest.pt --cache /data/cache/13061d51aee4 \
+    --bias-npy runs/bias.npy
 ```
 
-**Ordered next steps:**
+**Ordered next steps, since the GPU is back:**
 
-1. The `‖delta_z‖ / ‖z_src‖` check above, all three checkpoints. Minutes,
-   CPU-only, decides whether mask injection *strength* is the issue
-   before committing to an architecture change.
-2. If it's healthy (delta_z not vanishingly small relative to z), merge
-   Direction A's machinery with Gate B's multi-step readout — the
-   one-step-at-s=0 readout is then the remaining explanation for the
-   positional half, and multi-step is the thesis's own formulation, not a
-   new idea.
+1. The two checks above. Minutes each.
+2. If the mask path is healthy and non-trivial (localised, and λ=0
+   measurably hurts), merge Direction A's machinery with Gate B's
+   multi-step readout — the one-step-at-s=0 readout is then the remaining
+   explanation for the positional half, and multi-step is the thesis's own
+   formulation, not a new idea.
 3. The Gate C scoreboard wrapper (`bench/gate_a_model.py`), regardless of
    which of the above wins — neither path can be judged on the 3-case
-   Stage-0-comparable sweep alone.
+   Stage-0-comparable sweep alone. This is now the real work queue.
 
 ### What to keep, what to drop
 
