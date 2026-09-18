@@ -798,6 +798,23 @@ def classify_localisation(ratio_io: float) -> str:
     wrong, since 0.2 is just as differentiated as 5.0, only in the other
     direction; caught when a real checkpoint measured 0.21 and the label
     didn't match the number.
+
+    DO NOT OPTIMISE FOR A HIGHER RATIO. This describes the state of a
+    checkpoint; it is not a target for any future run to improve. The
+    inside/outside RMS ratio is dominated by mask_enc's DC (spatial mean)
+    component, which the dc_ablate experiment
+    (transport/adapter.py::apply_mask_conditioning, GATE_A_REOPENING_PLAN.md)
+    found is LOAD-BEARING -- removing it dropped pooled cosine from 0.769
+    to 0.211, a worse outcome than removing the mask path entirely
+    (0.681). The most direct way to raise this ratio is to suppress that
+    same DC component, which the ablation already showed is destructive.
+    If a future run's loss or metric targets this ratio, it can learn to
+    look better here while getting substantially worse at everything
+    else. mask_outside_structure()'s STRUCTURED fraction (the part of the
+    outside-mask signal that varies pixel to pixel, not the constant
+    component) is the quantity to track and improve instead -- it isolates
+    genuine spatial leakage from the operating-point offset this ratio
+    conflates it with.
     """
     if ratio_io >= 3.0:
         return "edit-region-dominant localisation"
@@ -1127,6 +1144,10 @@ def cmd_inspect(args) -> int:
                       f"median {outs['median']:.5f}  (n={outs['n']})")
                 print(f"  inside/outside RMS ratio: {ratio_io:.2f}  "
                       f"<-- {classify_localisation(ratio_io)}")
+                print("    NOT AN OPTIMISATION TARGET -- dominated by "
+                      "mask_enc's load-bearing DC component (ablating it "
+                      "dropped pooled cosine 0.769->0.211); see "
+                      "'outside-mask structure fraction' below instead.")
 
             structure = mask_outside_structure(adapter_sd, args.cache, latent_ch,
                                               n_items=args.cache_n)
@@ -1134,7 +1155,8 @@ def cmd_inspect(args) -> int:
                 print("  outside-mask structure fraction: could not compute")
             else:
                 print(f"  outside-mask structure fraction (0=pure additive "
-                      f"bias, 1=fully structured): mean "
+                      f"bias, 1=fully structured -- THIS is the metric to "
+                      f"track/improve, not the RMS ratio above): mean "
                       f"{structure['mean']:.3f}  median "
                       f"{structure['median']:.3f}  (n={structure['n']})")
 

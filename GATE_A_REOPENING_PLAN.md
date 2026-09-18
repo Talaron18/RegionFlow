@@ -883,14 +883,25 @@ above.
 
 ---
 
-## 8. Direction A, concrete design — σ(0) > 0, decided
+## 8. Direction A, concrete design — σ(0) > 0 — HISTORICAL, CLOSED
+
+**This section describes what was built and why, as design rationale.
+It is not a live instruction — do not train or sweep anything from it.**
+Direction A ran to completion (the six-point σ0 sweep at §"The complete
+six-point sweep, all at step 8000–8100" below), was diagnosed down to a
+mechanism, and closed (§"Verdict: Direction A closed" below) on five,
+later six, independent lines of evidence. The "what's left" list at the
+end of this section is kept for the historical record of what was
+planned at the time; every item on it has since either happened (and is
+recorded, with its actual result, later in this document) or been
+superseded by the closure. Read forward from §"Verdict" for the current
+state.
 
 Implemented, not just scoped: `transport/pairflow.py`'s `sample_path` /
 `pairflow_loss` / `apply_transport` and `scripts/gate_a_transport.py`'s
-`train`/`eval` CLIs now carry a `sigma0` parameter end to end. Self-tested
+`train`/`eval` CLIs carried a `sigma0` parameter end to end. Self-tested
 (`python transport/pairflow.py --self-test`, CPU-only, no model weights)
-and both CLIs' `--help` confirmed. Nothing here has been trained yet —
-that's the GPU step, still to run.
+and both CLIs' `--help` confirmed before any training run.
 
 ### The substitution
 
@@ -925,12 +936,15 @@ now takes `mask` (it didn't before — added, since the noise has to be
 gated by something). `pairflow_loss` passes the same `mask` it already
 had. `--sigma0` is a new flag on `gate_a_transport.py train`.
 
-Not yet decided, because it needs real data, not code: **the value of
-`σ0` itself.** Start small and sweep — the ambiguity probe's own effect
-size (median gap 0.056, moderate-not-large) argues against reaching for a
-large value first. No self-test can validate a hyperparameter; this is a
-GPU decision, guided by `move_ratio`/`cos`/`rel_in` (already instrumented
-in `pairflow_loss`'s stats dict) at each candidate `σ0`.
+The value of `σ0` was, at the time this was written, not yet decided —
+correctly so: no self-test can validate a hyperparameter, and it needed
+real data, guided by `move_ratio`/`cos`/`rel_in` (already instrumented in
+`pairflow_loss`'s stats dict) at each candidate. **It has since been
+swept exhaustively** (0.0, 0.1, 0.3, 0.5, 0.7, 1.0 — see "The complete
+six-point sweep" below): no value beat `σ0=0.0` by more than noise, and
+`σ0 ≥ 0.5` destroyed the model's instruction-specific signal outright.
+This subsection is kept as a record of the reasoning that was correct
+going in (start small, don't guess large), not as an open question.
 
 ### Inference (`apply_transport`)
 
@@ -962,26 +976,36 @@ continuity checking, not as Direction A's verdict.
    provenance problem this whole reopening exists to fix.
 2. **Gate C scoreboard** (151 cases, the `mis_targeted` classifier, the
    GLM-5.3-Flash judge at ρ = 0.717, `off_instance`) — **the primary
-   evaluation**, per §4's original plan. **Not wired yet.** Needs a new
-   arm: a `run_gate_c.py`-compatible model wrapper that loads a Direction A
-   checkpoint (`TransportAdapter` + `apply_transport`) and calls it with
-   `sigma0 > 0` per case, the same way `MODEL_REPOS`' existing entries wrap
-   `SD3_UltraEdit_w_mask` etc. That wrapper is the next concrete piece of
-   work once a checkpoint exists to score — not before, since writing it
-   against an untrained model would be guessing at the interface.
+   evaluation**, per §4's original plan. At the time this was written, not
+   yet wired: needed a new arm, a `run_gate_c.py`-compatible model wrapper
+   loading a Direction A checkpoint and calling it with `sigma0 > 0` per
+   case, the same way `MODEL_REPOS`' existing entries wrap
+   `SD3_UltraEdit_w_mask` etc. **Built since** (`bench/gate_a_model.py`,
+   wired into `run_gate_c.py`'s `--model gate-a-transport`) — including a
+   real cross-package import bug (`ModuleNotFoundError` on `bench`/
+   `transport` when invoked the documented way) found and fixed only by
+   actually trying to run it, not just reading the code. Direction A is
+   now closed on other grounds before this wrapper's own score was ever
+   needed for the verdict — score it anyway (command in "Next: the real
+   work queue" below) since it's the only judge that isn't the 3-case
+   Stage-0 sweep, and every candidate that replaces Direction A needs the
+   same wrapper regardless of which mechanism wins.
 
-### What's left, in order
+### What was planned next, at the time (superseded — see below for what
+actually happened)
 
-1. Pick a first `σ0` (small; start the sweep once a candidate is chosen —
-   not decided here).
+1. Pick a first `σ0` (small; start the sweep once a candidate is chosen).
 2. Train (`gate_a_transport.py train --sigma0 <value> ...`), on the
-   existing MagicBrush cache — no new data needed.
+   existing MagicBrush cache.
 3. Sanity-check with the existing decoupling sweep at `--sigma0 0.0`
-   (continuity) and `--sigma0 <value>` (does sampling actually look
-   different / more plausible on the 3 Stage 0 cases — `--i-looked-at-the-
-   images` still applies, this project's automated verdicts have been
-   wrong every time they fired).
-4. Write the Gate C scoreboard arm wrapper (§8 point 2 above).
-5. Score on the full 151-case Gate C scoreboard. This is the number that
-   answers the actual question — not the 3-case sweep, not the ambiguity
-   probe, this.
+   (continuity) and `--sigma0 <value>`.
+4. Write the Gate C scoreboard arm wrapper.
+5. Score on the full 151-case Gate C scoreboard.
+
+What actually happened diverged from this list almost immediately: step
+1 became a full six-point sweep rather than one candidate (§"The
+complete six-point sweep" below), steps 2–3 surfaced the ε-fitting
+failure mode and the checkpoint-inspection line of diagnostics that
+closed Direction A before step 5 was ever needed for the verdict, and
+step 4 (the wrapper) was built afterward, once a winning checkpoint
+(`σ0=0.0`) existed to point it at.
