@@ -52,6 +52,24 @@ class GateATransportModel:
     def __init__(self, ckpt_path: str, sigma0: float = 0.0, rank: int = 16,
                 model: str = "stabilityai/stable-diffusion-3-medium-diffusers",
                 device: str = "cuda", steps_readout: int = 1):
+        import sys  # noqa: PLC0415
+        from pathlib import Path as _Path  # noqa: PLC0415
+
+        # run_gate_c.py's own imports (frame_fit, off_instance, ...) are bare
+        # and resolve against bench/ as sys.path[0] -- correct for a script
+        # invoked as `python bench/run_gate_c.py`, which is documented as
+        # this file's own usage. But `bench.inversion` and `transport.*`
+        # below are package-qualified from the REPO ROOT, which is NOT on
+        # sys.path in that invocation (confirmed: `from bench.inversion
+        # import ...` raises ModuleNotFoundError('bench') when run that
+        # way). scripts/gate_a_transport.py already carries this exact
+        # insert for the same reason; run_gate_c.py itself never needed it
+        # before because none of its other model arms cross a package
+        # boundary like this one does.
+        repo_root = str(_Path(__file__).resolve().parent.parent)
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+
         import torch  # noqa: PLC0415
         from diffusers import StableDiffusion3Pipeline  # noqa: PLC0415
 
