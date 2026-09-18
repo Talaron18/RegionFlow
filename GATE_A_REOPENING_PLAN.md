@@ -1027,14 +1027,41 @@ figure.
    document already called a tie). Not a standalone win — see the
    "Reading on what this means" note above for why that doesn't settle
    the decomposition's actual purpose.
-4. **The multi-step Euler pre-check, on the `global_local` checkpoint
-   specifically** (`diagnose --steps N --mask-encoder-kind global_local`)
-   — the decomposition's payoff, if there is one, is plausibly only
-   visible once combined with multi-step composition, not as a
-   standalone single-step number. Do this before the `"single"`-only
-   version of this check would have been the whole story.
-5. The MeanFlow merge itself, informed by (4), respecting the
-   gate-must-stay-≡1 constraint already established.
+4. ~~The multi-step Euler pre-check, on the `global_local` checkpoint~~ —
+   **done, and it's a clean negative.** 4-step naive Euler makes every
+   treatment *worse*, not better: raw 0.517→0.372 (−28%), pooled
+   0.752→0.720 (−4.3%), centered 0.644→0.590 (−8.4%). Position degrades
+   far more than direction — consistent with the mechanism this document
+   already flagged as the risk: the model was trained on the exact
+   straight-line path `z_s=(1−s)z_src+s·z_tgt`, but naive multi-step
+   integration follows the model's own imperfect trajectory, which drifts
+   off that line as soon as `u≠v`, compounding error at every subsequent
+   query. **This settles the pre-check's own question**: iterative
+   refinement via more inference-time Euler steps, with no retraining, is
+   not free — it actively hurts, on both encoders (the `"single"` premise
+   for trying this at all no longer needs separate testing). This doesn't
+   refute the MeanFlow merge itself (a model actually *trained* to be
+   self-consistent across intervals is a different claim than "run the
+   untrained trajectory further"), but it does rule out "just add more
+   `apply_transport` steps at inference" as a standalone fix, decomposition
+   or not.
+5. **Run the Gate C wrapper on the `global_local` checkpoint too**, now
+   that a real run surfaced (and fixed) the missing-flag failure mode —
+   `--gate-a-mask-encoder-kind global_local` is required or it raises
+   (now with an actionable hint instead of a bare key list):
+   ```
+   python bench/run_gate_c.py --model gate-a-transport \
+       --gate-a-ckpt runs/gate_a_global_local/ckpt_final.pt \
+       --gate-a-sigma0 0.0 --gate-a-mask-encoder-kind global_local \
+       --mask-mode oracle \
+       --out runs/gate_c/gate_a_global_local_oracle.jsonl \
+       --save-images runs/gate_c/gate_a_global_local_oracle_imgs --overwrite
+   ```
+6. The MeanFlow merge, if still pursued after (1) and (5) come back —
+   respecting the gate-must-stay-≡1 constraint already established, and
+   now with (4)'s finding as a caution: a merged readout needs the model
+   to be TRAINED for interval self-consistency, not just evaluated with
+   more steps than it was trained for.
 
 **Not in scope, don't re-run as if new:** training on `z_t = (1−t)z_0 +
 t·z_1` with target `z_1 − z_0` is exactly what `sample_path` already
