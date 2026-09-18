@@ -669,41 +669,65 @@ range beats σ0=0 by more than noise. This table is the evidence — more
 convincing than any single-number argument, and it documents exactly
 where the cliff sits for anyone revisiting this.
 
-**Still outstanding, both cheap, now built:**
+**Both outstanding checks run, on σ0=0.0 step 8000:**
 
-- **In-mask vs. out-of-mask split of `delta_z`** — the WHERE-axis question
-  about `mask_enc`'s own output, and the one check in this line that could
-  still surprise. Nothing in `TransportAdapter.forward` masks `delta_z`
-  before adding it to `z` — localisation to the mask region has to be
-  *learned* via the pairflow loss's `outside_weight` term, not something
-  the architecture enforces. `mask_injection_spatial_breakdown()` /
-  `inspect --cache` reports RMS-per-pixel of `delta_z` inside vs. outside
-  the mask (still `mask_enc` alone, no transformer, no GPU).
-- **λ=0 on σ0=0.0** — the mask path's actual contribution to prediction
-  accuracy, isolated. `diagnose --ablate-mask` calls the adapter with
-  `mask=None` (no conditioning reaches the transformer at all) while still
-  scoring against the true mask, so it's directly comparable to the
-  σ0=0.0 row in the table above.
+**In-mask vs. out-of-mask split — real result, and a bug in how the first
+version of this tool labelled it.** `delta_z` RMS is 0.171 inside the mask
+vs. 0.802 outside — a ratio of 0.21, i.e. the background signal is ~4.8×
+*stronger* than the in-mask signal. The tool's first cut printed this as
+"weak/no spatial localisation" (threshold logic: `>3` = localised, `<1.5`
+= weak), which is simply wrong — a ratio of 0.21 is exactly as
+differentiated as 5.0 would be, just inverted. Fixed
+(`classify_localisation()`, self-tested against this exact value): this
+is **background-dominant, strongly-differentiated localisation**, not an
+absence of one. Plausible reading: a strong, easily-learned
+"protect-this-region" signal outside the mask may be what actually lets
+the pairflow loss's `outside_weight` term hold `u ≈ 0` there reliably,
+with a subtler in-mask nudge sufficient once the transformer's own
+image/instruction content dominates inside the edit region. Not proven,
+but the earlier "mask conditioning might be inert or malformed" worry is
+now closed either way — inside ≠ outside by a factor of ~5, whichever
+direction, is a real, learned signal.
 
-```
-python scripts/gate_a_transport.py inspect \
-    --ckpt runs/gate_a_sigma_0.0/ckpt_latest.pt --cache /data/cache/13061d51aee4
-python scripts/gate_a_transport.py diagnose --ablate-mask \
-    --ckpt runs/gate_a_sigma_0.0/ckpt_latest.pt --cache /data/cache/13061d51aee4 \
-    --bias-npy runs/bias.npy
-```
+**λ=0 ablation — the decisive number.** `diagnose --ablate-mask` on the
+same checkpoint/cache, median cosine, λ=1 (normal) vs. λ=0 (mask=None,
+scored against the same true mask):
 
-**Ordered next steps, since the GPU is back:**
+| treatment | λ=1 | λ=0 | absolute drop | relative drop |
+|---|---|---|---|---|
+| raw | 0.541 | 0.240 | −0.301 | **−55.6%** |
+| pooled | 0.769 | 0.681 | −0.088 | −11.4% |
+| centered | 0.664 | 0.494 | −0.170 | −25.6% |
 
-1. The two checks above. Minutes each.
-2. If the mask path is healthy and non-trivial (localised, and λ=0
-   measurably hurts), merge Direction A's machinery with Gate B's
-   multi-step readout — the one-step-at-s=0 readout is then the remaining
-   explanation for the positional half, and multi-step is the thesis's own
-   formulation, not a new idea.
-3. The Gate C scoreboard wrapper (`bench/gate_a_model.py`), regardless of
-   which of the above wins — neither path can be judged on the 3-case
-   Stage-0-comparable sweep alone. This is now the real work queue.
+Removing mask conditioning entirely **more than halves `raw`** — the
+model has no idea where to edit without it, exactly as expected since
+`raw` is the treatment that carries the full positional burden. `pooled`
+(position stripped out by scoring against the *true*, still-known mask
+region) survives much better — the model can still guess a reasonable
+per-channel direction from instruction + `z_src` alone, even with zero
+spatial cue. `centered` sits in between, consistent with the mask also
+helping disambiguate *which* region's content the direction should be
+computed from, not purely *where* to apply it.
+
+**Combined verdict: the mask path is alive, strongly (if unexpectedly)
+differentiated, and doing substantial, load-bearing work — mostly for
+position, partly for direction.** This closes off "the mask conditioning
+might just be dead weight" as an explanation for the positional half of
+the deficit. What's left is the residual gap ON TOP of a working mask
+path — `raw` (0.541) still well below `pooled` (0.769) even at λ=1 — and
+that residual is what the readout-constraint hypothesis targets: the
+one-step-at-s=0 readout may not give the transformer enough steps to
+resolve position as precisely as the mask signal it's given would allow.
+
+**Next: the real work queue.**
+
+1. Merge Direction A's machinery with Gate B's multi-step readout — the
+   one-step-at-s=0 readout is the remaining explanation for the residual
+   positional gap, and multi-step is the thesis's own formulation, not a
+   new idea.
+2. The Gate C scoreboard wrapper (`bench/gate_a_model.py`), regardless of
+   how (1) turns out — neither path can be judged on the 3-case
+   Stage-0-comparable sweep alone.
 
 ### What to keep, what to drop
 
