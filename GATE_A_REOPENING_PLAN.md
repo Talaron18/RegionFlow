@@ -719,15 +719,150 @@ that residual is what the readout-constraint hypothesis targets: the
 one-step-at-s=0 readout may not give the transformer enough steps to
 resolve position as precisely as the mask signal it's given would allow.
 
+**One more check before closing: is the DC offset load-bearing, or is it
+redundant with the dataset-wide bias it correlates with?** `mask_enc`'s
+spatial mean was found anti-correlated with `bias.npy` (cos = −0.579,
+std = 0.025 across 64 items — tight enough to be a fixed property of the
+trained weights, not per-item noise, but not −1.0 either, so neither pure
+cancellation nor an independent direction). `transport/adapter.py`'s
+`apply_mask_conditioning(dc_ablate=True)` subtracts that offset at
+inference, preserving `delta_z`'s spatial pattern exactly, to settle it
+directly (`diagnose --ablate-mask-dc`):
+
+| treatment | intact (λ=1) | DC ablated | λ=0 (no mask) |
+|---|---|---|---|
+| raw | 0.541 | 0.232 | 0.240 |
+| pooled | 0.769 | 0.211 | 0.681 |
+| centered | 0.664 | 0.274 | 0.494 |
+
+**Outcome three, more extreme than any option considered going in: the DC
+offset is load-bearing, and removing it is the single most destructive
+intervention run in this entire line of checks** — worse than removing
+the mask path entirely. On `pooled`, ablating the offset drops
+0.769 → 0.211, while dropping the *whole* mask path only falls to 0.681:
+withholding the spatial signal costs 0.09, keeping the spatial signal but
+stripping its constant costs 0.56.
+
+**Mechanism, in hindsight:** `delta_z` is added directly to `z_src` before
+the transformer reads the sum. The DC offset sets the *operating point*
+of that query — which region of latent space the network is actually
+being asked about. Remove it and every query lands somewhere the model
+never saw in training; the structured in-mask component only means
+anything *relative to that baseline*, and on its own is a perturbation
+around the wrong point. The earlier decomposition ("~93% inert bias, ~7%
+real structure", from the RMS split) was arithmetically correct and
+functionally backwards — the 93% is what makes the 7% legible, not dead
+weight riding along with it. This also reframes the −0.579 correlation:
+not redundancy with `bias.npy`, but a learned working point that happens
+to sit at a fixed angle to the dataset's mean edit direction — stable
+across items because it is a property of the trained weights, not of any
+sample.
+
+### Direction A, closed: the full elimination sequence
+
+The positional deficit (`raw` well below `pooled` even with a healthy
+mask path) has now survived six independent, cheap checks, none of which
+required a retrain:
+
+1. **Target ambiguity** — the corrected ambiguity probe, mean-centered and
+   held-out (§7 above): real instruction-conditioning signal, no evidence
+   of the genuine multi-modal ambiguity Direction A's `σ(0)>0` was built
+   to fix.
+2. **Injection magnitude** — `‖delta_z‖/‖z_src‖` doesn't track quality
+   across the σ0 sweep (σ0=0.1 has the largest ratio and best score;
+   σ0=0.7/1.0 have the smallest and worst); retired as a cross-σ0
+   diagnostic once traced to the noised effective source's larger norm,
+   not a real signal-strength difference.
+3. **Mask-path death** — `mask_enc.out` moved substantially from its
+   zero-init (`abs_max` 0.011–0.023 across all six checkpoints); the λ=0
+   ablation confirms it is doing real, load-bearing work (raw −55.6%).
+4. **Mask insensitivity** — `mask_sensitivity()`'s rolled-mask comparison:
+   `delta_z` at the true mask's location responds substantially when the
+   mask moves, ruling out a mask-agnostic encoder despite the suspicious
+   <2%-variation of `mask_enc`'s weights across six independently-trained
+   σ0 checkpoints.
+5. **Malformed localisation** — the inside/outside RMS ratio (0.21) first
+   looked like an absence of localisation; corrected to "background-
+   dominant, strongly differentiated" (`classify_localisation`'s fix), and
+   the outside-mask structure/bias decomposition plus the DC-ablation
+   result below show it is a *learned operating point*, not malformed
+   wiring.
+6. **DC redundancy with the dataset bias** — the −0.579 correlation raised
+   the possibility that part of the mask path just re-derives a constant
+   the model could get for free; the ablation above rules this out
+   directly and about as conclusively as a single experiment can.
+
+**None of the six explains the deficit. The readout hypothesis — that the
+one-step-at-s=0 query, however well-conditioned, cannot resolve position
+as precisely as a multi-step or interval-aware readout could — is what's
+left, on a substantially firmer base than when it was first proposed.**
+
+### What the DC-ablation result requires of any multi-step redesign
+
+Whatever replaces the one-step readout has to preserve the
+operating-point behaviour just confirmed, not inherit whatever falls out
+of the code by accident. Two things are worth stating as design
+constraints before writing that code, not after:
+
+- **Mask conditioning must be reapplied identically at every query point
+  a multi-step or interval-based readout makes**, including its DC
+  component — not just at `s=0`. Concretely, this already holds by
+  construction for both `"pair"` mode (Gate A) and `"meanflow"` mode
+  (Gate B): `TransportAdapter._gate` returns `gate ≡ 1` for both,
+  unconditionally, so `apply_mask_conditioning`'s full contribution
+  (structure and DC alike) is added at every call regardless of `t` or
+  `r`. A merged mode only inherits this for free if it keeps that gate
+  semantics; reusing `"meanflow"`'s original Δ-gated behaviour instead
+  (gate = `(t-r).clamp(min=0)`, zero at the diagonal) would silently
+  reintroduce exactly the operating-point discontinuity this section is
+  about, at every `r == t` boundary sample.
+- **Check whether MeanFlow's curvature-correction term is even doing
+  anything for a straight-line pair path before paying for the JVP
+  machinery.** MeanFlow's identity corrects for `du/dt ≠ 0` — the
+  instantaneous velocity field genuinely changing along a curved
+  trajectory, which is real for standard diffusion/flow-matching's
+  stochastic interpolation. Gate A's pair path is `z_s = (1-s)z_src +
+  s z_tgt` with `v = z_tgt - z_src` *exactly constant along the entire
+  path by construction* (before Direction A's now-closed σ0 noise). For
+  a perfectly-learned model, the true average velocity over *any*
+  subinterval already equals the instantaneous velocity everywhere —
+  there is no curvature for the correction term to earn its cost on.
+  What multi-step querying plausibly buys instead is a *different*
+  mechanism entirely: each step narrows the remaining extrapolation
+  distance (after step 1, `z` has already moved partway to the target,
+  making the next query an easier sub-problem), which is exactly what
+  `apply_transport`'s existing `steps > 1` naive-Euler path already does,
+  with **no training change and no JVP risk** (per `meanflow.py`'s own
+  documented fragility — forward-mode AD hit signal 11 on four separate
+  probes in Stage 0). **Run that free check first**: sweep
+  `apply_transport`/`diagnose` at `steps` > 1 on the σ0=0.0 checkpoint and
+  see whether `raw` improves. If it does, iterative refinement (not
+  curvature correction) is the load-bearing mechanism, and the case for
+  the full JVP-based MeanFlow merge weakens considerably in favour of
+  something cheaper; if it doesn't, that's evidence for a genuinely
+  different training target at intermediate points, and the merge is
+  better justified.
+
 **Next: the real work queue.**
 
-1. Merge Direction A's machinery with Gate B's multi-step readout — the
-   one-step-at-s=0 readout is the remaining explanation for the residual
-   positional gap, and multi-step is the thesis's own formulation, not a
-   new idea.
-2. The Gate C scoreboard wrapper (`bench/gate_a_model.py`), regardless of
-   how (1) turns out — neither path can be judged on the 3-case
-   Stage-0-comparable sweep alone.
+1. The multi-step Euler pre-check above — cheap, uses the checkpoint and
+   tooling already in hand, and decides how much of the JVP-based merge
+   is actually necessary before committing to it.
+2. Merge Direction A's machinery with Gate B's multi-step readout,
+   informed by (1) and preserving the operating-point constraint above.
+3. The Gate C scoreboard wrapper (`bench/gate_a_model.py`), regardless of
+   how (1)–(2) turn out — neither path can be judged on the 3-case
+   Stage-0-comparable sweep alone. Code-complete since earlier in this
+   document; run:
+   ```
+   python bench/run_gate_c.py --model gate-a-transport \
+       --gate-a-ckpt runs/gate_a_sigma_0.0/ckpt_latest.pt \
+       --gate-a-sigma0 0.0 --mask-mode oracle \
+       --out runs/gate_c/gate_a_sigma0.0_oracle.jsonl
+   ```
+   on the σ0=0.0 checkpoint (this document's winning arm across every
+   diagnostic run against it) — repeat per `--mask-mode` as the existing
+   151-case harness requires for a scoreboard-comparable result.
 
 ### What to keep, what to drop
 
