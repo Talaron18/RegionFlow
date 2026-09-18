@@ -663,26 +663,33 @@ def find_dead_lora_b(adapter_sd: dict) -> list[str]:
 
 def mask_enc_status(adapter_sd: dict) -> dict:
     """Per-key stats for every mask_enc.* parameter in a checkpoint's
-    adapter state dict, flagging transport/conditioning.py::MaskEncoder's
-    zero-init final projection (`out.weight`/`out.bias`) specifically.
+    adapter state dict, flagging every zero-init parameter specifically:
+    transport/conditioning.py::MaskEncoder's final projection
+    (`out.weight`/`out.bias`, at the top level for "single" or nested
+    under `local.` for "global_local"), and GlobalLocalMaskEncoder's own
+    `global_bias`.
 
     The lora_b liveness check doesn't cover mask_enc at all (it isn't a
-    lora_b key) -- but delta_z = mask_enc.out(mask_enc.body(planes)) is
+    lora_b key) -- but for MaskEncoder, delta_z = out(body(planes)) is
     IDENTICALLY zero for every input as long as out.weight/out.bias stay
-    at their zero init, regardless of what mask_enc.body computed (a zero
-    final linear map kills both the forward output AND the gradient
-    flowing back to body, so body would never move either). In "pair"
-    mode the gate multiplying this contribution is architecturally always
-    1 (TransportAdapter._gate), never 0, so there's no structural reason
-    for out to still be at zero after real training -- if it still is,
-    that's a genuine bug in the conditioning path, not an expected
-    artifact of the gating.
+    at their zero init, regardless of what body computed (a zero final
+    linear map kills both the forward output AND the gradient flowing
+    back to body, so body would never move either); for
+    GlobalLocalMaskEncoder, global_bias starts at zero and has no input
+    at all, so "did it move" is the direct, one-parameter answer to
+    whether training gave the operating point a nonzero value. In "pair"
+    mode the gate multiplying either encoder's contribution is
+    architecturally always 1 (TransportAdapter._gate), never 0, so
+    there's no structural reason for either to still be at zero after
+    real training -- if one is, that's a genuine bug in the conditioning
+    path, not an expected artifact of the gating.
     """
     out = {}
     for k, t in adapter_sd.items():
         if "mask_enc" not in k:
             continue
-        is_zero_init = k.endswith("out.weight") or k.endswith("out.bias")
+        is_zero_init = (k.endswith("out.weight") or k.endswith("out.bias")
+                        or k.endswith("global_bias"))
         out[k] = {
             "shape": tuple(t.shape),
             "abs_sum": float(t.abs().sum()),
@@ -693,27 +700,42 @@ def mask_enc_status(adapter_sd: dict) -> dict:
     return out
 
 
-def _load_mask_enc(adapter_sd: dict, latent_ch: int):
-    """Build a standalone MaskEncoder (transport/conditioning.py) from
+def _load_mask_enc(adapter_sd: dict, latent_ch: int, mask_encoder_kind: str = "single"):
+    """Build a standalone mask encoder (transport/conditioning.py) from
     just the mask_enc.* keys of a checkpoint's adapter state dict -- no
-    transformer, no GPU, since MaskEncoder is a small CNN independent of
-    the frozen SD3 backbone. Returns None if the checkpoint has no
-    mask_enc keys (use_mask=False)."""
-    from transport.conditioning import MaskEncoder
+    transformer, no GPU, since both encoder kinds are small CNNs (plus,
+    for "global_local", one extra vector) independent of the frozen SD3
+    backbone. Returns None if the checkpoint has no mask_enc keys
+    (use_mask=False).
+
+    mask_encoder_kind MUST match what the checkpoint was actually trained
+    with -- MaskEncoder's and GlobalLocalMaskEncoder's state dicts have
+    different key structures (`out.*` vs `local.out.*` + `global_bias`),
+    so loading with the wrong kind fails structurally (a strict
+    load_state_dict mismatch), not silently.
+    """
+    from transport.conditioning import GlobalLocalMaskEncoder, MaskEncoder
 
     prefix = "mask_enc."
     mask_sd = {k[len(prefix):]: v for k, v in adapter_sd.items()
               if k.startswith(prefix)}
     if not mask_sd:
         return None
-    mask_enc = MaskEncoder(latent_ch)
+    if mask_encoder_kind == "single":
+        mask_enc = MaskEncoder(latent_ch)
+    elif mask_encoder_kind == "global_local":
+        mask_enc = GlobalLocalMaskEncoder(latent_ch)
+    else:
+        raise ValueError(
+            f"mask_encoder_kind must be 'single' or 'global_local', got "
+            f"{mask_encoder_kind!r}")
     mask_enc.load_state_dict(mask_sd)
     mask_enc.eval()
     return mask_enc
 
 
 def compute_mask_injection_ratio(adapter_sd: dict, cache_root, latent_ch: int,
-                                 n_items: int = 64) -> dict:
+                                 n_items: int = 64, mask_encoder_kind: str = "single") -> dict:
     """||delta_z|| / ||z_src|| over cached examples, using ONLY mask_enc's
     weights loaded from the checkpoint -- no transformer, no GPU required,
     since MaskEncoder (transport/conditioning.py) is a small standalone
@@ -743,7 +765,7 @@ def compute_mask_injection_ratio(adapter_sd: dict, cache_root, latent_ch: int,
 
     from transport.data import TripletCache
 
-    mask_enc = _load_mask_enc(adapter_sd, latent_ch)
+    mask_enc = _load_mask_enc(adapter_sd, latent_ch, mask_encoder_kind)
     if mask_enc is None:
         return {"n": 0}
 
@@ -830,7 +852,7 @@ def classify_localisation(ratio_io: float) -> str:
 
 
 def mask_injection_spatial_breakdown(adapter_sd: dict, cache_root, latent_ch: int,
-                                     n_items: int = 64) -> dict:
+                                     n_items: int = 64, mask_encoder_kind: str = "single") -> dict:
     """WHERE-axis question about mask_enc's own output: is delta_z spatially
     localised to the mask region (as intended -- editing should leave the
     background alone), or does it leak signal outside it? No transformer,
@@ -851,7 +873,7 @@ def mask_injection_spatial_breakdown(adapter_sd: dict, cache_root, latent_ch: in
 
     from transport.data import TripletCache
 
-    mask_enc = _load_mask_enc(adapter_sd, latent_ch)
+    mask_enc = _load_mask_enc(adapter_sd, latent_ch, mask_encoder_kind)
     if mask_enc is None:
         return {"n": 0}
 
@@ -904,7 +926,7 @@ def _outside_structure_fraction(delta_z, mask) -> float | None:
 
 
 def mask_outside_structure(adapter_sd: dict, cache_root, latent_ch: int,
-                           n_items: int = 64) -> dict:
+                           n_items: int = 64, mask_encoder_kind: str = "single") -> dict:
     """Is the background-dominant signal found by
     mask_injection_spatial_breakdown a genuinely competing, spatially
     varying component, or just a large per-channel additive bias the
@@ -916,7 +938,7 @@ def mask_outside_structure(adapter_sd: dict, cache_root, latent_ch: int,
 
     from transport.data import TripletCache
 
-    mask_enc = _load_mask_enc(adapter_sd, latent_ch)
+    mask_enc = _load_mask_enc(adapter_sd, latent_ch, mask_encoder_kind)
     if mask_enc is None:
         return {"n": 0}
 
@@ -969,7 +991,7 @@ def classify_mask_sensitivity(relative_change: float) -> str:
 
 
 def mask_sensitivity(adapter_sd: dict, cache_root, latent_ch: int,
-                     n_items: int = 64) -> dict:
+                     n_items: int = 64, mask_encoder_kind: str = "single") -> dict:
     """Does delta_z AT THE TRUE MASK'S LOCATION actually depend on where
     the mask is, or does mask_enc produce something similar there
     regardless -- consistent with the near-identical mask_enc weights
@@ -988,7 +1010,7 @@ def mask_sensitivity(adapter_sd: dict, cache_root, latent_ch: int,
 
     from transport.data import TripletCache
 
-    mask_enc = _load_mask_enc(adapter_sd, latent_ch)
+    mask_enc = _load_mask_enc(adapter_sd, latent_ch, mask_encoder_kind)
     if mask_enc is None:
         return {"n": 0}
 
@@ -1025,7 +1047,8 @@ def _cosine_vec(a, b) -> float | None:
 
 
 def mask_enc_bias_correlation(adapter_sd: dict, cache_root, latent_ch: int,
-                              bias, n_items: int = 64) -> dict:
+                              bias, n_items: int = 64,
+                              mask_encoder_kind: str = "single") -> dict:
     """Cosine similarity between delta_z's OVERALL spatial mean (per item,
     averaged over every pixel -- in practice dominated by the outside-mask
     component, since masks typically cover well under half the grid) and
@@ -1052,7 +1075,7 @@ def mask_enc_bias_correlation(adapter_sd: dict, cache_root, latent_ch: int,
 
     from transport.data import TripletCache
 
-    mask_enc = _load_mask_enc(adapter_sd, latent_ch)
+    mask_enc = _load_mask_enc(adapter_sd, latent_ch, mask_encoder_kind)
     if mask_enc is None:
         return {"n": 0}
 
@@ -1124,9 +1147,24 @@ def cmd_inspect(args) -> int:
                   f"abs_sum={s['abs_sum']:.6g}  abs_max={s['abs_max']:.6g}{tag}")
 
         if args.cache:
-            latent_ch = adapter_sd["mask_enc.out.weight"].shape[0]
+            # latent_ch: infer from whichever zero-init key this
+            # checkpoint actually has -- "single" has mask_enc.out.weight,
+            # "global_local" has mask_enc.local.out.weight (out.weight
+            # matches both via endswith) or, if that's somehow absent,
+            # global_bias's own shape.
+            out_key = next((k for k in adapter_sd
+                           if k.startswith("mask_enc.") and k.endswith("out.weight")), None)
+            if out_key is not None:
+                latent_ch = adapter_sd[out_key].shape[0]
+            elif "mask_enc.global_bias" in adapter_sd:
+                latent_ch = adapter_sd["mask_enc.global_bias"].shape[0]
+            else:
+                raise SystemExit(
+                    "--cache given but couldn't find mask_enc.*out.weight or "
+                    "mask_enc.global_bias in this checkpoint to infer latent_ch")
             ratio = compute_mask_injection_ratio(adapter_sd, args.cache, latent_ch,
-                                                n_items=args.cache_n)
+                                                n_items=args.cache_n,
+                                                mask_encoder_kind=args.mask_encoder_kind)
             if ratio["n"] == 0:
                 print("  ||delta_z|| / ||z_src||: could not compute "
                       "(no mask_enc keys or no usable cached items)")
@@ -1137,7 +1175,8 @@ def cmd_inspect(args) -> int:
                       f"p10 {ratio['p10']:.4f}  p90 {ratio['p90']:.4f}")
 
             spatial = mask_injection_spatial_breakdown(adapter_sd, args.cache,
-                                                       latent_ch, n_items=args.cache_n)
+                                                       latent_ch, n_items=args.cache_n,
+                                                       mask_encoder_kind=args.mask_encoder_kind)
             ins, outs = spatial.get("inside", {}), spatial.get("outside", {})
             if ins.get("n", 0) == 0 or outs.get("n", 0) == 0:
                 print("  delta_z inside/outside mask RMS: could not compute")
@@ -1155,7 +1194,8 @@ def cmd_inspect(args) -> int:
                       "'outside-mask structure fraction' below instead.")
 
             structure = mask_outside_structure(adapter_sd, args.cache, latent_ch,
-                                              n_items=args.cache_n)
+                                              n_items=args.cache_n,
+                                              mask_encoder_kind=args.mask_encoder_kind)
             if structure["n"] == 0:
                 print("  outside-mask structure fraction: could not compute")
             else:
@@ -1166,7 +1206,8 @@ def cmd_inspect(args) -> int:
                       f"{structure['median']:.3f}  (n={structure['n']})")
 
             sens = mask_sensitivity(adapter_sd, args.cache, latent_ch,
-                                    n_items=args.cache_n)
+                                    n_items=args.cache_n,
+                                    mask_encoder_kind=args.mask_encoder_kind)
             if sens["n"] == 0:
                 print("  mask-position sensitivity: could not compute")
             else:
@@ -1178,7 +1219,8 @@ def cmd_inspect(args) -> int:
             if args.bias_npy:
                 bias_vec = np.load(args.bias_npy)
                 corr = mask_enc_bias_correlation(adapter_sd, args.cache, latent_ch,
-                                                bias_vec, n_items=args.cache_n)
+                                                bias_vec, n_items=args.cache_n,
+                                                mask_encoder_kind=args.mask_encoder_kind)
                 if corr["n"] == 0:
                     print("  delta_z-vs-bias.npy correlation: could not compute")
                 else:
@@ -1659,6 +1701,50 @@ def self_test() -> None:
         # no mask_enc keys at all -> {"n": 0}, not a crash.
         assert compute_mask_injection_ratio({}, cache_root, latent_ch) == {"n": 0}
 
+        # mask_encoder_kind="global_local": _load_mask_enc must build a
+        # GlobalLocalMaskEncoder (transport/conditioning.py) from its OWN
+        # key structure (local.out.*, global_bias), not MaskEncoder's --
+        # this is the exact gap a real global_local-trained checkpoint
+        # would hit against every mask_enc.* helper below if missed.
+        from transport.conditioning import GlobalLocalMaskEncoder
+        fresh_gl = GlobalLocalMaskEncoder(latent_ch)
+        gl_sd = {f"mask_enc.{k}": v for k, v in fresh_gl.state_dict().items()}
+        loaded_gl = _load_mask_enc(gl_sd, latent_ch, mask_encoder_kind="global_local")
+        assert isinstance(loaded_gl, GlobalLocalMaskEncoder), loaded_gl
+        ratio_gl_zero = compute_mask_injection_ratio(
+            gl_sd, cache_root, latent_ch, mask_encoder_kind="global_local")
+        assert ratio_gl_zero["n"] == 3, ratio_gl_zero
+        assert ratio_gl_zero["mean"] == 0.0, ratio_gl_zero  # zero-init -> delta_z==0
+
+        gl_sd_trained = dict(gl_sd)
+        gl_sd_trained["mask_enc.global_bias"] = _torch.tensor(
+            [1.0, -2.0, 0.5, 3.0][:latent_ch])
+        ratio_gl_trained = compute_mask_injection_ratio(
+            gl_sd_trained, cache_root, latent_ch, mask_encoder_kind="global_local")
+        assert ratio_gl_trained["n"] == 3, ratio_gl_trained
+        assert ratio_gl_trained["mean"] > 0.0, ratio_gl_trained
+
+        # mask_enc_status must flag global_bias as a zero-init parameter
+        # (the direct, one-parameter answer to "did the operating point
+        # train away from zero"), separately from out.weight/out.bias.
+        status_gl = mask_enc_status(gl_sd_trained)
+        assert status_gl["mask_enc.global_bias"]["zero_init_layer"] is True
+        assert status_gl["mask_enc.global_bias"]["moved"] is True
+        status_gl_zero = mask_enc_status(gl_sd)
+        assert status_gl_zero["mask_enc.global_bias"]["moved"] is False
+
+        # a mismatched kind (loading a global_local state dict as if it
+        # were "single") must fail to load, not silently misread it --
+        # load_state_dict is strict by default, so this raises.
+        try:
+            _load_mask_enc(gl_sd, latent_ch, mask_encoder_kind="single")
+        except Exception:  # noqa: BLE001 -- any load_state_dict failure is correct here
+            pass
+        else:
+            raise AssertionError(
+                "loading a global_local state dict as 'single' must fail, not "
+                "silently succeed")
+
         # _inside_outside_rms: the pure arithmetic, tested directly against
         # synthetic delta_z tensors so it doesn't depend on a trained
         # network's actual localisation behaviour.
@@ -2011,6 +2097,13 @@ def main() -> int:
                         "ambiguity_probe.py --save-bias; if given (with "
                         "--cache), also reports the cosine correlation "
                         "between delta_z's spatial mean and this bias")
+    i.add_argument("--mask-encoder-kind", default="single",
+                   choices=("single", "global_local"),
+                   help="must match what EVERY --ckpt given was trained "
+                        "with -- MaskEncoder's and GlobalLocalMaskEncoder's "
+                        "state dicts have different key structures, so a "
+                        "mismatch fails to load rather than silently "
+                        "reading the wrong thing")
     i.set_defaults(fn=cmd_inspect)
 
     s = sub.add_parser("self-test")
