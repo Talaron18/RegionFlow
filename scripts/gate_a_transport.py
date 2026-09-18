@@ -61,6 +61,24 @@ STAGE0_IDS = {"17320_t1": "ball", "158548_t1": "sheep",
               "429011_t1": "phone_booth"}
 
 
+def _mask_kind_mismatch_hint(unexpected: list[str], kind: str) -> str:
+    """A load_state_dict "unexpected keys" error from a mask_encoder_kind
+    mismatch is otherwise cryptic (a bare list of key names) -- this
+    turns it into an actionable suggestion. Appended to the RuntimeError
+    message, not raised itself, so it composes with each call site's own
+    "checkpoint has unexpected keys" wording.
+    """
+    if any("global_bias" in k or ".local." in k for k in unexpected):
+        return (" -- these look like GlobalLocalMaskEncoder keys; pass "
+               "--mask-encoder-kind global_local (got "
+               f"mask_encoder_kind={kind!r} here)")
+    if kind == "global_local":
+        return (" -- this checkpoint may have been trained with "
+               "mask_encoder_kind='single'; try omitting "
+               "--mask-encoder-kind (defaults to 'single')")
+    return ""
+
+
 def build_adapter(model: str, device: str, rank: int, max_blocks=None,
                   mask_encoder_kind: str = "single"):
     import torch
@@ -272,7 +290,8 @@ def cmd_eval(args) -> int:
     sd = torch.load(args.ckpt, map_location="cpu", weights_only=False)
     missing, unexpected = adapter.load_state_dict(sd["adapter"], strict=False)
     if unexpected:
-        raise RuntimeError(f"checkpoint has unexpected keys: {unexpected[:5]}")
+        hint = _mask_kind_mismatch_hint(unexpected, args.mask_encoder_kind)
+        raise RuntimeError(f"checkpoint has unexpected keys: {unexpected[:5]}{hint}")
     trained = [k for k in sd["adapter"] if "lora_b" in k]
     live = sum(float(sd["adapter"][k].abs().sum()) > 0 for k in trained)
     print(f"[eval] checkpoint step {sd['step']}, {live}/{len(trained)} "
@@ -435,7 +454,8 @@ def print_diagnostics_summary(summary: dict) -> None:
               f"p90 {s['p90']:+.3f}")
 
 
-def _load_diagnose_checkpoint(adapter, ckpt_path: str) -> dict:
+def _load_diagnose_checkpoint(adapter, ckpt_path: str,
+                              mask_encoder_kind: str = "single") -> dict:
     """Load one checkpoint's adapter weights IN PLACE (reused across
     multiple --ckpt values so the expensive part -- loading the base
     transformer -- happens once). Returns the raw checkpoint dict (for its
@@ -447,8 +467,9 @@ def _load_diagnose_checkpoint(adapter, ckpt_path: str) -> dict:
     sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     _missing, unexpected = adapter.load_state_dict(sd["adapter"], strict=False)
     if unexpected:
+        hint = _mask_kind_mismatch_hint(unexpected, mask_encoder_kind)
         raise RuntimeError(f"{ckpt_path}: checkpoint has unexpected keys: "
-                          f"{unexpected[:5]}")
+                          f"{unexpected[:5]}{hint}")
     trained = [k for k in sd["adapter"] if "lora_b" in k]
     live = sum(float(sd["adapter"][k].abs().sum()) > 0 for k in trained)
     print(f"[diagnose] {ckpt_path}: step {sd.get('step', '?')}, "
@@ -612,7 +633,7 @@ def cmd_diagnose(args) -> int:
 
     summaries = {}
     for ckpt_path in args.ckpt:
-        sd = _load_diagnose_checkpoint(adapter, ckpt_path)
+        sd = _load_diagnose_checkpoint(adapter, ckpt_path, args.mask_encoder_kind)
         summary = _diagnose_checkpoint(adapter, dl, args.device, bias,
                                        ablate_mask=args.ablate_mask,
                                        ablate_mask_dc=args.ablate_mask_dc,
@@ -1886,6 +1907,19 @@ def self_test() -> None:
 
         # no mask_enc keys -> {"n": 0}, not a crash.
         assert mask_enc_bias_correlation({}, cache_root2, latent_ch, fake_bias) == {"n": 0}
+
+    # _mask_kind_mismatch_hint: turns a bare "unexpected keys" list into an
+    # actionable suggestion -- the exact confusion a real run hit (loading
+    # a global_local checkpoint with the default kind="single").
+    hint_gl = _mask_kind_mismatch_hint(
+        ["mask_enc.global_bias", "mask_enc.local.out.weight"], "single")
+    assert "global_local" in hint_gl and "single" in hint_gl, hint_gl
+    hint_reverse = _mask_kind_mismatch_hint(
+        ["mask_enc.out.weight", "mask_enc.body.0.weight"], "global_local")
+    assert "single" in hint_reverse, hint_reverse
+    # an unrelated mismatch (not mask_enc-shaped) gets no hint, not a
+    # misleading one.
+    assert _mask_kind_mismatch_hint(["some.other.key"], "single") == ""
 
     print("gate_a_transport self-test OK")
 

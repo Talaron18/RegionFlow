@@ -97,7 +97,18 @@ class GateATransportModel:
         sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         _missing, unexpected = self.adapter.load_state_dict(sd["adapter"], strict=False)
         if unexpected:
-            raise RuntimeError(f"checkpoint has unexpected keys: {unexpected[:5]}")
+            hint = ""
+            if any("global_bias" in k or ".local." in k for k in unexpected):
+                hint = (" -- these look like GlobalLocalMaskEncoder keys; "
+                       "pass --gate-a-mask-encoder-kind global_local "
+                       "(got mask_encoder_kind=" + repr(mask_encoder_kind) +
+                       " here)")
+            elif mask_encoder_kind == "global_local":
+                hint = (" -- this checkpoint may have been trained with "
+                       "mask_encoder_kind='single'; try omitting "
+                       "--gate-a-mask-encoder-kind (defaults to 'single')")
+            raise RuntimeError(
+                f"checkpoint has unexpected keys: {unexpected[:5]}{hint}")
         # Same live-weight check cmd_eval already does -- a checkpoint whose
         # lora_b blocks are all still zero is the pretrained model, and
         # scoring it would produce a confident null (identical to Gate A's
