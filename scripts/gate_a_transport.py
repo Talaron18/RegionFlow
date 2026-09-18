@@ -61,7 +61,8 @@ STAGE0_IDS = {"17320_t1": "ball", "158548_t1": "sheep",
               "429011_t1": "phone_booth"}
 
 
-def build_adapter(model: str, device: str, rank: int, max_blocks=None):
+def build_adapter(model: str, device: str, rank: int, max_blocks=None,
+                  mask_encoder_kind: str = "single"):
     import torch
     from diffusers import SD3Transformer2DModel
 
@@ -69,7 +70,8 @@ def build_adapter(model: str, device: str, rank: int, max_blocks=None):
         model, subfolder="transformer", torch_dtype=torch.bfloat16
     ).to(device)
     adapter = TransportAdapter(
-        tr, AdapterConfig(mode="pair", rank=rank, max_blocks=max_blocks)
+        tr, AdapterConfig(mode="pair", rank=rank, max_blocks=max_blocks,
+                          mask_encoder_kind=mask_encoder_kind)
     ).to(device)
     # Adapter parameters stay fp32 even though the base is bf16. See train.py.
     for p in adapter.trainable_parameters():
@@ -102,7 +104,8 @@ def cmd_train(args) -> int:
                         num_workers=args.num_workers, drop_last=True,
                         pin_memory=True, persistent_workers=True)
 
-    adapter = build_adapter(args.model, args.device, args.rank, args.max_blocks)
+    adapter = build_adapter(args.model, args.device, args.rank, args.max_blocks,
+                            mask_encoder_kind=args.mask_encoder_kind)
     # Gradient checkpointing trades ~30-40% step time for activation memory,
     # same as gate_b_meanflow.py's own dial -- but Gate A never needs
     # forward-mode AD (pairflow_loss has no JVP estimator at all), so unlike
@@ -261,7 +264,8 @@ def cmd_eval(args) -> int:
     helper = SD3EditPipeline(pipe, device=args.device)
 
     adapter = TransportAdapter(
-        pipe.transformer, AdapterConfig(mode="pair", rank=args.rank)
+        pipe.transformer, AdapterConfig(mode="pair", rank=args.rank,
+                                        mask_encoder_kind=args.mask_encoder_kind)
     ).to(args.device)
     for p_ in adapter.trainable_parameters():
         p_.data = p_.data.float()
@@ -602,7 +606,8 @@ def cmd_diagnose(args) -> int:
               "positional deficit before committing to a full MeanFlow "
               "JVP-based readout (GATE_A_REOPENING_PLAN.md).")
 
-    adapter = build_adapter(args.model, args.device, args.rank)
+    adapter = build_adapter(args.model, args.device, args.rank,
+                            mask_encoder_kind=args.mask_encoder_kind)
     adapter.eval()
 
     summaries = {}
@@ -1831,12 +1836,25 @@ def main() -> int:
                         "checkpointed-branch tuple bug -- see cmd_train's "
                         "own comment for the exact error and why")
     t.add_argument("--sigma0", type=float, default=0.0,
-                   help="Direction A (GATE_A_REOPENING_PLAN.md SS8): "
+                   help="Direction A (GATE_A_REOPENING_PLAN.md SS8), CLOSED: "
                         "mask-gated noise at the s=0 query point, "
                         "sigma(s)=sigma0*(1-s). 0.0 (default) is the "
-                        "original deterministic pairflow, byte-identical. "
-                        "Start small (e.g. 0.1-0.3 relative to latent "
-                        "scale) and sweep -- not validated at any value yet.")
+                        "original deterministic pairflow, byte-identical, "
+                        "and remains the recommended value -- the full "
+                        "six-point sweep (0.0-1.0) found no sigma0 beats "
+                        "0.0 by more than noise, and sigma0>=0.5 destroys "
+                        "the model's instruction-specific signal. Kept for "
+                        "reproducibility, not as a live recommendation to "
+                        "sweep further.")
+    t.add_argument("--mask-encoder-kind", default="single",
+                   choices=("single", "global_local"),
+                   help="'single' (default, MaskEncoder) is byte-identical "
+                        "for every existing checkpoint. 'global_local' "
+                        "(GlobalLocalMaskEncoder, GATE_A_REOPENING_PLAN.md) "
+                        "is new model surface -- an architecturally-forced "
+                        "split between a mask-independent global operating "
+                        "point and a mask-conditioned local edit, NOT "
+                        "checkpoint-compatible with 'single'.")
     t.add_argument("--log-every", type=int, default=25)
     t.add_argument("--ckpt-every", type=int, default=500,
                    help="numbered snapshots land every 5x this")
@@ -1876,19 +1894,19 @@ def main() -> int:
                         "NOT comparable with Stage 0's pinned numbers.")
     e.add_argument("--sigma0", type=float, default=0.0,
                    help="sample WITH Direction A's mode-selecting noise "
-                        "(GATE_A_REOPENING_PLAN.md SS8) instead of querying "
-                        "at z_src exactly. 0.0 (default) keeps this sweep "
-                        "continuous with Stage 0's deterministic methodology "
-                        "-- if the checkpoint was TRAINED with sigma0>0, "
-                        "that means evaluating it slightly off its own "
-                        "training distribution (see apply_transport's "
-                        "docstring); use this flag to check that gap "
-                        "directly, or to preview stochastic samples, but "
-                        "the sweep's oracle-relative verdict is the "
-                        "sigma0=0 run for comparability. Direction A's "
-                        "PRIMARY evaluation is the Gate C scoreboard, "
-                        "sampled with sigma0>0 -- not yet wired here, see "
-                        "the reopening plan.")
+                        "(GATE_A_REOPENING_PLAN.md SS8, CLOSED) instead of "
+                        "querying at z_src exactly. 0.0 (default) keeps this "
+                        "sweep continuous with Stage 0's deterministic "
+                        "methodology and is the winning arm across every "
+                        "diagnostic run against it -- sigma0>0 is kept for "
+                        "reproducibility on old checkpoints, not as a "
+                        "recommendation. Gate C scoreboard evaluation is "
+                        "bench/run_gate_c.py --model gate-a-transport "
+                        "--gate-a-sigma0 0.0, not this flag.")
+    e.add_argument("--mask-encoder-kind", default="single",
+                   choices=("single", "global_local"),
+                   help="must match what the checkpoint being evaluated "
+                        "was trained with -- see `train`'s own help")
     e.add_argument("--eval-seed", type=int, default=0,
                    help="generator seed for --sigma0 sampling; re-seeded "
                         "fresh for every strength in the sweep so all "
@@ -1971,6 +1989,10 @@ def main() -> int:
     d.add_argument("--rank", type=int, default=16)
     d.add_argument("--device", default="cuda")
     d.add_argument("--model", default=common["model"])
+    d.add_argument("--mask-encoder-kind", default="single",
+                   choices=("single", "global_local"),
+                   help="must match what the checkpoint being diagnosed "
+                        "was trained with -- see `train`'s own help")
     d.set_defaults(fn=cmd_diagnose)
 
     i = sub.add_parser("inspect")

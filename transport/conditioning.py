@@ -231,6 +231,66 @@ class MaskEncoder(nn.Module):
         return self.out(self.body(planes))
 
 
+class GlobalLocalMaskEncoder(nn.Module):
+    """MaskEncoder split into an explicit global operating-point shift and
+    a mask-gated local edit.
+
+    WHY THIS EXISTS. Direction A's DC-offset ablation (GATE_A_REOPENING_PLAN.md)
+    found that MaskEncoder's spatial-mean component is LOAD-BEARING: removing
+    it at inference dropped pooled cosine from 0.769 to 0.211 -- worse than
+    removing the mask path entirely (0.681). The offset sets the operating
+    point the transformer's query lands at; the structured, mask-conditioned
+    part of the output only means anything relative to that baseline. The
+    plain MaskEncoder entangles both roles in one head, with nothing forcing
+    a particular split between them under ordinary MSE regression -- two
+    heads summed and trained end to end can collapse back to exactly the
+    current allocation, which would make a naive two-head version a
+    reparameterisation with no new inductive bias, not a real change.
+
+    THE SPLIT IS ENFORCED ARCHITECTURALLY, not by a training-time trick (a
+    separate learning rate, a stop-gradient schedule, a variance penalty in
+    the loss) that could fail to hold under enough optimisation pressure:
+
+        global   a single learned (C,) vector with NO INPUT AT ALL -- it
+                 cannot become a disguised, mask-conditioned copy of the
+                 local signal, because it has nothing to condition on.
+        local    the existing MaskEncoder CNN (mask-conditioned,
+                 structured), with its own per-example spatial mean
+                 SUBTRACTED before use, on every forward pass, not as a
+                 post-hoc eval-time ablation -- it is architecturally
+                 IMPOSSIBLE for the local head to contribute anything to
+                 the operating point, whatever it learns.
+
+        delta_z = global + (local - local.mean(over H, W))
+
+    This guarantee is exact and checked directly in self_test(): the
+    output's own spatial mean equals `global_bias` exactly, for ANY mask
+    and ANY (including randomly re-initialised) local-head weights.
+
+    NOT a drop-in replacement for MaskEncoder -- this is new model
+    surface (the global parameter didn't exist before), selected via
+    AdapterConfig.mask_encoder_kind="global_local"; the default stays
+    "single" (plain MaskEncoder), byte-identical for every existing
+    checkpoint. Same forward(mask) -> (B,C,h,w) interface, so nothing
+    downstream (TransportAdapter.forward, apply_mask_conditioning, the
+    inspect/diagnose checkpoint tooling) needs to know which one it has.
+    """
+
+    def __init__(self, latent_channels: int = 16, hidden: int = 64) -> None:
+        super().__init__()
+        self.local = MaskEncoder(latent_channels, hidden)
+        # Zero-init: delta_z == 0 at initialisation regardless of mode,
+        # matching the adapter's identity-at-init guarantee
+        # (transport/adapter.py's own module docstring).
+        self.global_bias = nn.Parameter(torch.zeros(latent_channels))
+
+    def forward(self, mask: torch.Tensor) -> torch.Tensor:
+        local = self.local(mask)
+        local_centered = local - local.mean(dim=(2, 3), keepdim=True)
+        global_term = self.global_bias.reshape(1, -1, 1, 1).to(local.dtype)
+        return global_term + local_centered
+
+
 def build_mask_planes(mask: torch.Tensor, clip: float = 8.0) -> torch.Tensor:
     """(B,1,h,w) in {0,1} -> (B,3,h,w) float32 [inside, signed_dist, band].
 
@@ -274,3 +334,88 @@ def mask_to_latent_grid(mask: np.ndarray, h: int, w: int) -> torch.Tensor:
     m = torch.from_numpy(np.asarray(mask, dtype=np.float32))[None, None]
     pooled = F.adaptive_avg_pool2d(m, (h, w))
     return (pooled > 0.5).float()
+
+
+# --------------------------------------------------------------- self-test --
+
+def self_test() -> None:
+    """MaskEncoder / GlobalLocalMaskEncoder, CPU-only (needs scipy for
+    build_mask_planes' distance transform, no GPU or transformer). Run
+    before trusting GlobalLocalMaskEncoder in a real training run --
+    this module had no self-test before the split was added.
+    """
+    torch.manual_seed(0)
+    B, C, H, W = 2, 4, 16, 16
+    mask = torch.zeros(B, 1, H, W)
+    mask[:, :, 4:12, 4:12] = 1.0
+
+    # MaskEncoder: zero-init means delta_z == 0 exactly at construction,
+    # the identity-at-init guarantee transport/adapter.py depends on.
+    enc = MaskEncoder(C)
+    enc.eval()
+    with torch.no_grad():
+        out0 = enc(mask)
+    assert torch.equal(out0, torch.zeros_like(out0))
+
+    # GlobalLocalMaskEncoder: same zero-at-init guarantee.
+    gl = GlobalLocalMaskEncoder(C)
+    gl.eval()
+    with torch.no_grad():
+        gl_out0 = gl(mask)
+    assert torch.allclose(gl_out0, torch.zeros_like(gl_out0), atol=1e-6)
+
+    # THE CORE GUARANTEE: the output's own per-channel spatial mean must
+    # equal global_bias EXACTLY -- not approximately, not "usually" --
+    # for ANY mask and ANY local-head weights, since local_centered is
+    # constructed to have exactly zero spatial mean by subtraction. Give
+    # the local head random (non-zero-init) weights first, since at true
+    # zero-init this would hold trivially (both sides zero).
+    with torch.no_grad():
+        for p in gl.local.parameters():
+            p.data = torch.randn_like(p)
+        gl.global_bias.data = torch.tensor([1.0, -2.0, 0.5, 3.0])
+    gl.eval()
+
+    mask2 = torch.zeros(B, 1, H, W)
+    mask2[:, :, 1:6, 9:14] = 1.0  # a DIFFERENT mask, different location/shape
+
+    with torch.no_grad():
+        out_a = gl(mask)
+        out_b = gl(mask2)
+    spatial_mean_a = out_a.mean(dim=(2, 3))  # (B, C)
+    spatial_mean_b = out_b.mean(dim=(2, 3))
+    expected = gl.global_bias.reshape(1, C).expand(B, C)
+    # float32 accumulation over a 256-pixel mean subtraction leaves ~1e-4
+    # residual noise for random-scale local weights -- not a real
+    # violation (an actual architectural break would be O(1), not O(1e-4)).
+    assert torch.allclose(spatial_mean_a, expected, atol=1e-3), spatial_mean_a
+    assert torch.allclose(spatial_mean_b, expected, atol=1e-3), spatial_mean_b
+    # Different masks, but the SAME global operating point -- exactly the
+    # property the plain MaskEncoder does NOT guarantee (its DC offset is
+    # entangled with, not independent of, the mask-conditioned content).
+    assert torch.allclose(spatial_mean_a, spatial_mean_b, atol=1e-3)
+
+    # The LOCAL component genuinely varies with the mask (this split isn't
+    # a way to accidentally make the whole output mask-insensitive) --
+    # subtract out the shared global term and confirm what's left differs.
+    local_only_a = out_a - gl.global_bias.reshape(1, C, 1, 1)
+    local_only_b = out_b - gl.global_bias.reshape(1, C, 1, 1)
+    assert not torch.allclose(local_only_a, local_only_b, atol=1e-3)
+
+    # A GlobalLocalMaskEncoder with global_bias forced to zero must have
+    # EXACTLY zero spatial mean everywhere -- confirms the local head
+    # alone never leaks into the operating point, whatever it computes.
+    with torch.no_grad():
+        gl.global_bias.data.zero_()
+        out_c = gl(mask)
+    assert torch.allclose(out_c.mean(dim=(2, 3)), torch.zeros(B, C), atol=1e-3)
+
+    print("conditioning self-test OK")
+
+
+if __name__ == "__main__":
+    import sys
+    if "--self-test" in sys.argv:
+        self_test()
+    else:
+        print(__doc__)

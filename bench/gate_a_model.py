@@ -51,7 +51,8 @@ class GateATransportModel:
 
     def __init__(self, ckpt_path: str, sigma0: float = 0.0, rank: int = 16,
                 model: str = "stabilityai/stable-diffusion-3-medium-diffusers",
-                device: str = "cuda", steps_readout: int = 1):
+                device: str = "cuda", steps_readout: int = 1,
+                mask_encoder_kind: str = "single"):
         import sys  # noqa: PLC0415
         from pathlib import Path as _Path  # noqa: PLC0415
 
@@ -87,7 +88,8 @@ class GateATransportModel:
         self.helper = SD3EditPipeline(pipe, device=device)
 
         self.adapter = TransportAdapter(
-            pipe.transformer, AdapterConfig(mode="pair", rank=rank)
+            pipe.transformer, AdapterConfig(mode="pair", rank=rank,
+                                            mask_encoder_kind=mask_encoder_kind)
         ).to(device)
         for p in self.adapter.trainable_parameters():
             p.data = p.data.float()

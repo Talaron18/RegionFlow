@@ -246,7 +246,8 @@ def load_model(args):
         from gate_a_model import GateATransportModel  # noqa: PLC0415
         return GateATransportModel(
             args.gate_a_ckpt, sigma0=args.gate_a_sigma0, rank=args.gate_a_rank,
-            device=args.device, steps_readout=args.gate_a_steps_readout)
+            device=args.device, steps_readout=args.gate_a_steps_readout,
+            mask_encoder_kind=args.gate_a_mask_encoder_kind)
     if args.model in MODEL_REPOS:
         if args.model == "refedit-sd3" and args.mask_mode != "none":
             print("  NOTE: RefEdit-SD3 is finetuned on UltraEdit-FREEFORM, so a "
@@ -700,6 +701,13 @@ def main():
     p.add_argument("--gate-a-steps-readout", type=int, default=1,
                    help="readout steps for --model gate-a-transport; 1 is "
                         "the one-step headline, >1 integrates the path")
+    p.add_argument("--gate-a-mask-encoder-kind", default="single",
+                   choices=("single", "global_local"),
+                   help="mask_encoder_kind for --model gate-a-transport, "
+                        "must match what the checkpoint was TRAINED with -- "
+                        "'global_local' (GATE_A_REOPENING_PLAN.md) is new "
+                        "model surface, not checkpoint-compatible with the "
+                        "default 'single'")
     p.add_argument("--ablation", action="store_true",
                    help="also run edit_instruction_single with the same seed")
     p.add_argument("--steps", type=int, default=50)

@@ -51,7 +51,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
-from .conditioning import MaskEncoder, make_interval_embedding
+from .conditioning import GlobalLocalMaskEncoder, MaskEncoder, make_interval_embedding
 from .gating import GateHolder, adapter_parameters, inject_lora
 
 
@@ -145,6 +145,17 @@ class AdapterConfig:
     #: "centered" CenteredIntervalEmbedding: g(t) + [f(t,Delta) - f(t,0)].
     #: Default stays "concat" so every existing checkpoint loads unchanged.
     interval_kind: str = "concat"
+    #: "single"       MaskEncoder -- one head produces the whole delta_z,
+    #:                 operating-point offset and mask-conditioned content
+    #:                 entangled. Default, byte-identical for every existing
+    #:                 checkpoint.
+    #: "global_local"  GlobalLocalMaskEncoder (conditioning.py) -- the split
+    #:                 GATE_A_REOPENING_PLAN.md's DC-offset ablation argues
+    #:                 for: a mask-INDEPENDENT global operating-point vector
+    #:                 plus a local head forced to exactly zero spatial mean
+    #:                 by construction. NOT checkpoint-compatible with
+    #:                 "single" -- new parameters, a fresh run.
+    mask_encoder_kind: str = "single"
     #: SD3 scales sigma by this before the transformer sees it.
     num_train_timesteps: int = 1000
 
@@ -172,7 +183,17 @@ class TransportAdapter(nn.Module):
         latent_ch = int(transformer.config.in_channels)
         self.interval = (make_interval_embedding(cfg.interval_kind, pooled_dim)
                          if cfg.use_interval else None)
-        self.mask_enc = MaskEncoder(latent_ch) if cfg.use_mask else None
+        self.mask_enc = self._build_mask_enc(latent_ch, cfg) if cfg.use_mask else None
+
+    @staticmethod
+    def _build_mask_enc(latent_ch: int, cfg: AdapterConfig) -> nn.Module:
+        if cfg.mask_encoder_kind == "single":
+            return MaskEncoder(latent_ch)
+        if cfg.mask_encoder_kind == "global_local":
+            return GlobalLocalMaskEncoder(latent_ch)
+        raise ValueError(
+            f"mask_encoder_kind must be 'single' or 'global_local', got "
+            f"{cfg.mask_encoder_kind!r}")
 
     # ------------------------------------------------------------ plumbing --
     @property
@@ -419,6 +440,35 @@ def self_test() -> None:
         apply_mask_conditioning(z, mask, mask_enc, gate0, dc_ablate=True), z)
     assert torch.allclose(
         apply_mask_conditioning(z, mask, mask_enc, gate0, dc_ablate=False), z)
+
+    # AdapterConfig.mask_encoder_kind: "single" and "global_local" must
+    # build the right class, and an unknown kind must raise rather than
+    # silently falling back to one of them.
+    cfg_single = AdapterConfig(mode="pair", mask_encoder_kind="single")
+    assert isinstance(TransportAdapter._build_mask_enc(4, cfg_single), MaskEncoder)
+    cfg_gl = AdapterConfig(mode="pair", mask_encoder_kind="global_local")
+    assert isinstance(TransportAdapter._build_mask_enc(4, cfg_gl), GlobalLocalMaskEncoder)
+    try:
+        TransportAdapter._build_mask_enc(4, AdapterConfig(mode="pair", mask_encoder_kind="bogus"))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown mask_encoder_kind must raise")
+
+    # apply_mask_conditioning composes generically with GlobalLocalMaskEncoder
+    # -- dc_ablate doesn't need to know the internal architecture, since it
+    # operates on the OUTPUT's own spatial mean. A GlobalLocalMaskEncoder's
+    # output already has spatial mean == global_bias by construction;
+    # dc_ablate=True on top of that must still leave exactly zero.
+    gl_enc = GlobalLocalMaskEncoder(C)
+    with torch.no_grad():
+        for p in gl_enc.local.parameters():
+            p.data = torch.randn_like(p)
+        gl_enc.global_bias.data = torch.tensor([1.0, -2.0, 0.5, 2.0])
+    gl_enc.eval()
+    gl_ablated = apply_mask_conditioning(z, mask, gl_enc, gate, dc_ablate=True)
+    gl_injected = gl_ablated - z
+    assert torch.allclose(gl_injected.mean(dim=(2, 3)), torch.zeros(B, C), atol=1e-3)
 
     print("adapter self-test OK")
 
