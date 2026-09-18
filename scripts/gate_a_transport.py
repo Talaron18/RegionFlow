@@ -933,6 +933,71 @@ def mask_sensitivity(adapter_sd: dict, cache_root, latent_ch: int,
            "median": float(np.median(arr))}
 
 
+def _cosine_vec(a, b) -> float | None:
+    """cosine(a, b) for two flat (C,) tensors. Pulled out for direct
+    testing, same pattern as this file's other _-prefixed pure helpers."""
+    na = float(a.pow(2).sum().sqrt())
+    nb = float(b.pow(2).sum().sqrt())
+    if na < 1e-8 or nb < 1e-8:
+        return None
+    return float((a * b).sum()) / (na * nb)
+
+
+def mask_enc_bias_correlation(adapter_sd: dict, cache_root, latent_ch: int,
+                              bias, n_items: int = 64) -> dict:
+    """Cosine similarity between delta_z's OVERALL spatial mean (per item,
+    averaged over every pixel -- in practice dominated by the outside-mask
+    component, since masks typically cover well under half the grid) and
+    the dataset-wide bias vector from ambiguity_probe.py --save-bias (the
+    mean, mask-pooled ground-truth edit direction across the whole cache).
+
+    Motivated by mask_sensitivity's finding that mask_enc's in-mask output
+    barely depends on the mask, and mask_outside_structure's split of the
+    outside signal into a bias-like vs. structured component: if mask_enc
+    has converged to mostly re-inject the SAME generic edit direction the
+    data already has on average -- independent of the actual mask -- that
+    is a concrete, mechanistic explanation for both the anti-localisation
+    and the near-identical weights measured across six independently-
+    trained sigma0 checkpoints, since a dataset-level constant doesn't
+    depend on sigma0 at all. HIGH and CONSISTENT cosine here (most items
+    landing near the same value, not a wide spread) confirms that
+    redundancy -- mask_enc has partly collapsed into "add the average
+    edit direction" rather than "mark the mask region". Low or
+    inconsistent cosine rules that out and leaves the anti-localisation
+    unexplained by this particular mechanism.
+    """
+    import numpy as np
+    import torch
+
+    from transport.data import TripletCache
+
+    mask_enc = _load_mask_enc(adapter_sd, latent_ch)
+    if mask_enc is None:
+        return {"n": 0}
+
+    bias_t = bias if isinstance(bias, torch.Tensor) else torch.from_numpy(bias)
+    bias_t = bias_t.float()
+
+    cache = TripletCache(cache_root)
+    n = min(n_items, len(cache))
+    vals = []
+    with torch.no_grad():
+        for i in range(n):
+            rec = cache[i]
+            m = torch.from_numpy(rec["mask"]).float().unsqueeze(0)
+            delta_z = mask_enc(m)[0]
+            item_mean = delta_z.mean(dim=(1, 2))  # (C,)
+            cos = _cosine_vec(item_mean, bias_t)
+            if cos is not None:
+                vals.append(cos)
+
+    arr = np.array(vals)
+    if arr.size == 0:
+        return {"n": 0}
+    return {"n": int(arr.size), "mean": float(arr.mean()),
+           "median": float(np.median(arr)), "std": float(arr.std())}
+
+
 def cmd_inspect(args) -> int:
     """CPU-only checkpoint inspection: which lora_b block(s) are still at
     zero-init (if any), and did mask_enc's zero-init output layer ever
@@ -1023,6 +1088,21 @@ def cmd_inspect(args) -> int:
                       f"mean {sens['mean']:.3f}  median {sens['median']:.3f}  "
                       f"(n={sens['n']})  <-- "
                       f"{classify_mask_sensitivity(sens['median'])}")
+
+            if args.bias_npy:
+                bias_vec = np.load(args.bias_npy)
+                corr = mask_enc_bias_correlation(adapter_sd, args.cache, latent_ch,
+                                                bias_vec, n_items=args.cache_n)
+                if corr["n"] == 0:
+                    print("  delta_z-vs-bias.npy correlation: could not compute")
+                else:
+                    print(f"  cos(delta_z spatial mean, bias.npy): "
+                          f"mean {corr['mean']:.3f}  median {corr['median']:.3f}  "
+                          f"std {corr['std']:.3f}  (n={corr['n']})"
+                          + ("  <-- high & consistent: mask_enc looks "
+                             "redundant with the dataset-wide bias"
+                             if corr['mean'] > 0.6 and corr['std'] < 0.3
+                             else ""))
     return 0
 
 
@@ -1600,6 +1680,41 @@ def self_test() -> None:
         assert mask_outside_structure({}, cache_root2, latent_ch) == {"n": 0}
         assert mask_sensitivity({}, cache_root2, latent_ch) == {"n": 0}
 
+        # _cosine_vec: parallel -> 1, orthogonal -> 0, anti-parallel -> -1,
+        # a zero vector -> None (not a divide-by-zero).
+        v1 = _torch.tensor([1.0, 2.0, 3.0])
+        assert abs(_cosine_vec(v1, v1 * 2.0) - 1.0) < 1e-6
+        assert abs(_cosine_vec(_torch.tensor([1.0, 0.0]), _torch.tensor([0.0, 1.0]))) < 1e-6
+        assert abs(_cosine_vec(v1, -v1) + 1.0) < 1e-6
+        assert _cosine_vec(_torch.zeros(3), v1) is None
+
+        # mask_enc_bias_correlation: a zero-init mask_enc has zero spatial
+        # mean everywhere -> cosine undefined for every item -> {"n": 0},
+        # not a crash. A trained-looking one must give usable (n=3) stats.
+        fake_bias = _torch.tensor([1.0, 0.0, 0.0, 0.0])
+        corr_zero = mask_enc_bias_correlation(zero_sd, cache_root2, latent_ch, fake_bias)
+        assert corr_zero == {"n": 0}, corr_zero
+        corr_trained = mask_enc_bias_correlation(trained_sd, cache_root2, latent_ch, fake_bias)
+        assert corr_trained["n"] == 3, corr_trained
+        assert -1.0 <= corr_trained["mean"] <= 1.0, corr_trained
+
+        # a mask_enc whose out layer is a constant multiple of a known
+        # direction must give a spatial mean that's EXACTLY that direction
+        # (constant bias, so mean == the bias regardless of the mask
+        # shape/position) -> cosine against the SAME direction is exactly 1.
+        exact_sd = dict(zero_sd)
+        direction = _torch.tensor([2.0, -1.0, 0.5, 0.0])
+        exact_sd["mask_enc.out.bias"] = direction.clone()
+        # out.weight stays zero -> out(x) = out.bias for every input,
+        # constant everywhere regardless of what body computed.
+        corr_exact = mask_enc_bias_correlation(exact_sd, cache_root2, latent_ch, direction)
+        assert corr_exact["n"] == 3, corr_exact
+        assert abs(corr_exact["mean"] - 1.0) < 1e-5, corr_exact
+        assert corr_exact["std"] < 1e-5, corr_exact
+
+        # no mask_enc keys -> {"n": 0}, not a crash.
+        assert mask_enc_bias_correlation({}, cache_root2, latent_ch, fake_bias) == {"n": 0}
+
     print("gate_a_transport self-test OK")
 
 
@@ -1772,6 +1887,11 @@ def main() -> int:
     i.add_argument("--cache-n", type=int, default=64,
                    help="how many cached items to sample for the "
                         "injection-ratio check")
+    i.add_argument("--bias-npy", default=None,
+                   help="per-channel bias vector (.npy) from "
+                        "ambiguity_probe.py --save-bias; if given (with "
+                        "--cache), also reports the cosine correlation "
+                        "between delta_z's spatial mean and this bias")
     i.set_defaults(fn=cmd_inspect)
 
     s = sub.add_parser("self-test")
