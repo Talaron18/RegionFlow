@@ -59,7 +59,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
-
+import torch.nn.functional as F
 
 @dataclass
 class PairFlowConfig:
@@ -91,9 +91,74 @@ class PairFlowConfig:
     #: distribution seen during training.
     interval_conditioning: bool = True
     interval_min: float = 0.1
-    interval_delta_power: float = 1.0
     perceptual_weight: float = 0.0
-    perceptual_mode: str = "full"
+    #: Which feature extractor to use.
+    #:   "dinov2"  -- facebook/dinov2-base, patch 14, 16x16 grid at 224x224.
+    #:   "lpips"   -- AlexNet LPIPS, kept only as the failed baseline.
+    perceptual_feature: str = "dinov2"
+    #: Erode the patch mask by this many DINO patches before the loss.
+    #: 1 avoids boundary patches whose receptive field crosses the mask
+    #: edge (the discrimination check found oracle distance 0.21-0.23 on
+    #: some samples purely from that bleed).
+    perceptual_mask_erode: int = 1
+# ---------------------------------------------------- perceptual features --
+
+_IMAGENET_MEAN = (0.485, 0.456, 0.406)
+_IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+def _dino_normalize(img: torch.Tensor) -> torch.Tensor:
+    """img: (B, 3, H, W) in [-1, 1]. Returns ImageNet-normalized, 224x224."""
+    img = (img + 1.0) / 2.0
+    mean = torch.tensor(_IMAGENET_MEAN, device=img.device,
+                        dtype=img.dtype).view(1, 3, 1, 1)
+    std = torch.tensor(_IMAGENET_STD, device=img.device,
+                       dtype=img.dtype).view(1, 3, 1, 1)
+    img = (img - mean) / std
+    img = F.interpolate(img, size=(224, 224), mode="bilinear",
+                        align_corners=False)
+    return img
+
+
+def dino_patches(dino, img_neg1_1: torch.Tensor) -> torch.Tensor:
+    """img_neg1_1: (B, 3, H, W) in [-1, 1].
+    Returns L2-normalized patch features (B, N, D), N=256."""
+    x = _dino_normalize(img_neg1_1)
+    out = dino(pixel_values=x)
+    patches = out.last_hidden_state[:, 1:, :]  # drop CLS
+    patches = patches / patches.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+    return patches
+
+
+def mask_to_patch_grid(mask: torch.Tensor, grid: int = 16,
+                       erode: int = 1) -> torch.Tensor:
+    """mask: (B, 1, h, w) in {0, 1}. Returns (B, N) bool, N = grid*grid.
+
+    `erode` shrinks the mask by that many patches. Boundary patches have
+    receptive fields that cross the mask edge, so their feature distance
+    is nonzero even for the oracle -- eroding removes that.
+    """
+    m = F.adaptive_avg_pool2d(mask, (grid, grid))
+    m = (m > 0.5)
+    if erode > 0:
+        k = 2 * erode + 1
+        m = F.max_pool2d(
+            (~m).float().view(mask.shape[0], 1, grid, grid),
+            kernel_size=k, stride=1, padding=erode,
+        ).view(mask.shape[0], -1) < 0.5
+    return m
+
+
+def dino_patch_loss(dino, img_pred: torch.Tensor, img_tgt: torch.Tensor,
+                    mask: torch.Tensor, erode: int = 1) -> torch.Tensor:
+    """Mean (1 - cos) over mask patches, in DINOv2 feature space."""
+    p_pred = dino_patches(dino, img_pred)
+    with torch.no_grad():
+        p_tgt = dino_patches(dino, img_tgt)
+    m = mask_to_patch_grid(mask, grid=16, erode=erode)
+    cos = (p_pred * p_tgt).sum(dim=-1)
+    d = (1.0 - cos) * m.float()
+    return d.sum() / m.float().sum().clamp(min=1.0)
     
 def sample_path(
     z_src: torch.Tensor,
@@ -158,7 +223,6 @@ def sample_interval_path(
     z_src: torch.Tensor,
     z_tgt: torch.Tensor,
     min_interval: float = 0.1,
-    delta_power: float = 1.0,
     generator: torch.Generator | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Sample an interval-conditioned straight-line transport target.
@@ -178,11 +242,11 @@ def sample_interval_path(
 
     s = torch.rand(b, device=device, generator=generator)
     remaining = 1.0 - s
-    u = torch.rand(b, device=device, generator=generator)
-    if delta_power != 1:
-        u = u ** delta_power
+
     # ensure r > s and avoid tiny intervals
-    delta = min_interval + (remaining - min_interval).clamp(min=0) * u
+    delta = min_interval + (remaining - min_interval).clamp(min=0) * torch.rand(
+        b, device=device, generator=generator
+    )
     delta = torch.minimum(delta, remaining.clamp(min=1e-4))
     r = s + delta
 
@@ -208,6 +272,7 @@ def pairflow_loss(
     cfg: PairFlowConfig,
     generator: torch.Generator | None = None,
     vae=None,
+    dino=None,
     lpips_fn=None,
 ) -> tuple[torch.Tensor, dict]:
     """Masked rectified-flow regression from source to target.
@@ -218,9 +283,7 @@ def pairflow_loss(
     """
     if cfg.interval_conditioning:
         z_s, s, r, v = sample_interval_path(
-            z_src, z_tgt, min_interval=cfg.interval_min,
-            delta_power=cfg.interval_delta_power,
-            generator=generator,
+            z_src, z_tgt, min_interval=cfg.interval_min, generator=generator
         )
     else:
         z_s, s, v = sample_path(
@@ -259,20 +322,20 @@ def pairflow_loss(
     l_out = (err * outside).sum() / (n_out * err.shape[1])
 
     loss = cfg.inside_weight * l_in + cfg.outside_weight * l_out
+    # ---- perceptual loss -------------------------------------------
+    # Discrimination check (scripts/feature_discrimination.py) on the
+    # sigma0=0.0 checkpoint: in-mask DINOv2 patch distance pred/oracle
+    # = 30.1, vs LPIPS = 3.8. LPIPS training did not sharpen images
+    # because in LPIPS's feature space the blurry MSE optimum already
+    # sits close to the sharp target; DINO's does not. So DINO.
+    loss = cfg.inside_weight * l_in + cfg.outside_weight * l_out
 
+    # ---- perceptual loss -------------------------------------------
+    l_percept = None
     if cfg.perceptual_weight > 0:
-        if vae is None or lpips_fn is None:
+        if vae is None:
             raise RuntimeError(
-                f"perceptual_weight={cfg.perceptual_weight} > 0 but "
-                f"vae={'None' if vae is None else 'set'}, "
-                f"lpips_fn={'None' if lpips_fn is None else 'set'}. "
-                "The caller must pass both. Fix the train loop or set "
-                "perceptual_weight=0.")
-        if cfg.perceptual_mode != "full":
-            raise NotImplementedError(
-                f"perceptual_mode={cfg.perceptual_mode!r} not implemented; "
-                "only 'full' is supported.")
-
+                "perceptual_weight > 0 but vae=None; caller must pass it.")
         vae_dtype = next(vae.parameters()).dtype
         scaling = float(vae.config.scaling_factor)
         shift = float(getattr(vae.config, "shift_factor", 0.0) or 0.0)
@@ -284,16 +347,27 @@ def pairflow_loss(
             z_ref = z_tgt / scaling + shift
             img_tgt = vae.decode(z_ref.to(vae_dtype)).sample.float().clamp(-1, 1)
 
-        l_percept = lpips_fn(img_pred, img_tgt).mean()
+        if cfg.perceptual_feature == "dinov2":
+            if dino is None:
+                raise RuntimeError(
+                    "perceptual_feature='dinov2' but dino=None.")
+            l_percept = dino_patch_loss(
+                dino, img_pred, img_tgt, mask,
+                erode=cfg.perceptual_mask_erode)
+        elif cfg.perceptual_feature == "lpips":
+            if lpips_fn is None:
+                raise RuntimeError(
+                    "perceptual_feature='lpips' but lpips_fn=None.")
+            l_percept = lpips_fn(img_pred, img_tgt).mean()
+        else:
+            raise ValueError(
+                f"perceptual_feature must be 'dinov2' or 'lpips', got "
+                f"{cfg.perceptual_feature!r}")
+
         loss = loss + cfg.perceptual_weight * l_percept
-    else:
-        l_percept = None
+
     with torch.no_grad():
-        # Per-element means throughout. The first version reported u_norm_in
-        # and v_norm_in as sqrt(sum/n_in) while summing over all 16 latent
-        # channels, making them 4x the per-element RMS -- not comparable with
-        # loss_in, which IS a per-element mean. That hid the only question
-        # that matters early on: is the model beating a prediction of zero?
+        # Per-element means throughout. ...
         C = err.shape[1]
         v2_in = float((v.pow(2) * inside).sum() / (n_in * C))
         u2_in = float((u.pow(2) * inside).sum() / (n_in * C))

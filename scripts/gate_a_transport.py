@@ -126,17 +126,31 @@ def cmd_train(args) -> int:
                             mask_encoder_kind=args.mask_encoder_kind)
     vae = None
     lpips_fn = None
+    vae = None
+    dino = None
+    lpips_fn = None
     if args.perceptual_weight > 0:
         from diffusers import AutoencoderKL
-        import lpips as lpips_lib
-        print(f"[train] loading VAE and LPIPS for perceptual loss "
-              f"(weight={args.perceptual_weight})")
+        print(f"[train] loading VAE (fp32) for perceptual loss")
         vae = AutoencoderKL.from_pretrained(
             args.model, subfolder="vae", torch_dtype=torch.float32
         ).to(args.device).eval()
         vae.requires_grad_(False)
-        lpips_fn = lpips_lib.LPIPS(net="alex").to(args.device).eval()
-        lpips_fn.requires_grad_(False)
+
+        if args.perceptual_feature == "dinov2":
+            from transformers import AutoModel
+            print("[train] loading DINOv2-base")
+            dino = AutoModel.from_pretrained("facebook/dinov2-base")
+            dino = dino.to(args.device).eval()
+            dino.requires_grad_(False)
+        elif args.perceptual_feature == "lpips":
+            import lpips as lpips_lib
+            print("[train] loading LPIPS (alex)")
+            lpips_fn = lpips_lib.LPIPS(net="alex").to(args.device).eval()
+            lpips_fn.requires_grad_(False)
+        else:
+            raise SystemExit(
+                f"unknown --perceptual-feature {args.perceptual_feature!r}")
     # Gradient checkpointing trades ~30-40% step time for activation memory,
     # same as gate_b_meanflow.py's own dial -- but Gate A never needs
     # forward-mode AD (pairflow_loss has no JVP estimator at all), so unlike
@@ -180,7 +194,8 @@ def cmd_train(args) -> int:
     pf = PairFlowConfig(mask_dropout=args.mask_dropout,
                         cond_dropout=args.cond_dropout,
                         sigma0=args.sigma0,
-                        perceptual_weight=args.perceptual_weight)
+                        perceptual_weight=args.perceptual_weight,
+                        perceptual_feature=args.perceptual_feature)
 
     def loss_fn(model, batch, step, cfg):
         dev, mdt = args.device, model.model_dtype
@@ -193,6 +208,7 @@ def cmd_train(args) -> int:
             batch["pooled"].to(dev, mdt),
             pf,
             vae=vae,
+            dino=dino,
             lpips_fn=lpips_fn,
         )
 
@@ -2108,6 +2124,17 @@ def main() -> int:
                         "split between a mask-independent global operating "
                         "point and a mask-conditioned local edit, NOT "
                         "checkpoint-compatible with 'single'.")
+    t.add_argument("--perceptual-weight", type=float, default=0.0,
+                   help="weight on feature-space perceptual loss. 0.0 "
+                        "(default) is the original MSE-only objective. "
+                        "0.1 is the recommended start. The "
+                        "discrimination check found DINOv2 pred/oracle "
+                        "= 30.1 vs LPIPS 3.8, so DINO is the intended "
+                        "feature.")
+    t.add_argument("--perceptual-feature", default="dinov2",
+                   choices=("dinov2", "lpips"),
+                   help="'dinov2' (recommended) or 'lpips' (kept as the "
+                        "failed baseline).")
     t.add_argument("--log-every", type=int, default=25)
     t.add_argument("--ckpt-every", type=int, default=500,
                    help="numbered snapshots land every 5x this")
@@ -2201,14 +2228,6 @@ def main() -> int:
     ws.set_defaults(fn=cmd_watch_sweep)
 
     d = sub.add_parser("diagnose")
-    t.add_argument("--perceptual-weight", type=float, default=0.0,
-                   help="weight on LPIPS perceptual loss computed on VAE-"
-                        "decoded images. 0.0 (default) is the original "
-                        "MSE-only objective. 0.1 is the recommended "
-                        "starting point -- the MSE-vs-LPIPS correlation "
-                        "check (r=0.23) shows these measure almost "
-                        "independent things, so the optimum moves. "
-                        "Requires `pip install lpips`.")
     d.add_argument("--s-sweep", action="store_true",
                    help="diagnose mode: fix Delta and sweep the query "
                         "point s along the ground-truth line. Isolates "
