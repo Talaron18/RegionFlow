@@ -53,6 +53,8 @@ import torch.nn as nn
 
 from .conditioning import GlobalLocalMaskEncoder, MaskEncoder, make_interval_embedding
 from .gating import GateHolder, adapter_parameters, inject_lora
+from .source_cond import (build_cond_input, grad_mask_report,
+                          patch_embed_in_channels, make_source_cond)
 
 
 def apply_mask_conditioning(
@@ -145,6 +147,12 @@ class AdapterConfig:
     #: "centered" CenteredIntervalEmbedding: g(t) + [f(t,Delta) - f(t,0)].
     #: Default stays "concat" so every existing checkpoint loads unchanged.
     interval_kind: str = "concat"
+    #: H3. False: Delta = t - r is clamped at 0, so a query with r > t reads
+    #: exactly as r == t (every pre-H3 checkpoint). True: signed Delta, the
+    #: reverse (inversion) direction is representable. Identical forward pass
+    #: for r <= t either way; no parameters differ, so any checkpoint loads
+    #: under either setting. Only meaningful in the ungated modes.
+    signed_interval: bool = False
     #: "single"       MaskEncoder -- one head produces the whole delta_z,
     #:                 operating-point offset and mask-conditioned content
     #:                 entangled. Default, byte-identical for every existing
@@ -158,6 +166,25 @@ class AdapterConfig:
     mask_encoder_kind: str = "single"
     #: SD3 scales sigma by this before the transformer sees it.
     num_train_timesteps: int = 1000
+    #: TIER B (EDITOR_PLAN.md section 2). Feed the SOURCE latent and the mask to
+    #: the transformer as extra input channels on pos_embed.proj (16 -> 48,
+    #: UltraEdit's precedent), instead of -- or as well as -- the additive
+    #: mask path above. Default False: byte-identical behaviour for every
+    #: existing checkpoint and every existing run.
+    #:
+    #: Turning this on REQUIRES z_src and mask_cond on every forward; there is
+    #: no silent fallback, because a forward that quietly dropped the source
+    #: would train a model that ignores it while every log line looked normal.
+    source_cond: bool = False
+    #: Only the 32 new columns receive gradient. The 16 pretrained columns stay
+    #: bit-identical, which is what makes "zero-init the new channels" a
+    #: conservative change rather than a partial re-initialisation of the base.
+    source_cond_extra_only: bool = True
+    #: "zero"   step 0 IS the base model (the plan's choice, and what the
+    #:          identity guarantee is about).
+    #: "source" copy the pretrained columns into the image block, as SD3
+    #:          InstructPix2Pix does. Offered for the comparison, not default.
+    source_cond_init: str = "zero"
 
 
 class TransportAdapter(nn.Module):
@@ -181,9 +208,22 @@ class TransportAdapter(nn.Module):
 
         pooled_dim = int(transformer.config.pooled_projection_dim)
         latent_ch = int(transformer.config.in_channels)
-        self.interval = (make_interval_embedding(cfg.interval_kind, pooled_dim)
+        self.interval = (make_interval_embedding(cfg.interval_kind, pooled_dim,
+                                                 signed=cfg.signed_interval)
                          if cfg.use_interval else None)
         self.mask_enc = self._build_mask_enc(latent_ch, cfg) if cfg.use_mask else None
+
+        # TIER B, LAST: the widening rewrites transformer.config.in_channels, so
+        # anything that reads the latent channel count (the mask encoder and the
+        # additive path above) must have read it already.
+        self.source_cond = None
+        if cfg.source_cond:
+            self.source_cond = make_source_cond(
+                self.transformer,
+                image_channels=latent_ch, mask_channels=1,
+                mask_repeat_to=latent_ch,
+                extra_only=cfg.source_cond_extra_only,
+                init_extra=cfg.source_cond_init, trainable=True)
 
     @staticmethod
     def _build_mask_enc(latent_ch: int, cfg: AdapterConfig) -> nn.Module:
@@ -203,6 +243,14 @@ class TransportAdapter(nn.Module):
     def _gate(self, t: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
         if self.cfg.mode in ("pair", "meanflow"):
             return torch.ones_like(t)
+        # The gated (legacy) modes multiply every trainable path by Delta. A
+        # signed gate would force the correction to be odd in Delta, an |Delta|
+        # gate would force it even; neither has been argued for, so refuse
+        # rather than pick one silently. Unsigned: unchanged.
+        if self.cfg.signed_interval:
+            raise NotImplementedError(
+                f"signed_interval is not defined for gated mode "
+                f"{self.cfg.mode!r}; use mode='meanflow'")
         return (t - r).clamp(min=0.0)
 
     def trainable_parameters(self):
@@ -210,6 +258,34 @@ class TransportAdapter(nn.Module):
 
     def num_trainable(self) -> int:
         return sum(p.numel() for p in self.trainable_parameters())
+
+    def _condition_input(self, z_in: torch.Tensor,
+                         z_src: torch.Tensor | None,
+                         mask_cond: torch.Tensor | None) -> torch.Tensor:
+        """Append the source + mask channels when tier B is on.
+
+        THERE IS NO SILENT FALLBACK ON PURPOSE. If `source_cond` is enabled and
+        a caller forgets to pass the source, the tempting behaviour is to skip
+        the conditioning and carry on -- which would train a model that ignores
+        the source completely while the loss curve, the shape checks and the
+        episode logs all looked perfectly normal. That is the exact class of
+        bug this project keeps paying for, so it raises instead.
+        """
+        if self.source_cond is None:
+            if z_src is not None or mask_cond is not None:
+                raise ValueError(
+                    "z_src/mask_cond were passed but AdapterConfig.source_cond "
+                    "is False, so they would be silently ignored. Turn "
+                    "source_cond on, or stop passing them.")
+            return z_in
+        if z_src is None or mask_cond is None:
+            raise ValueError(
+                "AdapterConfig.source_cond is on but "
+                f"{'z_src' if z_src is None else 'mask_cond'} is None. The "
+                "source and mask are the conditioning in this mode; dropping "
+                "them would train a model that ignores the source while every "
+                "log line looked normal.")
+        return build_cond_input(z_in, z_src, mask_cond, self.source_cond)
 
     # ------------------------------------------------------------- forward --
     def forward(
@@ -224,6 +300,8 @@ class TransportAdapter(nn.Module):
         negative_embeds: torch.Tensor | None = None,
         negative_pooled: torch.Tensor | None = None,
         mask_dc_ablate: bool = False,
+        z_src: torch.Tensor | None = None,      # (B, C, h, w) tier B
+        mask_cond: torch.Tensor | None = None,  # (B, 1, h, w) tier B
     ) -> torch.Tensor:
         """Return u(z, r, t, c, M) in fp32.
 
@@ -241,6 +319,9 @@ class TransportAdapter(nn.Module):
         # --- mask into the latent (zero-init conv; nothing at step 0) -------
         z_in = apply_mask_conditioning(z, mask, self.mask_enc, gate,
                                        dc_ablate=mask_dc_ablate)
+
+        # --- tier B: source + mask as INPUT CHANNELS ------------------------
+        z_in = self._condition_input(z_in, z_src, mask_cond)
 
         # --- interval into pooled projections ------------------------------
         pooled_in = pooled
@@ -296,13 +377,24 @@ class TransportAdapter(nn.Module):
         return u_un + guidance * (u_c - u_un)
 
     def base_velocity(self, z, t, prompt_embeds, pooled, guidance=1.0,
-                      negative_embeds=None, negative_pooled=None) -> torch.Tensor:
+                      negative_embeds=None, negative_pooled=None,
+                      z_src=None, mask_cond=None) -> torch.Tensor:
         """Frozen pretrained v(z, t, c), adapter fully disabled.
 
         This is the teacher for Gate B and the control for everything else.
+
+        NOTE ON `z_src`/`mask_cond`: with tier B's widened conv the transformer
+        cannot be called on a 16-channel latent at all, so the "frozen base"
+        here means the base MODEL's function -- the latent columns it was
+        pretrained with, with the source/mask columns contributing exactly what
+        they currently contribute. Under `init_extra="zero"` and before any
+        training that is exactly the original base model. The adapter (LoRA,
+        interval, additive mask) is disabled as before; the tier B input
+        channels are part of the backbone, not of the adapter.
         """
         dtype = self.model_dtype
         timestep = t.float() * self.cfg.num_train_timesteps
+        z_in = self._condition_input(z, z_src, mask_cond)
         # no_grad first, so no_checkpoint_without_grad reads grad as already
         # disabled and takes its disabling branch. This call is never part of
         # a backward -- it is the frozen teacher -- so checkpointing it only
@@ -311,13 +403,13 @@ class TransportAdapter(nn.Module):
                 self.holder.scope(None):
             if guidance <= 1.0 or negative_embeds is None:
                 return self.transformer(
-                    hidden_states=z.to(dtype),
+                    hidden_states=z_in.to(dtype),
                     encoder_hidden_states=prompt_embeds,
                     pooled_projections=pooled.to(dtype),
                     timestep=timestep, return_dict=False,
                 )[0].float()
             out = self.transformer(
-                hidden_states=torch.cat([z, z]).to(dtype),
+                hidden_states=torch.cat([z_in, z_in]).to(dtype),
                 encoder_hidden_states=torch.cat([negative_embeds, prompt_embeds]),
                 pooled_projections=torch.cat(
                     [negative_pooled if negative_pooled is not None else pooled,
@@ -330,7 +422,7 @@ class TransportAdapter(nn.Module):
     # ------------------------------------------------------------- asserts --
     @torch.no_grad()
     def check_identity(self, z, t, prompt_embeds, pooled, mask=None,
-                       tol: float = 1e-4) -> dict:
+                       tol: float = 1e-4, z_src=None, mask_cond=None) -> dict:
         """Assert the two structural guarantees. Run before every training run.
 
         - boundary: at r == t, u must equal the frozen base velocity. In
@@ -340,12 +432,20 @@ class TransportAdapter(nn.Module):
         - the residual must be nonzero somewhere, or the adapter is not wired
           in at all and a null result would mean nothing. Stage 0 read
           byte-identical output as a finding three separate times.
+
+        With tier B's source_cond on, `z_src`/`mask_cond` are required: the
+        transformer no longer accepts a latent-only input, and both sides of
+        every comparison below are conditioned the same way, so the boundary
+        property is unchanged by conditioning being present.
         """
         stale_before = self.holder.stale_reads
-        base = self.base_velocity(z, t, prompt_embeds, pooled)
-        same = self(z, t, t.clone(), prompt_embeds, pooled, mask=mask)
+        base = self.base_velocity(z, t, prompt_embeds, pooled,
+                                  z_src=z_src, mask_cond=mask_cond)
+        same = self(z, t, t.clone(), prompt_embeds, pooled, mask=mask,
+                    z_src=z_src, mask_cond=mask_cond)
         far_r = torch.zeros_like(t)
-        far = self(z, t, far_r, prompt_embeds, pooled, mask=mask)
+        far = self(z, t, far_r, prompt_embeds, pooled, mask=mask,
+                   z_src=z_src, mask_cond=mask_cond)
 
         boundary = (same - base).abs().max().item()
         residual = (far - base).abs().max().item()
@@ -374,10 +474,20 @@ class TransportAdapter(nn.Module):
 def freeze_and_report(adapter: TransportAdapter) -> str:
     total = sum(p.numel() for p in adapter.parameters())
     train = adapter.num_trainable()
+    extra = ""
+    if adapter.source_cond is not None:
+        spec = adapter.source_cond
+        proj = adapter.transformer.pos_embed.proj
+        # The claim that the conditioning path is ALIVE, made checkable at the
+        # top of every run rather than assumed: if these 32 columns are not in
+        # the trainable set, tier B trains a model that cannot see the source.
+        extra = ("\n" + spec.describe()
+                 + f"\n  pos_embed.proj trainable={proj.weight.requires_grad}, "
+                   f"columns {spec.prev_channels}:{spec.total_channels} new")
     return (
         f"{adapter.report}\n"
         f"trainable {train/1e6:.2f}M / {total/1e6:.1f}M "
-        f"({100*train/total:.3f}%)  mode={adapter.cfg.mode}"
+        f"({100*train/total:.3f}%)  mode={adapter.cfg.mode}{extra}"
     )
 
 
@@ -477,7 +587,256 @@ def self_test() -> None:
     gl_injected = gl_ablated - z
     assert torch.allclose(gl_injected.mean(dim=(2, 3)), torch.zeros(B, C), atol=1e-3)
 
+    _self_test_source_cond()
+
     print("adapter self-test OK")
+
+
+def _self_test_source_cond() -> None:
+    """TIER B END TO END THROUGH THE ADAPTER, on CPU with a toy transformer.
+
+    This closes the gap this module's own self_test docstring used to admit:
+    "forward's transformer path, check_identity ... needs a loaded
+    SD3Transformer2DModel and isn't covered here". A toy SD3 transformer is
+    enough to cover the WIRING, which is where the failures have been -- the
+    real weights change nothing about whether z_src reaches pos_embed.proj, or
+    whether the new columns are in the optimizer's parameter list.
+    """
+    from diffusers.models.transformers.transformer_sd3 import SD3Transformer2DModel
+    torch.manual_seed(0)
+    tr = SD3Transformer2DModel(
+        sample_size=8, patch_size=2, in_channels=16, num_layers=2,
+        attention_head_dim=8, num_attention_heads=2, joint_attention_dim=16,
+        caption_projection_dim=16, pooled_projection_dim=16,
+        pos_embed_max_size=16, qk_norm="rms_norm", out_channels=16)
+
+    cfg = AdapterConfig(mode="interval", rank=4, use_mask=False,
+                        use_interval=False, source_cond=True)
+    ad = TransportAdapter(tr, cfg)
+    assert ad.source_cond is not None
+    assert patch_embed_in_channels(ad.transformer) == 48, \
+        patch_embed_in_channels(ad.transformer)
+
+    # THE OPTIMIZER MUST SEE THE NEW COLUMNS. `adapter_parameters` yields every
+    # parameter with requires_grad; the adapter froze the whole transformer
+    # first, so this is the one line that decides whether tier B can learn
+    # anything about the source at all.
+    names = [n for n, p in ad.named_parameters() if p.requires_grad]
+    proj_names = [n for n in names if "pos_embed.proj" in n]
+    assert proj_names, \
+        ("pos_embed.proj is not trainable, so the source/mask columns can "
+         f"never leave zero. Trainable parameters mention: {names[:6]}")
+
+    B, h, w = 2, 8, 8
+    z = torch.randn(B, 16, h, w)
+    z_src = torch.randn(B, 16, h, w)
+    mcond = torch.zeros(B, 1, h, w)
+    mcond[:, :, 3:6, 3:6] = 1.0
+    pe = torch.randn(B, 5, 16)
+    po = torch.randn(B, 16)
+    t = torch.full((B,), 0.5)
+
+    # 1. no silent fallback, in either direction
+    try:
+        ad(z, t, t, pe, po)
+    except ValueError as exc:
+        assert "source_cond is on" in str(exc), exc
+    else:
+        raise AssertionError(
+            "with source_cond on, forward MUST refuse to run without the "
+            "source; skipping it silently trains a model that ignores it")
+    cfg_off = AdapterConfig(mode="interval", rank=4, use_mask=False,
+                            use_interval=False, source_cond=False)
+    ad_off = TransportAdapter(
+        SD3Transformer2DModel(
+            sample_size=8, patch_size=2, in_channels=16, num_layers=2,
+            attention_head_dim=8, num_attention_heads=2,
+            joint_attention_dim=16, caption_projection_dim=16,
+            pooled_projection_dim=16, pos_embed_max_size=16,
+            qk_norm="rms_norm", out_channels=16), cfg_off)
+    assert ad_off.source_cond is None
+    try:
+        ad_off(z, t, t, pe, po, z_src=z_src, mask_cond=mcond)
+    except ValueError as exc:
+        assert "silently ignored" in str(exc), exc
+    else:
+        raise AssertionError("passing z_src with source_cond off must raise")
+
+    # 2. the boundary guarantee still holds WITH conditioning present, and at
+    #    initialisation the adapter is a no-op -- every trainable path is
+    #    zero-init, so a zero residual here is the identity guarantee working,
+    #    NOT a dead adapter (this assertion used to be written the other way
+    #    round, which would have failed on a perfectly good configuration).
+    chk = ad.check_identity(z, t, pe, po, z_src=z_src, mask_cond=mcond)
+    assert chk["boundary_ok"], chk
+    assert chk["adapter_is_live"], chk
+    assert chk["residual_at_r0"] == 0.0, chk
+
+    # 3. the new columns are alive through the ADAPTER's own forward path: one
+    #    backward and they must have gradient (the grad mask keeps the
+    #    pretrained ones at exactly zero)
+    ad.train()
+    out = ad(z, t, torch.zeros_like(t), pe, po, z_src=z_src, mask_cond=mcond)
+    ((out - z_src) ** 2).mean().backward()
+    rep = grad_mask_report(ad.transformer)
+    assert rep["new_learning"] and rep["pretrained_frozen"], rep
+
+    # ...and ONE step must move the source columns while leaving the pretrained
+    #    columns bit-identical. This is the difference between "the graph
+    #    reaches them" and "training can actually use the source".
+    before = ad.transformer.pos_embed.proj.weight.detach().clone()
+    opt = torch.optim.SGD(list(ad.trainable_parameters()), lr=1e-3)
+    opt.step()
+    after = ad.transformer.pos_embed.proj.weight.detach()
+    assert torch.equal(after[:, :16], before[:, :16]), \
+        "a step moved the pretrained columns despite the gradient mask"
+    assert not torch.equal(after[:, 16:], before[:, 16:]), \
+        "a step did not move the new source/mask columns"
+    chk2 = ad.check_identity(z, t, pe, po, z_src=z_src, mask_cond=mcond)
+    assert chk2["boundary_ok"], chk2
+    assert chk2["residual_at_r0"] > 0.0, \
+        f"after a step the adapter must no longer be a no-op. {chk2}"
+
+    # 4. the report must SAY which conditioning a checkpoint came from
+    text = freeze_and_report(ad)
+    assert "source+mask conditioning" in text and "48" in text, text
+    assert "pos_embed.proj trainable=True" in text, text
+    print("  tier B wiring: 16 -> 48 channels, no silent fallback, the new")
+    print("  columns are trainable and receive gradient through forward()")
+
+    _self_test_default_path_unchanged()
+
+
+def _self_test_default_path_unchanged(_unused=None) -> None:
+    """source_cond=False must be BYTE-IDENTICAL to the code before tier B.
+
+    "It only adds a pass-through call" is an argument, not evidence. Three
+    measurements, because they can fail for different reasons:
+
+      1. `_condition_input` returns the SAME OBJECT when off -- not merely an
+         equal tensor. No copy, no cast, no concat, nothing that could change a
+         float or a dtype.
+      2. a full forward (plain AND the CFG branch) equals a hand-written
+         replication of the pre-tier-B path, bit for bit.
+      3. the state dict keys are unchanged, so every existing checkpoint keeps
+         loading with exactly the same keys.
+
+    The adapter under test has BOTH the mask path and the interval path
+    enabled, because those are what tier A and tier D actually run and they are
+    what the replication has to cover.
+    """
+    import torch as _t
+    from diffusers.models.transformers.transformer_sd3 import (
+        SD3Transformer2DModel,
+    )
+    torch.manual_seed(0)
+    tr = SD3Transformer2DModel(
+        sample_size=8, patch_size=2, in_channels=16, num_layers=2,
+        attention_head_dim=8, num_attention_heads=2, joint_attention_dim=16,
+        caption_projection_dim=16, pooled_projection_dim=16,
+        pos_embed_max_size=16, qk_norm="rms_norm", out_channels=16)
+    ad = TransportAdapter(tr, AdapterConfig(
+        mode="interval", rank=4, use_mask=True, use_interval=True,
+        source_cond=False))
+    assert ad.mask_enc is not None and ad.interval is not None
+
+    B, C, h, w = 2, 16, 8, 8
+    z = torch.randn(B, C, h, w)
+    mask = torch.zeros(B, 1, h, w)
+    mask[:, :, 2:6, 2:6] = 1.0
+    pe = torch.randn(B, 5, 16)
+    po = torch.randn(B, 16)
+    t = torch.full((B,), 0.7)
+    r = torch.full((B,), 0.2)
+
+    # 1. identity, not equality
+    z_in = apply_mask_conditioning(z, mask, ad.mask_enc, ad._gate(t, r))
+    assert ad._condition_input(z_in, None, None) is z_in, \
+        "with source_cond off the conditioning must be the same OBJECT"
+
+    # 2. bit-for-bit, including the interval term and the mask path. The
+    #    replication has to reproduce the GATE SCOPE too: transport/gating.py
+    #    refuses to let an adapted layer run outside one, which is itself a
+    #    guard against the "forgot to wrap a new path" bug.
+    ad.eval()
+    dtype = ad.model_dtype
+    with torch.no_grad():
+        # hand-written replication of the ORIGINAL forward body
+        gate = ad._gate(t, r)
+        ref_in = apply_mask_conditioning(z, mask, ad.mask_enc, gate)
+        pooled_in = po + ad.interval(t, r).to(po.dtype)
+        ts = t.float() * ad.cfg.num_train_timesteps
+        with ad.holder.scope(gate), no_checkpoint_without_grad(ad.transformer):
+            ref = ad.transformer(
+                hidden_states=ref_in.to(dtype),
+                encoder_hidden_states=pe.to(dtype),
+                pooled_projections=pooled_in.to(dtype), timestep=ts,
+                return_dict=False)[0].float()
+        got = ad(z, t, r, pe, po, mask=mask)
+
+        # ...and the CFG branch, where z_in is duplicated and the gate must
+        # cover both halves
+        neg = torch.randn_like(pe)
+        npo = torch.randn_like(po)
+        with ad.holder.scope(torch.cat([gate, gate])), \
+                no_checkpoint_without_grad(ad.transformer):
+            ref_cfg = ad.transformer(
+                hidden_states=torch.cat([ref_in, ref_in]).to(dtype),
+                encoder_hidden_states=torch.cat([neg, pe]).to(dtype),
+                pooled_projections=torch.cat([npo, pooled_in]).to(dtype),
+                timestep=ts.repeat(2), return_dict=False)[0]
+        a, b = ref_cfg.float().chunk(2)
+        ref_g = a + 3.0 * (b - a)
+        got_g = ad(z, t, r, pe, po, mask=mask, guidance=3.0,
+                   negative_embeds=neg, negative_pooled=npo)
+    assert torch.equal(ref, got), \
+        f"plain forward changed: max abs diff {(ref - got).abs().max():.3e}"
+    assert torch.equal(ref_g, got_g), \
+        f"CFG forward changed: max abs diff {(ref_g - got_g).abs().max():.3e}"
+
+    # ...and the frozen teacher path, which tier B also touched
+    with torch.no_grad(), ad.holder.scope(None), \
+            no_checkpoint_without_grad(ad.transformer):
+        base_ref = ad.transformer(
+            hidden_states=z.to(dtype), encoder_hidden_states=pe,
+            pooled_projections=po.to(dtype),
+            timestep=ts, return_dict=False)[0].float()
+        base_got = ad.base_velocity(z, t, pe, po)
+    assert torch.equal(base_ref, base_got), \
+        "base_velocity changed for a source_cond=False adapter"
+
+    # 3. checkpoint compatibility. The widening REPLACES pos_embed.proj rather
+    #    than adding a module, so a source_cond=True model has exactly the same
+    #    key NAMES as a source_cond=False one -- only that weight's shape
+    #    differs. Two consequences worth stating, because both are load-bearing:
+    #    a name-filtered checkpoint loader sees no difference, and an old
+    #    checkpoint loaded into a tier B model fails on a SHAPE mismatch, which
+    #    is loud, rather than being silently ignored.
+    tr2 = SD3Transformer2DModel(
+        sample_size=8, patch_size=2, in_channels=16, num_layers=2,
+        attention_head_dim=8, num_attention_heads=2, joint_attention_dim=16,
+        caption_projection_dim=16, pooled_projection_dim=16,
+        pos_embed_max_size=16, qk_norm="rms_norm", out_channels=16)
+    widened = TransportAdapter(tr2, AdapterConfig(
+        mode="interval", rank=4, use_mask=True, use_interval=True,
+        source_cond=True))
+    assert set(ad.state_dict()) == set(widened.state_dict()), \
+        (sorted(set(ad.state_dict()) - set(widened.state_dict()))[:5],
+         sorted(set(widened.state_dict()) - set(ad.state_dict()))[:5])
+    assert tuple(ad.transformer.pos_embed.proj.weight.shape) == (16, 16, 2, 2), \
+        "with source_cond off the patch embed must NOT be widened"
+    assert ad.transformer.config.in_channels == 16
+    # Conv2d weight is (out_channels, IN_channels, kH, kW): the widened axis is
+    # the second one, which is why source_cond slices columns as [:, :16].
+    assert tuple(widened.transformer.pos_embed.proj.weight.shape) == (16, 48, 2, 2), \
+        widened.transformer.pos_embed.proj.weight.shape
+    assert widened.transformer.config.in_channels == 48
+    # the ONLY key whose shape differs is the widened weight
+    differing = [k for k in ad.state_dict()
+                 if ad.state_dict()[k].shape != widened.state_dict()[k].shape]
+    assert differing == ["transformer.pos_embed.proj.weight"], differing
+    print("  source_cond=False is bit-identical: same tensor object through")
+    print("  _condition_input, equal forward/CFG/base_velocity, same state_dict")
 
 
 if __name__ == "__main__":

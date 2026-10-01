@@ -159,8 +159,17 @@ class Trainer:
 
         val_fn(adapter, cfg) -> float, lower is better. Called every
         cfg.val_every steps; the best-scoring checkpoint is kept as
-        ckpt_best.pt alongside the numbered snapshots. Must be deterministic
+        ckpt_valbest.pt alongside the numbered snapshots. Must be deterministic
         -- fixed batch, fixed seed, fixed Delta -- or it selects on noise.
+
+        ckpt_valbest, NOT ckpt_best, and the rename is the point. On
+        fd_distill_5k this val (the fixed-Delta interval SSE) ROSE 59.6k ->
+        117.8k across the run while the independent field eval
+        (eval_interval_field.py) improved monotonically to step 4000-5000, so
+        `best_val` picked step 1000 -- and `ckpt_best.pt` was byte-for-byte
+        `ckpt_step1000.pt` (same size, same mtime). Anything named "best" gets
+        evaluated by someone eventually; this objective's own val is not a
+        validated metric, so the file must not claim to be one.
         """
         self.adapter = adapter
         self.loader = loader
@@ -322,7 +331,7 @@ class Trainer:
                 improved = v < self.best_val
                 if improved:
                     self.best_val = v
-                    self.save("best")
+                    self.save("valbest")
                 extra = dict(getattr(self.val_fn, "last", {}) or {})
                 with self._log_path.open("a") as fh:
                     fh.write(json.dumps({"step": self.step, "val": v,
@@ -330,7 +339,9 @@ class Trainer:
                                          "val_delta": cfg.val_delta,
                                          **extra}) + "\n")
                 print(f"  val={v:.5f} best={self.best_val:.5f}"
-                      f"{'  <- saved ckpt_best' if improved else ''}")
+                      + ("  <- saved ckpt_valbest (NOT the checkpoint to "
+                         "evaluate: this val is not a validated metric)"
+                         if improved else ""))
 
             if self._out_of_time():
                 p = self.save("latest")

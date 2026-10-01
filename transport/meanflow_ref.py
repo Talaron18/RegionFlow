@@ -116,6 +116,18 @@ class RefMeanFlowConfig:
     #: (mass piles up AT the cap; the loss logs how much). max_t clamps t.
     max_delta: float = 1.0
     max_t: float = 1.0
+    #: H3 (H3_SIGNED_DELTA_DESIGN.md Sec.4). Fraction of rows flipped to the
+    #: reverse direction r > t, AFTER the caps, by swapping the endpoints of
+    #: the already-capped interval ("option A, cap-then-flip"): a reverse row
+    #: covers exactly the interval its forward twin would, queried from the
+    #: LOWER endpoint. So |Delta| is an exact mirror, the caps need no reverse
+    #: form, and the t marginal of reverse rows is the lower-endpoint marginal
+    #: (mean ~0.31 vs ~0.53) -- compare directions conditioned on t.
+    #: Drawn from its OWN generator, so (a, b, anchor) are identical to the
+    #: forward-only arm at every step and arms stay row-paired.
+    #: 0.0 = today, bit for bit (no draw is made). Needs a signed embedding;
+    #: gate_b_meanflow.py enforces that.
+    reverse_frac: float = 0.0
     #: GRADIENT CHECKPOINTING FORCES A DEVIATION FROM THE REFERENCE.
     #: torch.utils.checkpoint wraps the forward in a custom autograd.Function
     #: (_NoopSaveInputs) with no jvp rule, so forward-mode AD cannot pass
@@ -145,6 +157,9 @@ class RefMeanFlowConfig:
             val = getattr(self, name)
             if not 0.0 < val <= 1.0:
                 raise ValueError(f"{name} must be in (0, 1], got {val}")
+        if not 0.0 <= self.reverse_frac <= 1.0:
+            raise ValueError(f"reverse_frac must be in [0, 1], "
+                             f"got {self.reverse_frac}")
         if self.fd_eps <= 0:
             raise ValueError(f"fd_eps must be > 0, got {self.fd_eps}")
         if self.first_term not in FIRST_TERMS:
@@ -162,8 +177,32 @@ TANGENTS = ("cond", "boundary", "frozen")
 FIRST_TERMS = ("cond", "frozen")
 
 
+def orient_reverse(t: torch.Tensor, r: torch.Tensor, reverse_frac: float,
+                   rev_generator: torch.Generator | None):
+    """H3 option A, cap-then-flip. Swap (t, r) on a Bernoulli(reverse_frac)
+    subset. Returns (t, r, reverse_mask).
+
+    Call AFTER every cap. Anchor rows (r == t) are unchanged by a swap, so the
+    call may come before or after the anchor mask; the effective reverse
+    INTERVAL fraction is reverse_frac * (1 - data_proportion).
+
+    reverse_frac == 0 returns the inputs untouched and draws NOTHING, so a
+    forward-only run's RNG streams are byte-identical to before H3.
+    """
+    if reverse_frac <= 0.0:
+        return t, r, torch.zeros_like(t, dtype=torch.bool)
+    if rev_generator is None:
+        # A shared stream would shift every later (a, b) draw and unpair the
+        # arm from its forward-only control. Refuse rather than drift.
+        raise ValueError("reverse_frac > 0 needs its own rev_generator")
+    rev = (torch.rand(t.shape[0], device=t.device, generator=rev_generator)
+           < reverse_frac)
+    return torch.where(rev, r, t), torch.where(rev, t, r), rev
+
+
 def sample_tr(batch: int, cfg: RefMeanFlowConfig, device,
-              generator: torch.Generator | None = None):
+              generator: torch.Generator | None = None,
+              rev_generator: torch.Generator | None = None):
     """Reference `sample_tr`: two logit-normal draws, sorted, then r := t on
     the first `data_proportion` of the batch.
 
@@ -201,6 +240,7 @@ def sample_tr(batch: int, cfg: RefMeanFlowConfig, device,
         anchor = (torch.arange(batch, device=device)
                   < int(batch * cfg.data_proportion))
     r = torch.where(anchor, t, r)
+    t, r, _ = orient_reverse(t, r, cfg.reverse_frac, rev_generator)
     return t, r, anchor
 
 
@@ -276,10 +316,15 @@ def central_difference(fn, z_t, t, r, w, eps: float):
     trained time range; the divisor is the actual span. In the interior this
     is exactly the reference's symmetric stencil.
 
-    KNOWN BIAS for interval samples with Delta < eps: the backward point has
-    t - e < r, and the interval embedding clamps h = t - r at 0. The target
-    term is multiplied by Delta < eps, so its weight is small, but it is not
-    zero.
+    KNOWN BIAS for interval samples with |Delta| < eps: the stencil straddles
+    Delta = 0. With an UNSIGNED embedding the far point reads as r == t (the
+    clamp). With a SIGNED embedding it reads the OTHER direction's sheet --
+    correct if the field is smooth through Delta = 0, contaminated by any kink
+    there (H3 design Sec.7.2). This is why signedness is a flag and not simply
+    the new default: unclamping changes the forward TARGET of the ~6.8% of
+    non-anchor rows with Delta < 0.025 (13% at fd_eps 0.05) even with
+    reverse_frac = 0. The target term is multiplied by Delta, so the weight is
+    small but not zero; the loss logs the straddling fraction.
     """
     ep = torch.clamp(1.0 - t, min=0.0, max=eps)
     em = torch.clamp(t, min=0.0, max=eps)
@@ -346,7 +391,9 @@ def ref_meanflow_loss(u_fn, z_t, t, r, v_g, cfg: RefMeanFlowConfig,
         with torch.no_grad():
             first = base_fn(z_t, t).detach().to(v_g.dtype)
 
-    delta = (t - r).clamp(0.0, 1.0).reshape(-1, *([1] * (u.dim() - 1)))
+    # Signed (H3). clamp(-1, 1) is the identity on everything a forward-only
+    # sampler can emit (t - r in [0, 1]), so forward rows are bit-identical.
+    delta = (t - r).clamp(-1.0, 1.0).reshape(-1, *([1] * (u.dim() - 1)))
     u_tgt = (first - delta * du_dt).detach()
 
     # SUM over non-batch dims, not mean. This is the 65536x that put our
@@ -356,7 +403,10 @@ def ref_meanflow_loss(u_fn, z_t, t, r, v_g, cfg: RefMeanFlowConfig,
     loss = (per_sample / adp_wt.detach()).mean()
 
     with torch.no_grad():
-        anchor = (t - r) < 1e-8 if anchor_mask is None else anchor_mask
+        # abs(): without it every reverse row (t - r < 0) would be inferred an
+        # anchor -- the same re-inference bug as small_delta, other sign.
+        anchor = (t - r).abs() < 1e-8 if anchor_mask is None else anchor_mask
+        rev = (r - t) > 1e-8
         stats = {
             "loss": float(loss),
             "sse": float(per_sample.mean()),
@@ -391,8 +441,16 @@ def ref_meanflow_loss(u_fn, z_t, t, r, v_g, cfg: RefMeanFlowConfig,
             "sse_min": float(per_sample.min()),
             "t_at_sse_min": float(t[per_sample.argmin()]),
             # clamping piles probability mass at the cap; 0.0 with no cap
-            "frac_at_delta_cap": float((((t - r) >= cfg.max_delta - 1e-6)
+            "frac_at_delta_cap": float((((t - r).abs() >= cfg.max_delta - 1e-6)
                                         & ~anchor).float().mean()),
+            # H3. `delta_max`/`delta_mean` keep their forward-only meaning
+            # (identical logs for every existing config); these carry both.
+            "frac_reverse": float(rev.float().mean()),
+            "delta_abs_max": float((t - r).abs().max()),
+            # rows whose FD stencil crosses Delta = 0 (see central_difference)
+            "frac_fd_straddle": float((((t - r).abs() < cfg.fd_eps) & ~anchor)
+                                      .float().mean())
+            if cfg.estimator != "jvp" else 0.0,
         }
         # The anchors are the diagnostic that matters: at r == t the target is
         # exactly v_g, so this is plain flow matching and its loss should fall
@@ -400,6 +458,11 @@ def ref_meanflow_loss(u_fn, z_t, t, r, v_g, cfg: RefMeanFlowConfig,
         # them -- which is precisely what the Delta-gate caused.
         if anchor.any():
             stats["sse_anchor"] = float(per_sample[anchor].mean())
-        if (~anchor).any():
-            stats["sse_interval"] = float(per_sample[~anchor].mean())
+        # sse_interval = FORWARD interval rows only, so it means today's thing
+        # in every run; reverse rows get their own series.
+        fwd = ~anchor & ~rev
+        if fwd.any():
+            stats["sse_interval"] = float(per_sample[fwd].mean())
+        if (rev & ~anchor).any():
+            stats["sse_reverse"] = float(per_sample[rev & ~anchor].mean())
     return loss, stats

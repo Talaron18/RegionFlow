@@ -1,0 +1,7 @@
+{
+ "loss_path": "ref",
+ "delta_cap_effective": "static hard max 0.5",
+ "curriculum": false,
+ "max_delta": 0.5,
+ "anchor_mode": "exact"
+}

@@ -52,13 +52,16 @@ from transport.meanflow_ref import (                # noqa: E402
     RefMeanFlowConfig, cond_drop, guided_velocity, ref_meanflow_loss,
 )
 from transport.sampling import sample, shifted_grid, uniform_grid  # noqa: E402
+from transport.source_cond import cond_from_batch  # noqa: E402
 from transport.train import (                       # noqa: E402
     TrainConfig, Trainer, delta_schedule, enable_memory_savers,
 )
 
 
 def build_adapter(model, device, rank, max_blocks=None, dtype="float32",
-                  mode="meanflow", interval_kind="concat"):
+                  mode="meanflow", interval_kind="concat",
+                  source_cond=False, source_cond_extra_only=True,
+                  source_cond_init="zero", signed_interval=False):
     """Load the frozen transformer.
 
     FLOAT32 IS REQUIRED FOR estimator='jvp'. Forward-mode AD promotes its
@@ -85,7 +88,11 @@ def build_adapter(model, device, rank, max_blocks=None, dtype="float32",
         torch_dtype=getattr(torch, dtype)).to(device)
     ad = TransportAdapter(
         tr, AdapterConfig(mode=mode, rank=rank, max_blocks=max_blocks,
-                          interval_kind=interval_kind)
+                          interval_kind=interval_kind,
+                          signed_interval=signed_interval,
+                          source_cond=source_cond,
+                          source_cond_extra_only=source_cond_extra_only,
+                          source_cond_init=source_cond_init)
     ).to(device)
     for p in ad.trainable_parameters():
         p.data = p.data.float()
@@ -284,7 +291,42 @@ def cmd_train(args) -> int:
     adapter = build_adapter(args.model, args.device, args.rank,
                             args.max_blocks, dtype=args.dtype,
                             mode="meanflow" if args.faithful else "interval",
-                            interval_kind=args.interval_kind)
+                            interval_kind=args.interval_kind,
+                            source_cond=args.source_cond,
+                            source_cond_extra_only=not args.source_cond_all_columns,
+                            source_cond_init=args.source_cond_init,
+                            signed_interval=args.signed_interval)
+    # H3 GUARDS. (1) the flag reached the module. (2) reverse rows through an
+    # UNSIGNED embedding would be regressed onto u(z,t,t) with a reverse
+    # target -- a run that trains, logs normally, and teaches the clamp.
+    if adapter.interval is not None and \
+            bool(getattr(adapter.interval, "signed", False)) != args.signed_interval:
+        raise RuntimeError("--signed-interval did not reach the interval "
+                           "embedding")
+    if args.reverse_frac > 0 and not args.signed_interval:
+        raise SystemExit("--reverse-frac > 0 requires --signed-interval")
+    if args.reverse_frac > 0 and args.anchor_mode == "small_delta":
+        raise SystemExit("--reverse-frac > 0 is undefined with "
+                         "--anchor-mode small_delta (a closed route)")
+    # GUARD, same shape as the anchor and interval-kind guards: confirm the flag
+    # reached the MODULE that was built. A tier B run whose conditioning never
+    # got installed trains happily, logs normally and learns nothing about the
+    # source, so this is checked rather than assumed.
+    if args.source_cond:
+        if adapter.source_cond is None:
+            raise RuntimeError(
+                "--source-cond was passed but the adapter has no conditioning "
+                "module: the flag did not reach AdapterConfig.")
+        from transport.source_cond import patch_embed_in_channels
+        got = patch_embed_in_channels(adapter.transformer)
+        if got != 48:
+            raise RuntimeError(
+                f"--source-cond should widen pos_embed.proj to 48 input "
+                f"channels, found {got}")
+    elif adapter.source_cond is not None:
+        raise RuntimeError(
+            "the adapter has source conditioning but --source-cond was not "
+            "passed; something built it from the wrong config")
     # GUARD. Same lesson as the anchor check below: confirm the flag reached
     # the module that was actually built, not just the argparse namespace.
     from transport.conditioning import INTERVAL_KINDS, interval_kind_from_keys
@@ -331,7 +373,7 @@ def cmd_train(args) -> int:
                             data_proportion=args.data_proportion,
                             tangent=args.tangent, max_delta=args.max_delta,
                             max_t=args.max_t, first_term=args.first_term,
-                            norm_p=args.norm_p)
+                            norm_p=args.norm_p, reverse_frac=args.reverse_frac)
     print(f"[meanflow] data_proportion = {ref.data_proportion} "
           f"(reference: 0.75)")
 
@@ -362,7 +404,8 @@ def cmd_train(args) -> int:
             "curriculum would be a no-op at the wide end. Set the caps at or "
             "below --max-delta (for a 'no cap, anchors only' arm, pass "
             f"--cap-start {args.max_delta} --cap-end {args.max_delta}).")
-    assert_flag_arrived(args, ref, [("data_proportion", "data_proportion")])
+    assert_flag_arrived(args, ref, [("data_proportion", "data_proportion"),
+                                    ("reverse_frac", "reverse_frac")])
     assert_flag_arrived(args, cur, [("cap_start", "cap_start"),
                                     ("cap_end", "cap_end"),
                                     ("warmup_frac", "warmup_frac"),
@@ -375,6 +418,11 @@ def cmd_train(args) -> int:
     # runs stop being noise-matched from step 1. Keep noise on the global
     # stream, schedule on this one.
     tr_gen = torch.Generator(device=args.device).manual_seed(args.seed + 1)
+    # H3: the reverse mask gets its OWN stream, created only when used, so
+    # tr_gen's (a, b, anchor) sequence is identical to the forward-only arm
+    # at every step and the two arms stay row-paired (as A0/A1 were).
+    rev_gen = (torch.Generator(device=args.device).manual_seed(args.seed + 2)
+               if args.reverse_frac > 0 else None)
 
     print(f"[curriculum] enabled={cur.enabled} cap {cur.cap_start}->{cur.cap_end} "
           f"warmup_frac={cur.warmup_frac} anchor_mode={cur.anchor_mode} "
@@ -419,13 +467,45 @@ def cmd_train(args) -> int:
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     if cfg_path.exists():
         prev_cfg = json.loads(cfg_path.read_text())
-        changed = {k: (prev_cfg.get(k), v) for k, v in cfg_now.items()
-                   if prev_cfg.get(k) != v}
+        # A field added after the run started (e.g. H3's reverse_frac) is
+        # absent from its json; read absence as the field's default, or every
+        # pre-H3 run would refuse to resume.
+        dflt = dataclasses.asdict(RefMeanFlowConfig())
+        changed = {k: (prev_cfg.get(k, dflt.get(k)), v)
+                   for k, v in cfg_now.items()
+                   if prev_cfg.get(k, dflt.get(k)) != v}
         if changed:
             raise RuntimeError(f"{cfg_path} records a different target "
                                f"config: {changed}. Use a fresh --out.")
     else:
         cfg_path.write_text(json.dumps(cfg_now, indent=1))
+    # ARGS PROVENANCE, next to the target config. `meanflow_config.json` holds
+    # only RefMeanFlowConfig; it does NOT hold the flags that decide the
+    # training Delta range, and that gap cost a full post-mortem. Do not infer
+    # the trained range from the log's `delta_max` either: the Trainer
+    # aggregates every stat over grad-accum (transport/train.py, `agg[k] +=
+    # v / cfg.grad_accum`), so `delta_max` is a mean of per-micro-batch maxima
+    # and understates the true per-step max. The cap has to be RECORDED.
+    args_path = Path(args.out) / "train_args.json"
+    # H3: signedness is not a weight, so a resume cannot detect a mismatch
+    # from the checkpoint. Refuse a resume that flips it.
+    if args_path.exists() and not args.bench_steps:
+        prev_args = json.loads(args_path.read_text())
+        if bool(prev_args.get("signed_interval", False)) != args.signed_interval:
+            raise RuntimeError(f"{args_path} records signed_interval="
+                               f"{prev_args.get('signed_interval', False)}; this "
+                               f"run has {args.signed_interval}. Use a fresh --out.")
+    if not args.bench_steps:
+        (Path(args.out)).mkdir(parents=True, exist_ok=True)
+        args_path.write_text(json.dumps(
+            {**vars(args), "loss_path": ("ref" if args.faithful else "custom"),
+             "delta_cap_effective": (
+                 f"curriculum {args.cap_start}->{args.cap_end} over "
+                 f"{args.warmup_frac} of training"
+                 if args.curriculum else
+                 f"static hard max {args.max_delta} (logit-normal pair, "
+                 f"capped)")}, indent=1, default=str))
+        print(f"[provenance] wrote {args_path}")
 
     def loss_fn_ref(model, batch, step, cfg):
         """Reference-faithful MeanFlow step. No curriculum, 75% anchors."""
@@ -438,23 +518,29 @@ def cmd_train(args) -> int:
         npo = npo1.to(dev, mdt).expand(b, -1)
 
         t, r, anchor = sample_tr_scheduled(b, ref, dev, step, cfg.steps, cur,
-                                           generator=tr_gen)
+                                           generator=tr_gen,
+                                           rev_generator=rev_gen)
         eps = torch.randn_like(x0)
         tt = t.reshape(-1, 1, 1, 1)
         z_t = (1 - tt) * x0 + tt * eps
         v = eps - x0
 
+        # TIER B: the source and the mask, if this run has them. Empty dict
+        # otherwise, so every call below is byte-identical to before.
+        cond = cond_from_batch(batch, args.source_cond, dev)
+
         def base_fn(z_, t_, emb):
             e, p = emb
-            return model.base_velocity(z_, t_, e, p)
+            return model.base_velocity(z_, t_, e, p, **cond)
 
         v_g = guided_velocity(v, z_t, t, base_fn, (pe, po), (npe, npo), ref)
         (pe_in, po_in), v_g = cond_drop(v, v_g, (pe, po), (npe, npo), ref)
 
         loss, stats = ref_meanflow_loss(
-            lambda z_, t_, r_: model(z_, t_, r_, pe_in, po_in),
+            lambda z_, t_, r_: model(z_, t_, r_, pe_in, po_in, **cond),
             z_t, t, r, v_g, ref,
-            base_fn=lambda z_, t_: model.base_velocity(z_, t_, pe_in, po_in),
+            base_fn=lambda z_, t_: model.base_velocity(z_, t_, pe_in, po_in,
+                                                       **cond),
             anchor_mask=anchor)
         # ref_meanflow_loss infers anchors from (t - r) < 1e-8. Under
         # anchor_mode="small_delta" that is False for every anchor: frac_anchor
@@ -520,13 +606,18 @@ def cmd_train(args) -> int:
         eps = torch.randn_like(x0)
         t_ = t.reshape(-1, 1, 1, 1)
         z_t = (1 - t_) * x0 + t_ * eps
+        cond = cond_from_batch(batch, args.source_cond, dev)
         v = (model.base_velocity(z_t, t, pe, po, guidance=args.teacher_cfg,
                                  negative_embeds=torch.zeros_like(pe),
-                                 negative_pooled=torch.zeros_like(po))
+                                 negative_pooled=torch.zeros_like(po), **cond)
              if args.v_source == "teacher" else eps - x0)
         loss, stats = meanflow_loss(
-            lambda z_, r_, t_in: model(z_, t_in, r_, pe, po), z_t, r, t, v, mf)
+            lambda z_, r_, t_in: model(z_, t_in, r_, pe, po, **cond),
+            z_t, r, t, v, mf)
         stats["max_delta"] = max_delta
+        # Same key as the faithful path's curriculum_stats, so the realised
+        # training-Delta range is in the log whichever path ran.
+        stats["delta_cap_applied"] = float(max_delta)
         return loss, stats
 
     loss_fn_ref.seen = 0
@@ -534,6 +625,20 @@ def cmd_train(args) -> int:
     loss_fn_ref.tangent_sum = 0.0
     loss_fn_ref.first_sum = 0.0
     loss_fn = loss_fn_ref if args.faithful else loss_fn_custom
+    print(f"[loss] path={'ref (reference-faithful MeanFlow)' if args.faithful else 'custom (gated ablation)'}"
+          f"  delta range="
+          + (f"curriculum {args.cap_start}->{args.cap_end}, warmup "
+             f"{args.warmup_frac}, hard max {args.max_delta}"
+             if args.curriculum else
+             f"static cap {args.max_delta} (curriculum OFF)"))
+    if args.faithful and args.curriculum and (
+            abs(args.delta_start - 0.05) > 1e-9
+            or abs(args.delta_end - 1.0) > 1e-9):
+        print("[loss] WARNING: --delta-start/--delta-end feed "
+              "transport.train.delta_schedule, which only the CUSTOM path "
+              "uses. The faithful path's Delta range comes from "
+              "--curriculum/--cap-start/--cap-end/--max-delta. These flags "
+              "would be silently ignored; set --custom to use them.")
 
     # Held-out validation at a FIXED (t, r), independent of what the batch
     # happens to draw, so the number is comparable across the whole run.
@@ -622,9 +727,45 @@ def cmd_sweep(args) -> int:
         args.model, torch_dtype=torch.bfloat16).to(args.device)
     helper = SD3EditPipeline(pipe, device=args.device)
     adapter = TransportAdapter(
-        pipe.transformer, AdapterConfig(mode="interval", rank=args.rank)
+        pipe.transformer,
+        AdapterConfig(mode="interval", rank=args.rank,
+                      source_cond=args.source_cond),
     ).to(args.device)
     sd = torch.load(args.ckpt, map_location="cpu", weights_only=False)
+
+    # ---- tier B: can this checkpoint even be loaded here, and can it be
+    # ---- EVALUATED here? Those are two different questions.
+    # Read the shape off the TENSOR, not off the saved config -- the config is a
+    # number someone can forget to update, the weight is what actually runs
+    # (the same reason source_cond.py::patch_embed_proj reads the module). A
+    # mismatch raises out of load_state_dict anyway, since PyTorch reports size
+    # mismatches even under strict=False (verified, both directions), but it
+    # reports a bare shape error with no hint about which flag is wrong.
+    from transport.source_cond import patch_embed_in_channels
+    ck_proj = sd["adapter"].get("transformer.pos_embed.proj.weight")
+    if ck_proj is not None:
+        ck_in = int(ck_proj.shape[1])          # conv weight is (out, in, kh, kw)
+        want = patch_embed_in_channels(adapter.transformer)
+        if ck_in != want:
+            if ck_in > want:
+                raise SystemExit(
+                    f"this checkpoint was trained WITH source+mask conditioning "
+                    f"(pos_embed.proj takes {ck_in} input channels; the adapter "
+                    f"as built takes {want}). Two things follow, and only the "
+                    "first is about a flag: `--source-cond` is needed to load "
+                    "it at all, AND this probe still cannot EVALUATE it -- "
+                    "`sweep` is a generation probe (pure noise + a text "
+                    "prompt) with no source image and no mask to condition on. "
+                    "Use a protocol that supplies (z_src, mask): EDITOR_PLAN.md "
+                    "tier B's Gate C arm, feeding "
+                    "transport.source_cond.cond_from_tensors() into "
+                    "transport.sampling.sample().")
+            raise SystemExit(
+                f"the adapter was built with --source-cond (pos_embed.proj "
+                f"takes {want} input channels) but this checkpoint's takes "
+                f"{ck_in}: it was trained WITHOUT source conditioning. Drop "
+                "--source-cond.")
+
     adapter.load_state_dict(sd["adapter"], strict=False)
     adapter.eval()
 
@@ -801,6 +942,16 @@ def main() -> int:
                    help="the ORIGINAL gated formulation, kept only as an "
                         "ablation against the faithful baseline. Its anchors "
                         "produce zero adapter gradient by construction.")
+    t.add_argument("--signed-interval", action="store_true",
+                   help="H3: signed Delta = t - r, so r > t (inversion) is "
+                        "representable. Forward pass bit-identical for r <= t. "
+                        "NOT a no-op for training even at --reverse-frac 0: the "
+                        "fd stencil of rows with Delta < fd_eps then reads the "
+                        "reverse sheet (logged as frac_fd_straddle).")
+    t.add_argument("--reverse-frac", type=float, default=0.0,
+                   help="H3 option A: fraction of rows flipped to r > t after "
+                        "the caps (effective reverse interval rows = this x "
+                        "(1 - data_proportion)). Requires --signed-interval.")
     t.add_argument("--interval-kind", default="concat",
                    choices=["concat", "centered"],
                    help="how r reaches pooled_projections. 'concat' is the "
@@ -810,6 +961,24 @@ def main() -> int:
     t.add_argument("--omega", type=float, default=1.0)
     t.add_argument("--kappa", type=float, default=0.5)
     t.add_argument("--cond-dropout", type=float, default=0.1)
+    t.add_argument("--source-cond", action="store_true",
+                   help="TIER B (EDITOR_PLAN.md section 2): feed the SOURCE "
+                        "latent and the mask to the transformer as extra input "
+                        "channels, widening pos_embed.proj 16 -> 48 the way "
+                        "UltraEdit does. The objective is unchanged (x0=z_tgt); "
+                        "this only adds the conditioning. Off by default so "
+                        "every existing run is byte-identical.")
+    t.add_argument("--source-cond-all-columns", action="store_true",
+                   help="let the 16 PRETRAINED columns train too. Default is "
+                        "the new 32 only, which keeps the base model's latent "
+                        "behaviour bit-identical while the source/mask path "
+                        "learns.")
+    t.add_argument("--source-cond-init", default="zero", choices=["zero", "source"],
+                   help="'zero' (default): step 0 IS the base model, which is "
+                        "the identity guarantee. 'source': copy the pretrained "
+                        "columns into the source-image block, as SD3 "
+                        "InstructPix2Pix does -- a deliberate departure from "
+                        "the base model at step 0.")
     t.add_argument("--data-proportion", type=float, default=0.75,
                    help="fraction of each batch forced to r == t (the "
                         "flow-matching anchors). Reference value 0.75. Lower "
@@ -831,6 +1000,11 @@ def main() -> int:
     s.add_argument("--prompts", required=True, help="json list of strings")
     s.add_argument("--out", default="runs/gate_b/sweep")
     s.add_argument("--rank", type=int, default=32)
+    s.add_argument("--source-cond", action="store_true",
+                   help="build the adapter with tier B's source+mask channel "
+                        "conditioning (EDITOR_PLAN.md section 2). Required to "
+                        "LOAD a checkpoint trained with it -- but note this "
+                        "probe cannot EVALUATE one; see cmd_sweep.")
     s.add_argument("--steps-list", type=int, nargs="+", default=[1, 2, 4, 8])
     s.add_argument("--teacher-steps", type=int, default=50)
     s.add_argument("--teacher-cfg", type=float, default=5.0)

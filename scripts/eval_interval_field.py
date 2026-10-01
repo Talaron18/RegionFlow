@@ -75,7 +75,8 @@ DELTAS = (0.05, 0.10, 0.20, 0.30, 0.50, 0.80)
 
 
 @torch.no_grad()
-def true_average_velocity(base_fn, z_t, t, r, substeps: int):
+def true_average_velocity(base_fn, z_t, t, r, substeps: int,
+                          return_end: bool = False):
     """u_true = 1/(t-r) * integral_r^t v(z_s, s) ds, along the trajectory.
 
     Integrated with the midpoint rule from t DOWN to r, advancing the state
@@ -87,6 +88,15 @@ def true_average_velocity(base_fn, z_t, t, r, substeps: int):
     Delta<=0.8 the residual quadrature error is far below the differences
     being reported -- check by re-running with --substeps 32 and confirming
     the numbers move by less than a percent.
+
+    SIGNED (H3). Delta = t - r < 0 is the reverse direction, integrated from t
+    UP to r. The loop was already sign-correct -- h < 0 walks s upward and
+    z - h*v steps toward noise -- and only the final division was not:
+    `delta.clamp(min=1e-8)` divided a reverse integral by 1e-8 (|u| ~ 1e8 on a
+    toy ODE), and at Delta == 0 returned 0 instead of v. Both fixed below.
+    return_end=True also returns the integrated endpoint z_r, for the
+    round-trip check (u_true is the same average from either end of one
+    trajectory, so fwd-from-endpoint must reproduce it).
     """
     b = z_t.shape[0]
     delta = (t - r)
@@ -104,7 +114,16 @@ def true_average_velocity(base_fn, z_t, t, r, substeps: int):
         acc = acc + h.reshape(-1, 1, 1, 1) * v_mid
         z = z - h.reshape(-1, 1, 1, 1) * v_mid
 
-    return acc / delta.clamp(min=1e-8).reshape(-1, 1, 1, 1)
+    zero = delta.abs() < 1e-8
+    safe = torch.where(zero, torch.ones_like(delta), delta)
+    u = acc / safe.reshape(-1, 1, 1, 1)
+    if bool(zero.any()):
+        u = torch.where(zero.reshape(-1, 1, 1, 1), base_fn(z_t, t), u)
+    return (u, z) if return_end else u
+
+
+def nrm_(x):
+    return x.flatten(1).norm(dim=1)
 
 
 def sse(a, b):
@@ -185,6 +204,24 @@ def main() -> int:
                     default="v_inst",
                     help="origin the correction is rescaled about. v_inst "
                          "makes a=0 the frozen-field baseline.")
+    ap.add_argument("--direction", choices=("forward", "reverse"),
+                    default="forward",
+                    help="H3. forward: query at the TOP endpoint, t = c + d/2, "
+                         "r = c - d/2 (every number before H3). reverse: the "
+                         "SAME interval queried from the BOTTOM endpoint, "
+                         "t = c - d/2, r = c + d/2 -- the inversion step. A "
+                         "checkpoint trained without --signed-interval reads "
+                         "r > t as r == t, so its reverse rows are the clamp "
+                         "baseline (D_r_model = 0 by construction), which is "
+                         "the recorded BEFORE for V0/V1.")
+    ap.add_argument("--round-trip", action="store_true",
+                    help="H3 V1 gate. Also integrate the truth back from the "
+                         "endpoint and report rt_rel = ||u_back - u_true|| / "
+                         "||u_true||. u_true is one trajectory's average from "
+                         "either end, so rt_rel is pure quadrature error: it "
+                         "must fall by >= ~4x per --substeps doubling. If it "
+                         "does not, the truth in that direction is not stably "
+                         "computable -- stop (design Sec.6 V1). Doubles cost.")
     ap.add_argument("--seed", type=int, default=0,
                     help="drives BOTH RNG streams, which STAGE1C Sec.6 "
                          "flagged as hard-coded and un-held-out: the numpy "
@@ -260,10 +297,56 @@ def main() -> int:
         print(f"\n[{name}] step {sd.get('step')}  "
               f"interval={adapter.cfg.interval_kind}")
 
+        # TRAINING-RANGE GUARD. A Delta cell wider than what the checkpoint was
+        # trained on is extrapolation, and nothing in the output said so. Two
+        # ways this was got wrong before, both now automated:
+        #   * reading the training log's `delta_max` as the trained range. It is
+        #     NOT: transport/train.py aggregates every stat over grad-accum
+        #     (line ~265, `agg[k] += v / cfg.grad_accum`), so `delta_max` is a
+        #     mean of per-micro-batch maxima and understates the true max.
+        #     DELTA_CURRICULUM_REPORT Sec.1 records this explicitly. The
+        #     unbiased quantity is `frac_at_delta_cap`, which is a fraction: in
+        #     fd_distill_5k it is nonzero, and its threshold is the config's
+        #     max_delta=0.5, so Delta=0.5 WAS trained (~2% of samples at cap).
+        #   * not knowing the cap at all, which cost a post-mortem. Read it from
+        #     the run's train_args.json when it exists (written by
+        #     scripts/gate_b_meanflow.py), else say so.
+        cap_final, cap_src = None, "no train_args.json next to this checkpoint"
+        ta = {}
+        ta_path = Path(ckpt_path).parent / "train_args.json"
+        if ta_path.exists():
+            try:
+                ta = json.loads(ta_path.read_text())
+                # The widest cap the run could have sampled at.
+                cap_final = float(ta.get("cap_end", ta.get("max_delta", 0.0))
+                                  ) if ta.get("curriculum") else \
+                    float(ta.get("max_delta", 0.0))
+                cap_src = f"{ta_path} (curriculum={bool(ta.get('curriculum'))})"
+            except Exception as exc:                       # noqa: BLE001
+                cap_src = f"{ta_path} unreadable ({exc})"
+        # H3: signedness is a module attribute, not a weight, so it must be
+        # read from provenance. Absent => unsigned (every pre-H3 run).
+        signed = bool(ta.get("signed_interval", False))
+        if adapter.interval is not None:
+            adapter.interval.signed = signed
+            adapter.cfg.signed_interval = signed
+        print(f"  [H3] signed_interval = {signed}"
+              + ("" if signed or args.direction == "forward" else
+                 "  -> reverse cells are the CLAMP BASELINE, not a result"))
+        if cap_final:
+            print(f"  [range] trained Delta cap (widest) = {cap_final:.3f} "
+                  f"from {cap_src}; wider cells are marked EXTRAPOLATION")
+        else:
+            print(f"  [range] training Delta cap UNKNOWN ({cap_src}). Check "
+                  f"the run's log for the realised delta_max: a cell above it "
+                  f"is extrapolation, not a result.")
+
         rows = []
         for d in args.deltas:
             t_val = args.t_center + d / 2
             r_val = args.t_center - d / 2
+            if args.direction == "reverse":
+                t_val, r_val = r_val, t_val
             # DOMAIN GUARD. true_average_velocity integrates from r with no
             # clamp. STAGE1C Sec.2.3: t_center=0.20/Delta=0.5 silently
             # queried r=-0.05, and its mirror t_center=0.80/Delta=0.5
@@ -274,7 +357,7 @@ def main() -> int:
             # relying on it being done by hand every time: skip the cell,
             # print why, and do not let a query outside where the
             # trajectory is even defined reach `rows`.
-            if r_val < -1e-6 or t_val > 1 + 1e-6:
+            if min(t_val, r_val) < -1e-6 or max(t_val, r_val) > 1 + 1e-6:
                 print(f"  d={d:<5} SKIPPED: r={r_val:.3f} t={t_val:.3f} at "
                       f"t_center={args.t_center} is outside [0, 1] -- "
                       "true_average_velocity's integration domain")
@@ -287,9 +370,23 @@ def main() -> int:
             def base_fn(z_, s_):
                 return adapter.base_velocity(z_, s_, pe, po)
 
-            u_true = true_average_velocity(base_fn, z_t, t, r, args.substeps)
+            u_true, z_end = true_average_velocity(base_fn, z_t, t, r,
+                                                  args.substeps,
+                                                  return_end=True)
+            rt_rel = None
+            if args.round_trip:
+                u_back = true_average_velocity(base_fn, z_end, r, t,
+                                               args.substeps)
+                rt_rel = float((nrm_(u_back - u_true)
+                                / nrm_(u_true).clamp(min=1e-8)).mean())
             with torch.no_grad():
                 u_hat = adapter(z_t, t, r, pe, po)
+                # the clamp baseline, measured rather than assumed: an unsigned
+                # checkpoint must return EXACTLY u(z,t,t) for r > t
+                clamp_exact = None
+                if args.direction == "reverse":
+                    clamp_exact = bool(torch.equal(
+                        u_hat, adapter(z_t, t, t.clone(), pe, po)))
                 v_inst = adapter.base_velocity(z_t, t, pe, po)
                 # r-sensitivity needs the model at the SAME (z, t) with r = t,
                 # i.e. Delta = 0. That is the model's own notion of the
@@ -332,7 +429,7 @@ def main() -> int:
             if args.corr_scale is not None:
                 a_app = float(eval(args.corr_scale, {"__builtins__": {}},
                                    {"tc": args.t_center,
-                                    "t": args.t_center + d / 2, "d": d}))
+                                    "t": t_val, "d": d}))
             with torch.no_grad():
                 ref = v_inst if args.corr_ref == "v_inst" else u_hat_r0
                 alt = u_hat_r0 if args.corr_ref == "v_inst" else v_inst
@@ -341,7 +438,10 @@ def main() -> int:
                 sm["a_opt_alt_ref"] = scaling_metrics(
                     u_hat, u_true, alt, e_base)["a_opt"]
             rows.append({
-                "delta": d, "sse_model": e_model, "sse_zero": e_zero,
+                "delta": d, "direction": args.direction,
+                "t": t_val, "r": r_val, "signed_interval": signed,
+                "reverse_equals_anchor": clamp_exact, "rt_rel": rt_rel,
+                "sse_model": e_model, "sse_zero": e_zero,
                 "sse_base_instantaneous": e_base,
                 "vs_zero": e_model / max(e_zero, 1e-12),
                 "vs_base": e_model / max(e_base, 1e-12),
@@ -352,6 +452,10 @@ def main() -> int:
                 "D_r_model": dr_model,
                 "D_r_ratio": dr_model / max(dr_true, 1e-12),
                 "cos_correction": float(corr.mean()),
+                # Carried into the JSON so a table reader cannot quote an
+                # extrapolated cell without seeing the flag.
+                "extrapolation": bool(cap_final is not None
+                                      and d > cap_final + 1e-9),
                 **cm,**sm
             })
             rr = rows[-1]
@@ -364,7 +468,12 @@ def main() -> int:
                   f"  corr_err {rr['corr_err']:>6.3f}"
                   f" (best@cos {rr['corr_err_best']:>6.3f})"
                   f"  a_opt {rr['a_opt']:>5.2f}"
-                  f" -> m/b {rr['vs_base_at_a_opt']:>6.3f}")
+                  f" -> m/b {rr['vs_base_at_a_opt']:>6.3f}"
+                  + (f"  rt {rt_rel:.2e}" if rt_rel is not None else "")
+                  + (f"  [=anchor: {clamp_exact}]" if clamp_exact is not None
+                     else "")
+                  + ("   *** EXTRAPOLATION: beyond the trained Delta cap ***"
+                     if rr["extrapolation"] else ""))
 
         results[name] = {"step": sd.get("step"),
                          "interval_kind": adapter.cfg.interval_kind,

@@ -58,6 +58,27 @@ def sinusoidal(x: torch.Tensor, dim: int, max_period: float = 10_000.0) -> torch
     return emb
 
 
+def interval_delta(t: torch.Tensor, r: torch.Tensor, signed: bool) -> torch.Tensor:
+    """Delta = t - r, the one place the interval sign convention lives (H3).
+
+    signed=False  today's behaviour: clamp at 0, so r > t reads EXACTLY as
+                  r == t. Every checkpoint trained before H3 is unsigned.
+    signed=True   the signed interval average (H3_SIGNED_DELTA_DESIGN.md Sec.2):
+                  Delta < 0 is the reverse (inversion) direction. The code keeps
+                  Delta = t - r; do NOT switch to the design doc's h = r - t,
+                  which flips the sign of every forward row and breaks the
+                  bit-identity contract.
+
+    For t >= r both branches return the identical tensor (clamp(min=0) is the
+    identity on non-negative values), which is what makes `signed` a pure
+    extension. It is a plain attribute, never a buffer: a buffer would enter
+    state_dict, and eval_interval_field.py refuses checkpoints with missing
+    `interval.*` keys.
+    """
+    d = t - r
+    return d if signed else d.clamp(min=0.0)
+
+
 class IntervalEmbedding(nn.Module):
     """(r, t) -> additive delta on pooled_projections.
 
@@ -69,9 +90,10 @@ class IntervalEmbedding(nn.Module):
     """
 
     def __init__(self, pooled_dim: int = 2048, hidden: int = 512,
-                 freq_dim: int = 256) -> None:
+                 freq_dim: int = 256, signed: bool = False) -> None:
         super().__init__()
         self.freq_dim = freq_dim
+        self.signed = bool(signed)
         self.net = nn.Sequential(
             nn.Linear(2 * freq_dim, hidden),
             nn.SiLU(),
@@ -83,8 +105,11 @@ class IntervalEmbedding(nn.Module):
         nn.init.zeros_(self.net[-1].bias)
         self.net.float()
 
+    def extra_repr(self) -> str:
+        return f"signed={self.signed}"
+
     def forward(self, t: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
-        delta = (t - r).clamp(min=0.0)
+        delta = interval_delta(t, r, self.signed)
         e = torch.cat([sinusoidal(t, self.freq_dim),
                        sinusoidal(delta, self.freq_dim)], dim=-1)
         return self.net(e)
@@ -135,23 +160,40 @@ class CenteredIntervalEmbedding(nn.Module):
     """
 
     def __init__(self, pooled_dim: int = 2048, hidden: int = 512,
-                 freq_dim: int = 256) -> None:
+                 freq_dim: int = 256, signed: bool = False) -> None:
         super().__init__()
         self.freq_dim = freq_dim
+        self.signed = bool(signed)
         self.t_branch = _mlp(freq_dim, hidden, pooled_dim)            # g
         self.delta_branch = _mlp(2 * freq_dim, hidden, pooled_dim)    # f
 
     def delta_part(self, t: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
-        """f(t, Delta) - f(t, 0). Exposed so probes can measure it directly."""
-        delta = (t - r).clamp(min=0.0)
+        """f(t, Delta) - f(t, 0). Exposed so probes can measure it directly.
+
+        Signed: the bracket is still zero at r == t from BOTH sides -- to float
+        precision, not bit-exactly (see the measured note at the batched call
+        below) -- so u(z,t,t) = v stays the two-sided boundary (design Sec.2.3).
+        What it does not constrain is the slope on each side -- a kink at
+        Delta = 0 is representable and nothing in the loss penalises it
+        (design Sec.7.2).
+        """
+        delta = interval_delta(t, r, self.signed)
         et = sinusoidal(t, self.freq_dim)
         e = torch.cat([et, sinusoidal(delta, self.freq_dim)], dim=-1)
         e0 = torch.cat([et, sinusoidal(torch.zeros_like(delta), self.freq_dim)],
                        dim=-1)
         # One batched call, so both halves go through identical kernels and
         # the anchor rows cancel as exactly as the hardware allows.
+        # MEASURED (tests/test_signed_delta.py, randomised weights):
+        #   8.345e-07 here, against 0.0 for two separate calls, and the SAME
+        #   8.345e-07 with signed=False -- so it is a batched-accumulation
+        #   property of this formulation, not of H3. Do not re-tighten that
+        #   test to torch.equal without also splitting the call.
         f, f0 = self.delta_branch(torch.cat([e, e0], dim=0)).chunk(2, dim=0)
         return f - f0
+
+    def extra_repr(self) -> str:
+        return f"signed={self.signed}"
 
     def forward(self, t: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
         g = self.t_branch(sinusoidal(t, self.freq_dim))
@@ -168,11 +210,12 @@ INTERVAL_KINDS = {
 }
 
 
-def make_interval_embedding(kind: str, pooled_dim: int) -> nn.Module:
+def make_interval_embedding(kind: str, pooled_dim: int,
+                            signed: bool = False) -> nn.Module:
     if kind not in INTERVAL_KINDS:
         raise ValueError(
             f"interval_kind must be one of {sorted(INTERVAL_KINDS)}, got {kind!r}")
-    return INTERVAL_KINDS[kind](pooled_dim)
+    return INTERVAL_KINDS[kind](pooled_dim, signed=signed)
 
 
 def interval_kind_from_keys(keys) -> str | None:

@@ -1,0 +1,200 @@
+{
+ "config": {
+  "size": 512,
+  "latent_size": 64,
+  "dtype": "float32",
+  "max_items": 20000,
+  "context_length": 333
+ },
+ "n": 20,
+ "items": [
+  {
+   "id": "331133_t1",
+   "stem": "01485",
+   "instruction": "have the three guys wear matching sweaters",
+   "emb": "cb86fea2fea4342c",
+   "mask_frac": 0.2353515625,
+   "moved": 0.27165520191192627,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "116717_t1",
+   "stem": "02220",
+   "instruction": "replace the blue tank with a red one",
+   "emb": "a62ae2d79690b133",
+   "mask_frac": 0.25,
+   "moved": 0.24171161651611328,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "221893_t1",
+   "stem": "01248",
+   "instruction": "Get rid of the label.",
+   "emb": "fe18fd9e5370b49a",
+   "mask_frac": 0.245849609375,
+   "moved": 0.2222444862127304,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "461774_t1",
+   "stem": "00494",
+   "instruction": "turn a zebra into a horse",
+   "emb": "8ecf43da874b4cac",
+   "mask_frac": 0.1943359375,
+   "moved": 0.18105900287628174,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "25470_t1",
+   "stem": "03642",
+   "instruction": "make the countertop messy",
+   "emb": "81569b98f2f10a9e",
+   "mask_frac": 0.14892578125,
+   "moved": 0.15713399648666382,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "96339_t1",
+   "stem": "01983",
+   "instruction": "let a short man stand on the sidewalk",
+   "emb": "3148ff3349236757",
+   "mask_frac": 0.1640625,
+   "moved": 0.14975398778915405,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "475277_t1",
+   "stem": "00065",
+   "instruction": "open the horse's mouth",
+   "emb": "fdb90adeb18585db",
+   "mask_frac": 0.136474609375,
+   "moved": 0.12148311734199524,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "104198_t1",
+   "stem": "02615",
+   "instruction": "Replace the text on the sign with the word STOP.",
+   "emb": "ec9b602bcc09e36f",
+   "mask_frac": 0.102783203125,
+   "moved": 0.12082754075527191,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "515212_t1",
+   "stem": "04455",
+   "instruction": "make one of the chairs red",
+   "emb": "98eb8f8bc1840f15",
+   "mask_frac": 0.21875,
+   "moved": 0.11712227016687393,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "322610_t1",
+   "stem": "00998",
+   "instruction": "have her carry a guitar",
+   "emb": "2e3d175371f9ad90",
+   "mask_frac": 0.065185546875,
+   "moved": 0.11534316837787628,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "506379_t1",
+   "stem": "03988",
+   "instruction": "turn the meter into a clock",
+   "emb": "6912d9f41f4a31a1",
+   "mask_frac": 0.065673828125,
+   "moved": 0.1101560890674591,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "130534_t1",
+   "stem": "03100",
+   "instruction": "Have the woman be playing a guitar",
+   "emb": "e1aa9b38c094eb69",
+   "mask_frac": 0.088134765625,
+   "moved": 0.1075887382030487,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "30836_t1",
+   "stem": "02913",
+   "instruction": "What if there is a picture of a car on the laptop?",
+   "emb": "2d77510c3897b65f",
+   "mask_frac": 0.07958984375,
+   "moved": 0.10750947892665863,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "135578_t1",
+   "stem": "02130",
+   "instruction": "add a snake coiled next to bananas",
+   "emb": "07692b6d9285effd",
+   "mask_frac": 0.05810546875,
+   "moved": 0.10615582764148712,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "284814_t1",
+   "stem": "00336",
+   "instruction": "let a set of ski be a skateboard",
+   "emb": "3227ed744dbe00bb",
+   "mask_frac": 0.0615234375,
+   "moved": 0.09947265684604645,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "262197_t1",
+   "stem": "02661",
+   "instruction": "Let's add a man in a bicycle.",
+   "emb": "91d9f297ba46a2eb",
+   "mask_frac": 0.04443359375,
+   "moved": 0.09315372258424759,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "399686_t1",
+   "stem": "03493",
+   "instruction": "make one of the police officers bald",
+   "emb": "ece23d35ba5dc59c",
+   "mask_frac": 0.022705078125,
+   "moved": 0.09061340987682343,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "10627_t1",
+   "stem": "02005",
+   "instruction": "Let the airplane eject smoke.",
+   "emb": "679fa57cb0ab03b2",
+   "mask_frac": 0.0244140625,
+   "moved": 0.0857008844614029,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "246478_t1",
+   "stem": "03826",
+   "instruction": "Let's add a slice of breed",
+   "emb": "bce633968109c3ea",
+   "mask_frac": 0.02734375,
+   "moved": 0.08264460414648056,
+   "dataset": "magicbrush"
+  },
+  {
+   "id": "443741_t1",
+   "stem": "00119",
+   "instruction": "put a mask on the man",
+   "emb": "0e31719cacb60401",
+   "mask_frac": 0.02685546875,
+   "moved": 0.07812318950891495,
+   "dataset": "magicbrush"
+  }
+ ],
+ "subset": {
+  "of": "/data/cache/13061d51aee4",
+  "selection": "sample20_of3490_inband_seed0",
+  "created": "2026-09-22T20:32:13",
+  "n_source_items": 4511,
+  "embeddings_included": false,
+  "note": "emb_*.npz are intentionally NOT included: cache_item.py and suite.py do not need them (the instruction STRING is in the index and edit.py re-encodes it). TRAINING DOES NEED THEM -- TripletCache.__getitem__ loads emb_<key> and will raise on this subset. Do not train from it."
+ }
+}

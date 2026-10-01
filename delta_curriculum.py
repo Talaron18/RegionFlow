@@ -145,7 +145,7 @@ def delta_cap(step: int, total_steps: int, cfg: DeltaCurriculumConfig) -> float:
 
 def sample_tr_scheduled(batch, cfg, device, step, total_steps,
                         cur: DeltaCurriculumConfig,
-                        generator=None):
+                        generator=None, rev_generator=None):
     """Drop-in for `meanflow_ref.sample_tr`, with the Delta cap applied.
 
     Returns (t, r, anchor), same contract as the reference.
@@ -200,6 +200,30 @@ def sample_tr_scheduled(batch, cfg, device, step, total_steps,
     else:
         r = torch.where(anchor, t, r)
 
+    # H3 REVERSE ROWS -- option A, cap-then-flip; semantics and rationale live
+    # on RefMeanFlowConfig.reverse_frac. Restated inline (three lines) so this
+    # module stays importable without the project, as the self-test requires;
+    # tests/test_signed_delta.py asserts it matches meanflow_ref.sample_tr row
+    # for row, so the two cannot drift silently.
+    reverse_frac = float(getattr(cfg, "reverse_frac", 0.0))
+    if reverse_frac > 0.0:
+        if cur.enabled and cur.anchor_mode == "small_delta":
+            raise ValueError("reverse_frac > 0 with anchor_mode='small_delta' "
+                             "is undefined (and small_delta is a closed route)")
+        if rev_generator is None:
+            raise ValueError("reverse_frac > 0 needs its own rev_generator")
+        rev = (torch.rand(batch, device=device, generator=rev_generator)
+               < reverse_frac)
+        t, r = torch.where(rev, r, t), torch.where(rev, t, r)
+        # SIGN-AWARE DOMAIN GUARD (replaces the forward-only one below for
+        # this path): both endpoints in [0, 1], |Delta| within the cap, and
+        # r > t ONLY on rows this sampler flipped.
+        assert float(torch.minimum(t, r).min()) >= -1e-6, f"endpoint < 0 at step {step}"
+        assert float(torch.maximum(t, r).max()) <= 1.0 + 1e-6, f"endpoint > 1 at step {step}"
+        assert float((t - r).abs().max()) <= cap + 1e-6, f"|Delta| > cap at step {step}"
+        assert not bool((((r - t) > 1e-6) & ~rev).any()), f"unflipped r > t at step {step}"
+        return t, r, anchor
+
     # DOMAIN GUARD. `true_average_velocity` integrates from r with no clamp,
     # and Stage 1C had to drop two eval cells for querying r < 0 / t > 1. The
     # guard belongs on the training side too, as an assertion rather than a
@@ -215,11 +239,14 @@ def curriculum_stats(t, r, anchor, step, total_steps,
     """Log these every step. `delta_cap_applied` vs `delta_max` is what tells
     you the schedule is actually biting rather than being a no-op, which is
     the failure mode that made the P10 run worthless."""
-    d = (t - r)
+    # |Delta|: identical to t - r on forward-only runs, and it makes the
+    # trainer's per-batch `delta_max > max_delta` guard cover reverse rows.
+    d = (t - r).abs()
     return {
         "delta_cap_applied": delta_cap(step, total_steps, cur),
         "delta_max": float(d.max()),
         "delta_mean": float(d.mean()),
+        "frac_reverse": float(((r - t) > 1e-8).float().mean()),
         "frac_anchor": float(anchor.float().mean()),
         "frac_at_cap": float(
             (d >= delta_cap(step, total_steps, cur) - 1e-6).float().mean()),
@@ -347,6 +374,34 @@ def self_test() -> None:
     else:
         raise AssertionError("assert_flag_arrived failed to catch the P10 bug")
 
+    # 10. H3: reverse_frac = 0 draws nothing, so the (t, r) stream is the
+    #     pre-H3 stream bit for bit (case 1 already covers it with the new
+    #     default); with reverse_frac > 0 the FORWARD draws are unchanged row
+    #     for row, and the reverse rows are exact endpoint swaps.
+    rev_ref = _RefStub(max_delta=0.5, reverse_frac=0.5)
+    g1 = torch.Generator(device=dev).manual_seed(29)
+    gr = torch.Generator(device=dev).manual_seed(31)
+    tR, rR, aR = sample_tr_scheduled(N, rev_ref, dev, 0, TOT, off_capped, g1,
+                                     rev_generator=gr)
+    g2 = torch.Generator(device=dev).manual_seed(29)
+    tF, rF, aF = sample_tr_scheduled(N, capped_ref, dev, 0, TOT, off_capped, g2)
+    assert torch.equal(aR, aF), "anchors must be paired with the forward arm"
+    flipped = not torch.equal(tR, tF)
+    same = (tR == tF) & (rR == rF)
+    swap = (tR == rF) & (rR == tF)
+    assert bool((same | swap).all()), "rows must be forward twins or exact swaps"
+    assert flipped and bool((rR > tR).any()), "no reverse rows drawn"
+    assert torch.equal((tR - rR).abs(), (tF - rF).abs()), "|Delta| must mirror"
+    frac = float(((rR - tR) > 1e-8).float().mean())
+    assert abs(frac - 0.5 * (1 - cfg.data_proportion)) < 0.03, frac
+    try:
+        sample_tr_scheduled(8, rev_ref, dev, 0, TOT, off_capped,
+                            torch.Generator(device=dev).manual_seed(1))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("reverse_frac > 0 without rev_generator must raise")
+
     print("delta_curriculum self-test OK")
 
 
@@ -362,6 +417,7 @@ class _RefStub:
     #: applies both.
     max_t: float = 1.0
     max_delta: float = 1.0
+    reverse_frac: float = 0.0
 
 
 def _reference_sample_tr(batch, cfg, device, generator):
