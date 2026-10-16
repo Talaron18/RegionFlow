@@ -194,6 +194,7 @@ def cmd_train(args) -> int:
     pf = PairFlowConfig(mask_dropout=args.mask_dropout,
                         cond_dropout=args.cond_dropout,
                         sigma0=args.sigma0,
+                        interval_conditioning=args.interval_conditioning,
                         perceptual_weight=args.perceptual_weight,
                         perceptual_feature=args.perceptual_feature,
                         perceptual_mask_erode=args.perceptual_mask_erode)
@@ -2125,6 +2126,13 @@ def main() -> int:
                         "split between a mask-independent global operating "
                         "point and a mask-conditioned local edit, NOT "
                         "checkpoint-compatible with 'single'.")
+    t.add_argument("--interval-conditioning",
+                   action=argparse.BooleanOptionalAction, default=True,
+                   help="train over random sub-intervals [s, r] (default, "
+                        "the setting since 9c67baa). --no-interval-"
+                        "conditioning uses the plain s=0 objective but "
+                        "passes r=1, NOT the r=s of the documented "
+                        "checkpoints. Incompatible with --sigma0 > 0.")
     t.add_argument("--perceptual-weight", type=float, default=0.0,
                    help="weight on feature-space perceptual loss. 0.0 "
                         "(default) is the original MSE-only objective. "

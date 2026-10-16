@@ -11,7 +11,7 @@ cache and no `runs/`. Where a claim below is inference rather than measurement, 
 | Region machinery (λ/α fields, masks, seams) | works; not the problem | START_HERE, Stage 0/1 |
 | Gate C benchmark (151 RefEdit×COCO cases, instance selectivity) | **done, standalone contribution** | GATE_C_REPORT |
 | Mask conditioning → wrong-instance edits | solved by *existing* models (freeform 40% → oracle-mask 0% mis-targeted) | GATE_C_REPORT §3 |
-| Edit quality under an oracle mask | unsolved by everyone (valid 16/151 at K=10) | GATE_C_REPORT §3 |
+| Edit quality under an oracle mask | unsolved: ~22% clean by blind audit for an oracle-masked full-step editor ("valid K=10" in GATE_C_REPORT §3 only counts cases where leakage is measurable, not quality) | PLAN §3 |
 | Gate A: one-step transport `z_src → z_tgt` (our mechanism) | **negative**: cos≈0.54 raw / 0.77 pooled, blurry output | PLAN verdict + sweeps |
 | Gate B: few-step interval field | adapter no better than reusing `v` (STAGE1_REPORT) vs "closed positive with asterisk" (PLAN §1) — **the docs disagree** | |
 
@@ -56,41 +56,57 @@ panel alone.
    conditioning that already exists; what remains (transformation quality) is the hard,
    general editing problem on a 3090Ti-scale budget. By the plan's own ordering few-step
    belongs last, yet most effort went to it.
-4. **Fragility and hygiene.** The last commit flipped `interval_conditioning` to default
-   **True**, which silently ignores σ0 and broke the project's own `pairflow.py --self-test`
-   (it passed at `2508cee`, failed from `9c67baa`). `mask_to_patch_grid(erode=0)` returned the
-   wrong shape and would have crashed `dino_patch_loss`. Both are fixed in this change. The repo
-   also tracks `.ipynb_checkpoints/` copies, `__pycache__`, `.patch` files and
-   `STAGE1C_REPORT (1).md`, which makes "which file did I run" (habit #5) hard.
+4. **Fragility and hygiene.** Commit `9c67baa` ("Adding LPIP as loss") also changed the training
+   objective: `interval_conditioning` defaults to **True**, and the plain branch now passes
+   `r = 1` where the documented σ0 checkpoints (trained at `2508cee`) used `r = s`. With
+   `AdapterConfig.use_interval=True`, `r` reaches the model through the interval embedding, so
+   **neither current setting reproduces the documented baseline**, and a DINO run is not
+   comparable to those checkpoints. In the interval branch σ0 was silently ignored, which
+   broke `pairflow.py --self-test` (passes at `2508cee`, fails from `9c67baa`).
+   `mask_to_patch_grid(erode=0)` returned the wrong shape and would have crashed
+   `dino_patch_loss`. The repo also tracks `.ipynb_checkpoints/` copies, `__pycache__`, `.patch`
+   files and `STAGE1C_REPORT (1).md`, which makes "which file did I run" (habit #5) hard.
+   (An earlier version of this commit set the default to False and claimed that restored the
+   documented objective. That was wrong; see §5.)
 
 ## 4. What to do next (in order)
 
-1. **Run the DINO experiment, but with a kill criterion written first.** Command:
+1. **Score the baseline first.** Gate C wrapper on the σ0=0.0 checkpoint and on `global_local`
+   (PLAN work-queue items 1 and 5; commands there). Neither has ever been scored on Gate C, so a
+   DINO run has nothing to be compared against until this exists. Also run the held-out
+   centred-gap re-run (item 2).
+2. **Then the DINO experiment, with a kill criterion written first.** Because the documented
+   checkpoints were trained at `r = s`, decide the objective deliberately, e.g.
    `python scripts/gate_a_transport.py train --cache /data/cache/13061d51aee4 --out runs/gate_a_dino
-   --steps 8000 --sigma0 0.0 --perceptual-weight 0.1 --perceptual-feature dinov2`.
-   Pass = `clear_edit.py` gives a recognisably blue circle *and* Gate C valid-rate beats the σ0=0
-   baseline. Fail = stop the displacement-regression line; do not add more diagnostics.
-2. **Score what was never scored.** Gate C wrapper on σ0=0.0 and on `global_local` (commands in
-   the PLAN's work queue items 1 and 5), and the held-out centred-gap re-run (item 2).
+   --steps 8000 --sigma0 0.0 --perceptual-weight 0.1 --perceptual-feature dinov2` (current default,
+   interval conditioning on) and retrain a no-DINO control under the *same* flags. Pass = the DINO
+   arm gives a recognisably blue circle in `clear_edit.py` *and* beats the control on the
+   calibrated VLM judge / blind-audit clean rate on the 151 cases. Fail = stop the
+   displacement-regression line; do not add more diagnostics.
 3. **Run the control the thesis avoided.** A noise-start, source+mask-conditioned flow-matching
    fine-tune at full steps (Direction B shape) on the same MagicBrush cache, scored on the same
    151 cases. If it beats Gate A, the premise was the bottleneck; few-step distillation can then
    be added last, as the plan says.
 4. **Ship Gate C regardless.** Benchmark + the "routing saturates at 0% mis-targeting but quality
    does not move" result needs no editor and is the strongest asset.
-5. **Verify one open risk (CPU/GPU-light).** Checkpoints were trained with `r = s` (interval
-   embedding on by default, `AdapterConfig.use_interval=True`) while `apply_transport` queries
-   `r = grid[i+1]` (=1 for one step). Compare `diagnose` with r=s vs r=1 on the σ0=0 checkpoint;
-   if they differ, every diagnose/Gate C number so far carries that offset.
+5. **Verify one open risk (cheap).** Old checkpoints were trained with `r = s`;
+   `apply_transport` queries `r = grid[i+1]` (=1 for one step); current code trains with `r ≠ s`
+   under either default. Run `diagnose` on the σ0=0 checkpoint with r=s vs r=1; if they differ,
+   every diagnose/Gate C number so far carries that offset.
 6. Refresh `START_HERE.md` and append the last two commits' results to the PLAN doc;
    add `.ipynb_checkpoints/` to `.gitignore` and untrack the copies.
 
-## 5. Changes made in this commit
-- `transport/pairflow.py`: `interval_conditioning` default → `False` (restores the documented
-  objective; self-test passes again), `mask_to_patch_grid` flattens for `erode=0`, duplicate
-  `loss` line removed.
-- `scripts/gate_a_transport.py`: `--perceptual-mask-erode` is now plumbed to `PairFlowConfig`.
+## 5. Changes made (two commits on this branch)
+- `transport/pairflow.py`: `interval_conditioning` stays **True** (first commit flipped it to
+  False; reverted, because False is a third objective, not the baseline). Added a `ValueError`
+  when `interval_conditioning` and `sigma0 > 0`, so the silent σ0 drop is loud; the self-test's
+  σ0 block now sets `interval_conditioning=False` explicitly and tests the guard.
+  `mask_to_patch_grid` flattens for `erode=0`; duplicate `loss` line removed.
+- `scripts/gate_a_transport.py`: `--perceptual-mask-erode` and
+  `--interval-conditioning/--no-interval-conditioning` plumbed to `PairFlowConfig`. Note
+  `sweep_sigma0.sh`-style runs (σ0>0) now need `--no-interval-conditioning`.
 - `.claude/` (settings + `explorer`/`researcher`/`worker` agents) and `CLAUDE.md`.
-- Verified on CPU: `python transport/pairflow.py --self-test` → OK; `mask_to_patch_grid` and
-  `dino_patch_loss` (stub extractor) run for `erode` 0 and 1.
-  `tests/check_names.py` still reports `bench/test.py: load_target_mask` undefined (pre-existing).
+- Verified on CPU: `python transport/pairflow.py --self-test` → OK (note `_fake_pair_model`
+  ignores `r`, so this does not test objective equivalence); `mask_to_patch_grid` and
+  `dino_patch_loss` (stub extractor) run for `erode` 0 and 1. `tests/check_names.py` still
+  reports `bench/test.py: load_target_mask` undefined (pre-existing).

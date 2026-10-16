@@ -89,11 +89,15 @@ class PairFlowConfig:
     #: [s, r] instead of always predicting the full displacement to s=1.
     #: This keeps inference-time multi-step trajectories closer to the
     #: distribution seen during training.
-    #: Default False: every documented Gate A result (sigma0 sweep, diagnose
-    #: tables, perceptual-loss discrimination check) used the plain s=0
-    #: straight-line objective. True silently ignores sigma0 (the interval
-    #: path never calls sample_path) and breaks pairflow's --self-test.
-    interval_conditioning: bool = False
+    #: NOT the objective behind the documented Gate A results: those (sigma0
+    #: sweep, diagnose tables) were trained at 2508cee with r = s. Since
+    #: 9c67baa the plain branch passes r = 1 and this branch passes r > s;
+    #: with AdapterConfig.use_interval=True, r reaches the model through the
+    #: interval embedding, so neither current setting reproduces r = s.
+    #: Default stays True (the setting the perceptual-loss work was written
+    #: under). sigma0 > 0 is rejected with it: the interval path never calls
+    #: sample_path, so sigma0 would be dropped silently.
+    interval_conditioning: bool = True
     interval_min: float = 0.1
     perceptual_weight: float = 0.0
     #: Which feature extractor to use.
@@ -285,6 +289,11 @@ def pairflow_loss(
     satisfy the signature; in pair mode the gate ignores it (gate = 1), which
     is the whole reason that mode exists.
     """
+    if cfg.interval_conditioning and cfg.sigma0 > 0:
+        raise ValueError(
+            "interval_conditioning=True ignores sigma0 (sample_interval_path "
+            f"has no noise term); got sigma0={cfg.sigma0}. Set "
+            "interval_conditioning=False or sigma0=0.")
     if cfg.interval_conditioning:
         z_s, s, r, v = sample_interval_path(
             z_src, z_tgt, min_interval=cfg.interval_min, generator=generator
@@ -701,7 +710,8 @@ def self_test() -> None:
     po = torch.randn(B, 8)
     u_fixed = torch.randn(B, C, H, W)
 
-    cfg0 = PairFlowConfig(mask_dropout=0.0, cond_dropout=0.0, sigma0=0.0)
+    cfg0 = PairFlowConfig(mask_dropout=0.0, cond_dropout=0.0, sigma0=0.0,
+                          interval_conditioning=False)
     _, stats0 = pairflow_loss(_fake_pair_model(u_fixed), z_src, z_tgt, mask,
                               pe, po, cfg0)
     # sigma0=0: v IS the true displacement already (sample_path's own
@@ -709,7 +719,8 @@ def self_test() -> None:
     # not approximately.
     assert abs(stats0["cos"] - stats0["cos_clean"]) < 1e-6, stats0
 
-    cfg1 = PairFlowConfig(mask_dropout=0.0, cond_dropout=0.0, sigma0=0.7)
+    cfg1 = PairFlowConfig(mask_dropout=0.0, cond_dropout=0.0, sigma0=0.7,
+                          interval_conditioning=False)
     gen = torch.Generator().manual_seed(7)
     _, stats1 = pairflow_loss(_fake_pair_model(u_fixed), z_src, z_tgt, mask,
                               pe, po, cfg1, generator=gen)
@@ -723,6 +734,15 @@ def self_test() -> None:
     # exactly the divergence a sweep comparison plot would otherwise
     # conflate with a real improvement.
     assert abs(stats1["cos"] - stats1["cos_clean"]) > 1e-3, stats1
+
+    # the silent-drop guard: interval path + sigma0 > 0 must refuse
+    try:
+        pairflow_loss(_fake_pair_model(u_fixed), z_src, z_tgt, mask, pe, po,
+                      PairFlowConfig(sigma0=0.3, interval_conditioning=True))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("interval_conditioning + sigma0>0 did not raise")
 
     # direction_position_diagnostics: a model stub that gets direction right
     # INSIDE the mask but predicts pure noise everywhere else. raw (whole
