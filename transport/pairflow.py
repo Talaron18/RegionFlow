@@ -89,7 +89,11 @@ class PairFlowConfig:
     #: [s, r] instead of always predicting the full displacement to s=1.
     #: This keeps inference-time multi-step trajectories closer to the
     #: distribution seen during training.
-    interval_conditioning: bool = True
+    #: Default False: every documented Gate A result (sigma0 sweep, diagnose
+    #: tables, perceptual-loss discrimination check) used the plain s=0
+    #: straight-line objective. True silently ignores sigma0 (the interval
+    #: path never calls sample_path) and breaks pairflow's --self-test.
+    interval_conditioning: bool = False
     interval_min: float = 0.1
     perceptual_weight: float = 0.0
     #: Which feature extractor to use.
@@ -139,7 +143,7 @@ def mask_to_patch_grid(mask: torch.Tensor, grid: int = 16,
     is nonzero even for the oracle -- eroding removes that.
     """
     m = F.adaptive_avg_pool2d(mask, (grid, grid))
-    m = (m > 0.5)
+    m = (m > 0.5).view(mask.shape[0], -1)
     if erode > 0:
         k = 2 * erode + 1
         m = F.max_pool2d(
@@ -322,15 +326,13 @@ def pairflow_loss(
     l_out = (err * outside).sum() / (n_out * err.shape[1])
 
     loss = cfg.inside_weight * l_in + cfg.outside_weight * l_out
+
     # ---- perceptual loss -------------------------------------------
     # Discrimination check (scripts/feature_discrimination.py) on the
     # sigma0=0.0 checkpoint: in-mask DINOv2 patch distance pred/oracle
     # = 30.1, vs LPIPS = 3.8. LPIPS training did not sharpen images
     # because in LPIPS's feature space the blurry MSE optimum already
     # sits close to the sharp target; DINO's does not. So DINO.
-    loss = cfg.inside_weight * l_in + cfg.outside_weight * l_out
-
-    # ---- perceptual loss -------------------------------------------
     l_percept = None
     if cfg.perceptual_weight > 0:
         if vae is None:

@@ -195,7 +195,8 @@ def cmd_train(args) -> int:
                         cond_dropout=args.cond_dropout,
                         sigma0=args.sigma0,
                         perceptual_weight=args.perceptual_weight,
-                        perceptual_feature=args.perceptual_feature)
+                        perceptual_feature=args.perceptual_feature,
+                        perceptual_mask_erode=args.perceptual_mask_erode)
 
     def loss_fn(model, batch, step, cfg):
         dev, mdt = args.device, model.model_dtype
@@ -2135,6 +2136,10 @@ def main() -> int:
                    choices=("dinov2", "lpips"),
                    help="'dinov2' (recommended) or 'lpips' (kept as the "
                         "failed baseline).")
+    t.add_argument("--perceptual-mask-erode", type=int, default=1,
+                   help="erode the DINO patch mask by this many patches "
+                        "(1 avoids boundary patches whose receptive field "
+                        "crosses the mask edge; 0 disables)")
     t.add_argument("--log-every", type=int, default=25)
     t.add_argument("--ckpt-every", type=int, default=500,
                    help="numbered snapshots land every 5x this")
