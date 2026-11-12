@@ -18,7 +18,7 @@ Data root on the host is `/mnt/e/regionflow-data`. The scripts default to `/data
 ```bash
 # Docker (docker/compose.yml mounts ${DATA_DIR} at /data and sets HF_HOME=/data/hf)
 export DATA_DIR=/mnt/e/regionflow-data
-docker compose -f docker/compose.yml run --rm <service> bash
+docker compose -f docker/compose.yml run --rm dev bash
 
 # Without Docker: symlink once, or replace /data with /mnt/e/regionflow-data below
 sudo ln -s /mnt/e/regionflow-data /data
