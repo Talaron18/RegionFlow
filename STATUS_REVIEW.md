@@ -158,6 +158,20 @@ an instruction-free "erase" predictor (`u = mean in-mask target latent − z_src
 the mask, 0 outside) with the same three treatments. If it lands near 0.5 raw, every
 cosine in the σ0 sweep was mostly measuring erasure.
 
+**Erase baseline result (user's run, `scripts/erase_baseline.py`, n=4511, medians):**
+
+| predictor | raw | pooled | centered |
+|---|---|---|---|
+| erase (no instruction, no target) | 0.420 | 0.602 | 0.502 |
+| flatten | 0.391 | — | — |
+| constant shift | 0.141 | 0.520 | −0.009 |
+| trained control arm, for comparison | 0.547 | 0.769 | 0.672 |
+
+Erasing the source content alone reaches about three quarters of the trained
+model's score on every treatment (77% / 78% / 75%). The inference above is
+confirmed: Gate A's cosines, including the σ0 sweep, mostly measured removal of
+the source, and the part attributable to anything else is about +0.13 raw.
+
 ## 5. Changes made (two commits on this branch)
 - `transport/pairflow.py`: `interval_conditioning` stays **True** (first commit flipped it to
   False; reverted, because False is a third objective, not the baseline). Added a `ValueError`
