@@ -15,7 +15,7 @@ unless marked otherwise.
 |---|---|---|---|---|---|---|
 | **first** | `black-forest-labs/FLUX.2-klein-4B` | 4B, 7.8 GB; 5 double + 20 single-stream blocks; 32-channel VAE | Qwen3 LLM, ~8 GB | Apache 2.0, ungated | none documented (image + text) | yes: card states ~13 GB and names the RTX 3090; 4 steps |
 | **second** | `Qwen/Qwen-Image-2.1` | 7B single-stream, 14.2 GB | ~17.5 GB | Qwen Research License (non-commercial), ungated | card: local edits "via circles, painted annotations, or separate masks" | by size only: encode text, free the encoder, then denoise. Not confirmed. |
-| unverified | `black-forest-labs/flux-3-image-klein` | 11.1 GB (6.3 / 5.3 GB quantised variants in repo) | ~8.9 GB | FLUX community licence, **gated** | unknown (card needs login) | likely by size |
+| does not fit | `black-forest-labs/flux-3-image-klein` | 5.6B | Qwen3-VL-4B-Instruct, plus a required 9B prompt upsampler | FLUX Kommunity (non-commercial; commercial outputs under US$5M revenue), gated | bounding boxes written in the prompt; card: "not a hard mask" | **no** as documented: card gives peak 31 / 26 / 25 GB (BF16 / FP8 / NVFP4) at 1024² with the upsampler off, and the upsampler adds ~28 GB. Lower resolution untested. |
 | too large | `Qwen/Qwen-Image-Edit-2511` | ~40 GB | ~16.6 GB | Apache 2.0 | none official | only with heavy quantisation |
 
 Ranking evidence is weak: third-party leaderboard snapshots (not opened directly)
