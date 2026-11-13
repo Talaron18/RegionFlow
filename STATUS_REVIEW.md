@@ -140,6 +140,17 @@ control arm produces almost the same displacement whichever instruction it is gi
 Not verified: that batch neighbours in the cache carry different instructions (if many
 were identical, `shuffle` would understate the drop; `zero` does not depend on this).
 
+**Same check on the DINO arm (`runs/gate_a_dino/ckpt_final.pt`, step 8000, same flags):**
+
+| run | raw | pooled | centered | centered vs baseline |
+|---|---|---|---|---|
+| baseline | 0.544 | 0.771 | 0.673 | — |
+| `--ablate-text zero` | 0.539 | 0.754 | 0.648 | −3.7% |
+| `--ablate-text shuffle` | 0.544 | 0.770 | 0.677 | +0.6% |
+
+Same text-binding failure; the perceptual loss did not change it. This is not the
+DINO verdict (cosines are excluded from it in `DINO_EXPERIMENT.md`); K1 decides.
+
 Untested inference: `v = z_tgt − z_src` contains `−z_src` inside the mask, so a model
 that only erases the source content there already correlates with `v`. That would
 explain both the cosine level and the grey disc in `synthetic_result.png`. Check: score
