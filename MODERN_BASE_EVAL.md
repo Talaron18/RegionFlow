@@ -33,11 +33,10 @@ controlled hands/faces comparison was found for any of them.
 
 ## To build
 
-1. A `run_gate_c.py` model wrapper `flux2-klein-4b` calling
-   `Flux2KleinPipeline(prompt=instruction, image=source, num_inference_steps=4,
-   guidance_scale=1.0)` at the benchmark's resolution, seeded with `case_seed`.
-   Small. Cannot be tested without a GPU; first run it with `--limit 4` and look
-   at the four images.
+1. ~~A `run_gate_c.py` model wrapper `flux2-klein-4b`~~ **written**: `bench/flux2_klein_model.py`,
+   registered as `--model flux2-klein-4b` (`--klein-steps 4`, `--klein-guidance 1.0`,
+   `--klein-offload`). Checked against a stub pipeline only; the real pipeline call is
+   untested until the 4-case smoke run.
 2. Optional second arm: a `qwen-image-2.1` wrapper with `--mask-mode none` and
    `oracle` (its card documents mask input; the exact argument must be read from
    its pipeline first).
