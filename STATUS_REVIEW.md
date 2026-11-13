@@ -96,6 +96,37 @@ panel alone.
 6. Refresh `START_HERE.md` and append the last two commits' results to the PLAN doc;
    add `.ipynb_checkpoints/` to `.gitignore` and untrack the copies.
 
+## 4b. Text-ablation check (added after the review)
+
+Question: does the instruction set the edit direction, or do the image and mask?
+The mask was ablated earlier (raw 0.541 → 0.240); the instruction never was.
+
+```bash
+CK=runs/gate_a_sigma_0.0/ckpt_latest.pt
+C="--cache /data/cache/13061d51aee4 --bias-npy runs/bias.npy --batch-size 8"
+python scripts/gate_a_transport.py diagnose --ckpt $CK $C                        # baseline
+python scripts/gate_a_transport.py diagnose --ckpt $CK $C --ablate-text zero     # no instruction
+python scripts/gate_a_transport.py diagnose --ckpt $CK $C --ablate-text shuffle  # wrong instruction
+python scripts/gate_a_transport.py diagnose --ckpt $CK $C --readout-r 1.0        # r=s vs r=1 risk (§4 item 5)
+```
+
+For the interval-trained arms (`runs/gate_a_ctrl`, `runs/gate_a_dino`) add
+`--readout-r 1.0` to all three text runs.
+
+How to read `centered` (the instruction-specific treatment), decided in advance:
+
+| drop from baseline under `shuffle` | reading |
+|---|---|
+| under 10% relative | the model mostly ignores which instruction it got: a text-binding failure |
+| 10–40% | partial use of the instruction |
+| over 40% | the instruction is load-bearing; the failure is elsewhere |
+
+`zero` gives the same comparison against "no text at all" (an input the model
+saw in 10% of training). `shuffle` is the cleaner one because the text stays a
+real instruction. Reference point from the data: `centered` for mismatched
+instruction pairs is about −0.05, same-instruction about +0.21 (PLAN §7).
+`shuffle` skips a trailing batch of one, so n can be one short.
+
 ## 5. Changes made (two commits on this branch)
 - `transport/pairflow.py`: `interval_conditioning` stays **True** (first commit flipped it to
   False; reverted, because False is a third objective, not the baseline). Added a `ValueError`

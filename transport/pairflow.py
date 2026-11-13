@@ -468,6 +468,33 @@ def pairflow_loss(
 
 
 @torch.no_grad()
+def ablate_text_condition(
+    prompt_embeds: torch.Tensor,
+    pooled: torch.Tensor,
+    mode: str,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Remove or mismatch the instruction for a diagnostic forward.
+
+    "zero"     both tensors zeroed -- exactly what cond_dropout does to 10%
+               of training samples, so the model has seen this input.
+               Measures what the instruction buys over image + mask alone.
+    "shuffle"  each item gets its batch neighbour's instruction (roll by
+               one). The text is still a real, in-distribution instruction,
+               just the wrong one. Measures instruction SPECIFICITY, without
+               the "no text at all" input.
+
+    Scoring is unchanged by either: the caller still compares against the
+    item's own true displacement.
+    """
+    if mode == "zero":
+        return torch.zeros_like(prompt_embeds), torch.zeros_like(pooled)
+    if mode == "shuffle":
+        if prompt_embeds.shape[0] < 2:
+            raise ValueError("ablate_text 'shuffle' needs a batch of >= 2")
+        return prompt_embeds.roll(1, dims=0), pooled.roll(1, dims=0)
+    raise ValueError(f"ablate_text mode must be 'zero' or 'shuffle', got {mode!r}")
+
+
 def direction_position_diagnostics(
     u: torch.Tensor,
     v_clean: torch.Tensor,
@@ -743,6 +770,26 @@ def self_test() -> None:
         pass
     else:
         raise AssertionError("interval_conditioning + sigma0>0 did not raise")
+
+    # ablate_text_condition: zero matches cond_dropout's own zeroing;
+    # shuffle moves every row and is a pure permutation.
+    pe_t = torch.randn(3, 5, 8)
+    po_t = torch.randn(3, 6)
+    pe_z, po_z = ablate_text_condition(pe_t, po_t, "zero")
+    assert not pe_z.any() and not po_z.any()
+    assert pe_z.shape == pe_t.shape and po_z.shape == po_t.shape
+    pe_s, po_s = ablate_text_condition(pe_t, po_t, "shuffle")
+    for i in range(3):
+        assert torch.equal(pe_s[i], pe_t[i - 1]) and torch.equal(po_s[i], po_t[i - 1])
+        assert not torch.equal(pe_s[i], pe_t[i])
+    for bad in (lambda: ablate_text_condition(pe_t[:1], po_t[:1], "shuffle"),
+                lambda: ablate_text_condition(pe_t, po_t, "blank")):
+        try:
+            bad()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("ablate_text_condition accepted a bad call")
 
     # direction_position_diagnostics: a model stub that gets direction right
     # INSIDE the mask but predicts pure noise everywhere else. raw (whole
