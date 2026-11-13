@@ -127,6 +127,26 @@ real instruction. Reference point from the data: `centered` for mismatched
 instruction pairs is about −0.05, same-instruction about +0.21 (PLAN §7).
 `shuffle` skips a trailing batch of one, so n can be one short.
 
+**Result (user's GPU run, `runs/gate_a_ctrl/ckpt_final.pt`, step 8000, `--readout-r 1.0`, n=4511, medians):**
+
+| run | raw | pooled | centered | centered vs baseline |
+|---|---|---|---|---|
+| baseline | 0.547 | 0.769 | 0.672 | — |
+| `--ablate-text zero` | 0.539 | 0.750 | 0.635 | −5.5% |
+| `--ablate-text shuffle` | 0.546 | 0.769 | 0.669 | −0.4% |
+
+Both are under the 10% line: by the rule above this is a **text-binding failure**. The
+control arm produces almost the same displacement whichever instruction it is given.
+Not verified: that batch neighbours in the cache carry different instructions (if many
+were identical, `shuffle` would understate the drop; `zero` does not depend on this).
+
+Untested inference: `v = z_tgt − z_src` contains `−z_src` inside the mask, so a model
+that only erases the source content there already correlates with `v`. That would
+explain both the cosine level and the grey disc in `synthetic_result.png`. Check: score
+an instruction-free "erase" predictor (`u = mean in-mask target latent − z_src` inside
+the mask, 0 outside) with the same three treatments. If it lands near 0.5 raw, every
+cosine in the σ0 sweep was mostly measuring erasure.
+
 ## 5. Changes made (two commits on this branch)
 - `transport/pairflow.py`: `interval_conditioning` stays **True** (first commit flipped it to
   False; reverted, because False is a third objective, not the baseline). Added a `ValueError`
