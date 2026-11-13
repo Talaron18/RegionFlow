@@ -140,3 +140,26 @@ for a publishable claim.
 
 **Known limits of this design:** one seed per arm; the judge was calibrated on
 `none`-arm outputs only (ρ = 0.717); K1 is a single out-of-distribution image.
+
+---
+
+## Result (2026-11-13, user's GPU run, both arms at step 8000)
+
+**FAILED at K1.** `clear_edit.py --r 1.0`:
+
+| arm | in-mask mean RGB | dist to target | dist to source | `blue_ok` | in-mask cos |
+|---|---|---|---|---|---|
+| oracle (both runs) | 32.6 / 81.0 / 216.3 | 4.6 | 269.1 | true | — |
+| control | 169.1 / 158.2 / 144.1 | 176.7 | 179.0 | false | 0.747 |
+| DINO | 207.3 / 177.0 / 164.7 | 209.5 | 199.7 | false | 0.661 |
+
+All three checks had to pass, so K2 and K3 were not run. Per §3 the one-step
+displacement-regression line is closed: no further loss variants, weights,
+extractors, σ0 values or diagnostics on it. Next is the noise-start,
+source+mask-conditioned control (`STATUS_REVIEW.md` §4.3), preferably starting
+from a base that already edits.
+
+Supporting, not part of the verdict: both arms ignore the instruction
+(`STATUS_REVIEW.md` §4b), and both score a high in-mask cosine here while
+producing grey, so latent cosine does not track whether the requested edit
+happened. `scripts/erase_baseline.py` quantifies that on the cache.
