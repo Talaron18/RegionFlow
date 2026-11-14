@@ -19,6 +19,19 @@ SETTINGS are the model card's for the distilled 4B checkpoint: 4 steps,
 guidance_scale 1.0. run_gate_c.py's own --steps / --guidance defaults
 (50 / 7.5) are UltraEdit's and are deliberately NOT forwarded.
 
+COMPOSITE BASELINE (--klein-composite). The model still never sees the mask.
+It edits the whole image exactly as in the no-mask run (same seed, same
+call), and the result is then pasted into the SOURCE through the
+conditioning mask run_gate_c builds (white = editable, already dilated by
+--mask-dilate), with a Gaussian feather. Everything outside the mask is the
+source pixel for pixel, so sibling leakage is removed by construction. This
+is the trivial thing any mask-based method on this base has to beat: it
+shows what a mask alone buys, and what it costs at the boundary.
+
+    python bench/run_gate_c.py --model flux2-klein-4b --klein-composite \
+        --mask-mode oracle --out runs/gate_c/klein4b_comp_oracle.jsonl \
+        --save-images runs/gate_c/img_klein4b_comp_oracle
+
 NOT RUN ON A GPU when written. `self_test` checks the call the wrapper
 makes against a stub pipeline; whether the real pipeline accepts it is
 what the 4-case smoke run above is for. Look at those four images first.
@@ -34,6 +47,28 @@ REPOS = {
 SIZE_MULTIPLE = 16
 
 
+def composite(src, edited, mask, feather: float = 4.0):
+    """Paste `edited` into `src` where `mask` is white. PIL images in, PIL out.
+
+    mask is the runner's conditioning image (RGB or L, white = editable).
+    feather is a Gaussian radius in pixels on the alpha; 0 gives a hard
+    edge and leaves every pixel outside the mask exactly equal to `src`.
+    With feather > 0 the blend reaches a few pixels past the mask edge.
+    """
+    from PIL import Image, ImageFilter  # noqa: PLC0415
+
+    src = src.convert("RGB")
+    if edited.size != src.size:
+        edited = edited.resize(src.size, Image.BILINEAR)
+    alpha = mask.convert("L")
+    if alpha.size != src.size:
+        alpha = alpha.resize(src.size, Image.NEAREST)
+    alpha = alpha.point(lambda v: 255 if v >= 128 else 0)
+    if feather and feather > 0:
+        alpha = alpha.filter(ImageFilter.GaussianBlur(radius=float(feather)))
+    return Image.composite(edited.convert("RGB"), src, alpha)
+
+
 def snap_size(w: int, h: int, multiple: int = SIZE_MULTIPLE) -> tuple[int, int]:
     """Nearest multiple-of-`multiple` size, never below one multiple."""
     def _snap(x):
@@ -46,11 +81,15 @@ class Flux2KleinModel:
 
     def __init__(self, name: str = "flux2-klein-4b", steps: int = 4,
                  guidance: float = 1.0, device: str = "cuda",
-                 offload: bool = False, pipe=None):
+                 offload: bool = False, pipe=None,
+                 composite_mask: bool = False, feather: float = 4.0):
         if name not in REPOS:
             raise SystemExit(f"unknown klein model {name!r}; "
                              f"known: {sorted(REPOS)}")
-        self.name, self.repo = name, REPOS[name]
+        self.repo = REPOS[name]
+        self.composite_mask, self.feather = bool(composite_mask), float(feather)
+        # distinct name so composite results never pool with the plain arm
+        self.name = name + ("+composite" if self.composite_mask else "")
         self.steps, self.g = int(steps), float(guidance)
         self.device, self.offload = device, bool(offload)
         if pipe is not None:            # injected (self_test)
@@ -82,17 +121,26 @@ class Flux2KleinModel:
         return torch.Generator(device=dev).manual_seed(int(seed))
 
     def __call__(self, img, prompt, seed, mask=None):
-        if mask is not None:
+        if mask is not None and not self.composite_mask:
             raise SystemExit(
-                f"{self.name} has no mask input; run it with --mask-mode none. "
-                "Refusing to drop the mask silently.")
+                f"{self.name} has no mask input; run it with --mask-mode none, "
+                "or add --klein-composite to paste the edit back through the "
+                "mask. Refusing to drop the mask silently.")
+        if mask is None and self.composite_mask:
+            raise SystemExit(
+                "--klein-composite needs a mask to paste through; use "
+                "--mask-mode oracle (or white / sibling as controls).")
+        src = img
         w, h = snap_size(*img.size)
         if (w, h) != img.size:
             img = img.resize((w, h))
-        return self.pipe(prompt=prompt, image=img, height=h, width=w,
-                         num_inference_steps=self.steps,
-                         guidance_scale=self.g,
-                         generator=self._generator(seed)).images[0]
+        edited = self.pipe(prompt=prompt, image=img, height=h, width=w,
+                           num_inference_steps=self.steps,
+                           guidance_scale=self.g,
+                           generator=self._generator(seed)).images[0]
+        if self.composite_mask:
+            return composite(src, edited, mask, self.feather)
+        return edited
 
 
 def self_test() -> None:
@@ -139,6 +187,44 @@ def self_test() -> None:
         pass
     else:
         raise AssertionError("mask was accepted")
+    # composite: the pipeline call is IDENTICAL to the no-mask arm (same
+    # kwargs, no mask anywhere), and only the paste differs.
+    import numpy as np  # noqa: PLC0415
+
+    class _Red:
+        def __call__(self, **kw):
+            calls.append(kw)
+            return _Out(Image.new("RGB", (kw["width"], kw["height"]), (255, 0, 0)))
+
+    src = Image.new("RGB", (512, 512), (0, 0, 255))
+    msk = Image.new("RGB", (512, 512), (0, 0, 0))
+    msk.paste((255, 255, 255), (100, 100, 200, 200))
+    hard = Flux2KleinModel(pipe=_Red(), device="cpu", composite_mask=True, feather=0)
+    assert hard.name == "flux2-klein-4b+composite"
+    o = np.asarray(hard(src, "x", seed=7, mask=msk))
+    assert set(calls[-1]) == set(kw), "composite changed the pipeline call"
+    inside = np.zeros((512, 512), bool); inside[100:200, 100:200] = True
+    assert (o[inside] == (255, 0, 0)).all()
+    assert (o[~inside] == (0, 0, 255)).all(), "pixels outside the mask changed"
+    soft = Flux2KleinModel(pipe=_Red(), device="cpu", composite_mask=True, feather=4)
+    o = np.asarray(soft(src, "x", seed=7, mask=msk))
+    assert tuple(o[150, 150]) == (255, 0, 0)            # centre: the edit
+    far = np.ones((512, 512), bool); far[70:230, 70:230] = False
+    assert (o[far] == (0, 0, 255)).all(), "feather reached far from the mask"
+    assert 0 < o[100, 150, 0] < 255                     # edge: a blend
+    # mask size differing from the source is resized, not an error
+    o = np.asarray(hard(src, "x", seed=7, mask=msk.resize((256, 256))))
+    assert tuple(o[150, 150]) == (255, 0, 0) and tuple(o[20, 20]) == (0, 0, 255)
+    # white mask == the plain model output (the "edit anywhere" control)
+    o = np.asarray(hard(src, "x", seed=7, mask=Image.new("RGB", (512, 512), "white")))
+    assert (o == (255, 0, 0)).all()
+    try:
+        hard(src, "x", seed=0)
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("composite without a mask was accepted")
+
     try:
         Flux2KleinModel(name="flux2-klein-99b", pipe=_Pipe())
     except SystemExit:

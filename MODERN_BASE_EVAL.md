@@ -177,3 +177,44 @@ Next, before any method work: (1) tag each wrong_edit in the ledger's `notes` as
 or `true` so the split is countable; (2) score the trivial baseline, klein's output
 composited into the source through the oracle mask, which removes sibling leakage by
 construction and shows what a mask alone buys on this base.
+
+## Composite baseline — scope (written before any run)
+
+`--klein-composite` edits with no mask, exactly as the plain arm (same call, same
+seed), then pastes the result into the source through the oracle mask
+(`--mask-dilate 8`, `--klein-feather 4`, both frozen here). Outside the mask the
+output is the source, so sibling leakage is zero by construction.
+
+```bash
+python bench/run_gate_c.py --model flux2-klein-4b --klein-composite \
+  --mask-mode oracle --out runs/gate_c/klein4b_comp_oracle.jsonl \
+  --save-images runs/gate_c/img_klein4b_comp_oracle
+```
+
+Blind audit, **same 40 ids as the klein audit**, both arms pooled and shuffled:
+
+```bash
+python bench/blind_audit.py --build \
+  --arm klein:runs/gate_c/klein4b_none.jsonl:runs/gate_c/img_klein4b_none \
+  --arm comp:runs/gate_c/klein4b_comp_oracle.jsonl:runs/gate_c/img_klein4b_comp_oracle \
+  --reference klein --carry-over runs/gate_c/blind_klein_ledger_ids.json --extra 0 \
+  --out-dir runs/gate_c/blind_comp \
+  --ledger runs/gate_c/blind_comp_ledger.json --key runs/gate_c/blind_comp_key.json
+```
+
+(`blind_klein_ledger_ids.json` = the 40 ids from `blind_klein_key.json`; see the
+one-liner in the chat. Not yet checked that `blind_audit.py` accepts this file
+shape.)
+
+How the composite arm's clean rate (of 40) will be read:
+
+| composite clean | reading |
+|---|---|
+| ≥ 70% | A mask plus paste-back is enough on this base. No learned region mechanism is needed; what remains is obtaining the mask (referring segmentation) and the cases below. |
+| 40–70% | The mask removes leakage but something else fails often. Classify the failures before choosing a method. |
+| < 40% | Paste-back is not enough; conditioning the model on the region is a live method question. |
+
+Record separately, as they are what paste-back cannot fix: visible seams or lighting
+mismatch at the mask edge; edits that need to extend past the mask (added objects,
+shadows, pose changes); removals, where the pasted region still shows the model's
+whole-image re-render; and the 4 true wrong edits, which a mask does not address.

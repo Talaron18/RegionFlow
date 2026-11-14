@@ -253,16 +253,23 @@ def load_model(args):
             device=args.device, steps_readout=args.gate_a_steps_readout,
             mask_encoder_kind=args.gate_a_mask_encoder_kind)
     if args.model in KLEIN_MODELS:
-        if args.mask_mode != "none":
+        if args.klein_composite and args.mask_mode == "none":
+            raise SystemExit(
+                "--klein-composite pastes the edit back through a mask, so it\n"
+                "needs --mask-mode oracle (white and sibling are its controls).")
+        if args.mask_mode != "none" and not args.klein_composite:
             raise SystemExit(
                 f"{args.model} takes a prompt and reference image only -- no\n"
                 "mask or region input is documented for FLUX.2 klein. Run it\n"
                 "with --mask-mode none; its comparison arms are `none`\n"
-                "(RefEdit-SD3) and `freeform` (UltraEdit), not `oracle`.")
+                "(RefEdit-SD3) and `freeform` (UltraEdit), not `oracle`.\n"
+                "To paste the edit back through the mask instead, add\n"
+                "--klein-composite.")
         from flux2_klein_model import Flux2KleinModel  # noqa: PLC0415
         return Flux2KleinModel(
             args.model, steps=args.klein_steps, guidance=args.klein_guidance,
-            device=args.device, offload=args.klein_offload)
+            device=args.device, offload=args.klein_offload,
+            composite_mask=args.klein_composite, feather=args.klein_feather)
     if args.model in MODEL_REPOS:
         if args.model == "refedit-sd3" and args.mask_mode != "none":
             print("  NOTE: RefEdit-SD3 is finetuned on UltraEdit-FREEFORM, so a "
@@ -710,6 +717,17 @@ def main():
     p.add_argument("--klein-guidance", type=float, default=1.0,
                    help="guidance_scale for --model flux2-klein-*; 1.0 per "
                         "the model card. --guidance is NOT used.")
+    p.add_argument("--klein-composite", action="store_true",
+                   help="trivial mask baseline for --model flux2-klein-*: "
+                        "edit with no mask (same call and seed as the plain "
+                        "arm), then paste the result into the source through "
+                        "the --mask-mode mask. Removes sibling leakage by "
+                        "construction; results are written under the model "
+                        "name '<model>+composite'.")
+    p.add_argument("--klein-feather", type=float, default=4.0,
+                   help="Gaussian radius in px for the composite's edge; "
+                        "0 = hard edge. FREEZE before scoring, like "
+                        "--mask-dilate.")
     p.add_argument("--klein-offload", action="store_true",
                    help="enable_model_cpu_offload for --model flux2-klein-* "
                         "(lower VRAM, slower). Try without it first on 24GB.")
