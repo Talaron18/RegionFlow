@@ -82,3 +82,44 @@ One seed; the judge was calibrated on RefEdit-SD3 outputs only (ρ = 0.717) and 
 score a different model family differently, so the blind audit carries the quality
 claim; klein 4B is the smallest of its family, so a poor result does not speak for
 larger models.
+
+---
+
+## Result — FLUX.2 klein 4B, no mask (2026-11-14, user's GPU run)
+
+151 cases, full prompt, 4 steps, guidance 1.0, seed base 0. Judge: GLM via
+SiliconFlow, 140 of 151 scored (11 empty API replies, to be retried).
+
+| | klein 4B, no mask | RefEdit-SD3, no mask | UltraEdit freeform | UltraEdit oracle mask |
+|---|---|---|---|---|
+| mis-targeted | **34 (23%)** | 43 (28%) | 60 (40%) | 0 (0%) |
+| no tracked change | **0** | 10 (7%) | 12 (8%) | 1 |
+| off-instance edit | 9 (6%) | 0 | 0 | 1 |
+| measurable | 108 (72%) | 98 (65%) | 79 (52%) | 149 (99%) |
+| valid (K=10) | 21 (14%) | 38 (25%) | 1 | 16 (11%) |
+| leakage ratio median (K=10) | 0.155 | 0.082 | 1.121 | 0.154 |
+| sibling excess median (K=10) | +0.0166 | +0.0083 | +0.1634 | +0.0097 |
+| judged `overall` median, all judged | 9.00 (n=140) | — | — | — |
+| judged `overall` median, valid+measurable | 9.22 (n=18; 3 below 5) | — | — | 4.87 (n=16; 8 below 5) |
+
+Reference floors: ground truth 0.011 / −0.005; category-level 1.001 / +0.157.
+
+**Reading, by the rule fixed above: mis-targeted > 10%, so instance mis-targeting
+survives in a 2026 base.** It is slightly below RefEdit-SD3's rate and well below
+UltraEdit-freeform's, but nowhere near the 0% a mask gives.
+
+Also in the numbers:
+- The model always acts: zero no-change cases, against 7–8% for the old models.
+- Judged quality is far higher than UltraEdit-oracle on the comparable subset
+  (9.22 vs 4.87). The judge was calibrated on RefEdit-SD3 outputs only, so the
+  blind audit must confirm this.
+- Mis-targeted cases still score a judged median of 7.09 on the target region
+  (it was 0.00 for RefEdit-SD3). Unverified inference: klein often edits the
+  target *and* a sibling, i.e. category-level leakage, rather than only the wrong
+  instance. Needs a look at the images.
+- Sibling excess (+0.0166) is about twice RefEdit-SD3's and UltraEdit-oracle's.
+- Only 14% of cases are valid at K=10, and 49 of 151 have an off-instance hot spot
+  louder than the target: klein changes the rest of the frame more than a
+  mask-conditioned editor does. Background preservation is a second open issue.
+
+Not yet done: retry the 11 judge failures; the 40-case blind audit.
