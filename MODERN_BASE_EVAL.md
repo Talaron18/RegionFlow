@@ -122,4 +122,26 @@ Also in the numbers:
   louder than the target: klein changes the rest of the frame more than a
   mask-conditioned editor does. Background preservation is a second open issue.
 
-Not yet done: retry the 11 judge failures; the 40-case blind audit.
+**Judge, complete (151/151, `runs/gate_c/vlm_quality_klein4b_none.jsonl`):** `overall`
+median 9.00, mean 7.00; semantic-consistency score ≥ 8 in 121 of 151; `overall` < 5 in
+36. By outcome: measurable 9.22 (n=108), mis-targeted 6.20 (n=34), off-instance 3.00
+(n=9). Valid+measurable: 9.22 (n=20, 3 below 5).
+
+**Blind audit (40 klein cases, single arm, ids NOT the earlier audit's 40):**
+
+| arm | clean | degraded | destroyed | wrong_edit | no_edit | clean % |
+|---|---|---|---|---|---|---|
+| klein 4B, no mask | 9 | 1 | 0 | **28** | 2 | 22% |
+| UltraEdit oracle (earlier audit, other ids) | 9 | 12 | 3 | 6 | 10 | 22% |
+
+- Artifacts ("AI-look"): degraded + destroyed = **1 of 40**, against 15 of 40 for
+  UltraEdit-oracle. Different ids, so indicative, not paired.
+- Clean rate is 22%, the same as UltraEdit-oracle's and under the 50% line.
+- The failure mode moved: 28 of 40 are `wrong_edit`.
+- **The judge and the human disagree sharply.** The judge gives a high semantic
+  score to 80% of cases; the audit calls 22% clean. Until the two are cross-tabulated
+  per case, the judged 9.0 must not be quoted as klein's quality. Open: what the 28
+  `wrong_edit` cases are (leakage onto siblings, which the target-crop judge cannot
+  see, or a genuinely different edit), and whether the audit sample over-represents
+  mis-targeted cases (it is stratified by outcome).
+
