@@ -145,3 +145,35 @@ median 9.00, mean 7.00; semantic-consistency score ≥ 8 in 121 of 151; `overall
   see, or a genuinely different edit), and whether the audit sample over-represents
   mis-targeted cases (it is stratified by outcome).
 
+
+### Cross-tabulation of the audit (ledger + key pushed by the user, 2026-11-14)
+
+The audit sample is stratified, not random: 16 measurable / 15 mis-targeted / 9
+off-instance, against 108 / 34 / 9 in the full run.
+
+| human verdict | measurable | mis-targeted | off-instance | judge `overall` median | judge sc ≥ 8 |
+|---|---|---|---|---|---|
+| clean (9) | 6 | 2 | 1 | 8.05 | 7 of 9 |
+| degraded (1) | 1 | 0 | 0 | 5.48 | 1 of 1 |
+| wrong_edit (28) | 9 | 13 | 6 | 8.29 | 18 of 28 |
+| no_edit (2) | 0 | 0 | 2 | 4.87 | 1 of 2 |
+
+- **The judge does not separate clean from wrong_edit** (8.05 vs 8.29). It scores the
+  target crop only, so it cannot see an edit that also landed on siblings. For klein it
+  measures "was the target edited well", not "was only the target edited".
+- **Rater's description of the 28 wrong edits:** almost all also edited untargeted
+  siblings; 4 were a different edit on the target itself (whole cake removed instead of
+  half; a cat added beside the dog instead of replacing it; two parrots instead of one).
+  This split is the rater's summary, not a per-case label.
+- **The metric's `mis_targeted` undercounts leakage.** It fires only when a sibling
+  changed MORE than the target. In the `measurable` stratum, where the target changed
+  most, 9 of 16 were still judged wrong_edit.
+- **Weighted to the full 151:** clean ≈ 30% (6/16, 2/15, 1/9 by stratum); wrong_edit
+  ≈ 64%. If about 24 of 28 wrong edits are sibling leakage, roughly half of all klein
+  edits on this benchmark leak onto a sibling. One rater, small strata: an estimate,
+  not a measurement.
+
+Next, before any method work: (1) tag each wrong_edit in the ledger's `notes` as `leak`
+or `true` so the split is countable; (2) score the trivial baseline, klein's output
+composited into the source through the oracle mask, which removes sibling leakage by
+construction and shows what a mask alone buys on this base.
