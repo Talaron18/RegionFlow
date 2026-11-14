@@ -89,6 +89,14 @@ class PairFlowConfig:
     #: [s, r] instead of always predicting the full displacement to s=1.
     #: This keeps inference-time multi-step trajectories closer to the
     #: distribution seen during training.
+    #: NOT the objective behind the documented Gate A results: those (sigma0
+    #: sweep, diagnose tables) were trained at 2508cee with r = s. Since
+    #: 9c67baa the plain branch passes r = 1 and this branch passes r > s;
+    #: with AdapterConfig.use_interval=True, r reaches the model through the
+    #: interval embedding, so neither current setting reproduces r = s.
+    #: Default stays True (the setting the perceptual-loss work was written
+    #: under). sigma0 > 0 is rejected with it: the interval path never calls
+    #: sample_path, so sigma0 would be dropped silently.
     interval_conditioning: bool = True
     interval_min: float = 0.1
     perceptual_weight: float = 0.0
@@ -139,7 +147,7 @@ def mask_to_patch_grid(mask: torch.Tensor, grid: int = 16,
     is nonzero even for the oracle -- eroding removes that.
     """
     m = F.adaptive_avg_pool2d(mask, (grid, grid))
-    m = (m > 0.5)
+    m = (m > 0.5).view(mask.shape[0], -1)
     if erode > 0:
         k = 2 * erode + 1
         m = F.max_pool2d(
@@ -281,6 +289,11 @@ def pairflow_loss(
     satisfy the signature; in pair mode the gate ignores it (gate = 1), which
     is the whole reason that mode exists.
     """
+    if cfg.interval_conditioning and cfg.sigma0 > 0:
+        raise ValueError(
+            "interval_conditioning=True ignores sigma0 (sample_interval_path "
+            f"has no noise term); got sigma0={cfg.sigma0}. Set "
+            "interval_conditioning=False or sigma0=0.")
     if cfg.interval_conditioning:
         z_s, s, r, v = sample_interval_path(
             z_src, z_tgt, min_interval=cfg.interval_min, generator=generator
@@ -322,15 +335,13 @@ def pairflow_loss(
     l_out = (err * outside).sum() / (n_out * err.shape[1])
 
     loss = cfg.inside_weight * l_in + cfg.outside_weight * l_out
+
     # ---- perceptual loss -------------------------------------------
     # Discrimination check (scripts/feature_discrimination.py) on the
     # sigma0=0.0 checkpoint: in-mask DINOv2 patch distance pred/oracle
     # = 30.1, vs LPIPS = 3.8. LPIPS training did not sharpen images
     # because in LPIPS's feature space the blurry MSE optimum already
     # sits close to the sharp target; DINO's does not. So DINO.
-    loss = cfg.inside_weight * l_in + cfg.outside_weight * l_out
-
-    # ---- perceptual loss -------------------------------------------
     l_percept = None
     if cfg.perceptual_weight > 0:
         if vae is None:
@@ -457,6 +468,33 @@ def pairflow_loss(
 
 
 @torch.no_grad()
+def ablate_text_condition(
+    prompt_embeds: torch.Tensor,
+    pooled: torch.Tensor,
+    mode: str,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Remove or mismatch the instruction for a diagnostic forward.
+
+    "zero"     both tensors zeroed -- exactly what cond_dropout does to 10%
+               of training samples, so the model has seen this input.
+               Measures what the instruction buys over image + mask alone.
+    "shuffle"  each item gets its batch neighbour's instruction (roll by
+               one). The text is still a real, in-distribution instruction,
+               just the wrong one. Measures instruction SPECIFICITY, without
+               the "no text at all" input.
+
+    Scoring is unchanged by either: the caller still compares against the
+    item's own true displacement.
+    """
+    if mode == "zero":
+        return torch.zeros_like(prompt_embeds), torch.zeros_like(pooled)
+    if mode == "shuffle":
+        if prompt_embeds.shape[0] < 2:
+            raise ValueError("ablate_text 'shuffle' needs a batch of >= 2")
+        return prompt_embeds.roll(1, dims=0), pooled.roll(1, dims=0)
+    raise ValueError(f"ablate_text mode must be 'zero' or 'shuffle', got {mode!r}")
+
+
 def direction_position_diagnostics(
     u: torch.Tensor,
     v_clean: torch.Tensor,
@@ -699,7 +737,8 @@ def self_test() -> None:
     po = torch.randn(B, 8)
     u_fixed = torch.randn(B, C, H, W)
 
-    cfg0 = PairFlowConfig(mask_dropout=0.0, cond_dropout=0.0, sigma0=0.0)
+    cfg0 = PairFlowConfig(mask_dropout=0.0, cond_dropout=0.0, sigma0=0.0,
+                          interval_conditioning=False)
     _, stats0 = pairflow_loss(_fake_pair_model(u_fixed), z_src, z_tgt, mask,
                               pe, po, cfg0)
     # sigma0=0: v IS the true displacement already (sample_path's own
@@ -707,7 +746,8 @@ def self_test() -> None:
     # not approximately.
     assert abs(stats0["cos"] - stats0["cos_clean"]) < 1e-6, stats0
 
-    cfg1 = PairFlowConfig(mask_dropout=0.0, cond_dropout=0.0, sigma0=0.7)
+    cfg1 = PairFlowConfig(mask_dropout=0.0, cond_dropout=0.0, sigma0=0.7,
+                          interval_conditioning=False)
     gen = torch.Generator().manual_seed(7)
     _, stats1 = pairflow_loss(_fake_pair_model(u_fixed), z_src, z_tgt, mask,
                               pe, po, cfg1, generator=gen)
@@ -721,6 +761,35 @@ def self_test() -> None:
     # exactly the divergence a sweep comparison plot would otherwise
     # conflate with a real improvement.
     assert abs(stats1["cos"] - stats1["cos_clean"]) > 1e-3, stats1
+
+    # the silent-drop guard: interval path + sigma0 > 0 must refuse
+    try:
+        pairflow_loss(_fake_pair_model(u_fixed), z_src, z_tgt, mask, pe, po,
+                      PairFlowConfig(sigma0=0.3, interval_conditioning=True))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("interval_conditioning + sigma0>0 did not raise")
+
+    # ablate_text_condition: zero matches cond_dropout's own zeroing;
+    # shuffle moves every row and is a pure permutation.
+    pe_t = torch.randn(3, 5, 8)
+    po_t = torch.randn(3, 6)
+    pe_z, po_z = ablate_text_condition(pe_t, po_t, "zero")
+    assert not pe_z.any() and not po_z.any()
+    assert pe_z.shape == pe_t.shape and po_z.shape == po_t.shape
+    pe_s, po_s = ablate_text_condition(pe_t, po_t, "shuffle")
+    for i in range(3):
+        assert torch.equal(pe_s[i], pe_t[i - 1]) and torch.equal(po_s[i], po_t[i - 1])
+        assert not torch.equal(pe_s[i], pe_t[i])
+    for bad in (lambda: ablate_text_condition(pe_t[:1], po_t[:1], "shuffle"),
+                lambda: ablate_text_condition(pe_t, po_t, "blank")):
+        try:
+            bad()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("ablate_text_condition accepted a bad call")
 
     # direction_position_diagnostics: a model stub that gets direction right
     # INSIDE the mask but predicts pure noise everywhere else. raw (whole

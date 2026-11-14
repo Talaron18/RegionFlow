@@ -88,6 +88,10 @@ MODEL_REPOS = {
 # changes and neither branch of the reading key is safe.
 MASK_MODES = ("none", "white", "oracle", "sibling")
 
+# Stock-diffusers models wrapped in their own module (bench/flux2_klein_model.py),
+# because they need a different diffusers than the UltraEdit fork above.
+KLEIN_MODELS = ("flux2-klein-4b",)
+
 
 def outcome_class(r: dict) -> str:
     """Describe every case, including ones `valid` discards.
@@ -248,6 +252,17 @@ def load_model(args):
             args.gate_a_ckpt, sigma0=args.gate_a_sigma0, rank=args.gate_a_rank,
             device=args.device, steps_readout=args.gate_a_steps_readout,
             mask_encoder_kind=args.gate_a_mask_encoder_kind)
+    if args.model in KLEIN_MODELS:
+        if args.mask_mode != "none":
+            raise SystemExit(
+                f"{args.model} takes a prompt and reference image only -- no\n"
+                "mask or region input is documented for FLUX.2 klein. Run it\n"
+                "with --mask-mode none; its comparison arms are `none`\n"
+                "(RefEdit-SD3) and `freeform` (UltraEdit), not `oracle`.")
+        from flux2_klein_model import Flux2KleinModel  # noqa: PLC0415
+        return Flux2KleinModel(
+            args.model, steps=args.klein_steps, guidance=args.klein_guidance,
+            device=args.device, offload=args.klein_offload)
     if args.model in MODEL_REPOS:
         if args.model == "refedit-sd3" and args.mask_mode != "none":
             print("  NOTE: RefEdit-SD3 is finetuned on UltraEdit-FREEFORM, so a "
@@ -686,7 +701,18 @@ def main():
     p.add_argument("--coco-splits", default="train2014")
     p.add_argument("--coco-cache", default="/data/datasets/coco/desc")
     p.add_argument("--model", default="none",
-                   choices=("none", "gate-a-transport") + tuple(MODEL_REPOS))
+                   choices=("none", "gate-a-transport") + tuple(MODEL_REPOS)
+                   + KLEIN_MODELS)
+    p.add_argument("--klein-steps", type=int, default=4,
+                   help="steps for --model flux2-klein-*; 4 is the model "
+                        "card's setting for the distilled checkpoint. "
+                        "--steps is NOT used for these models.")
+    p.add_argument("--klein-guidance", type=float, default=1.0,
+                   help="guidance_scale for --model flux2-klein-*; 1.0 per "
+                        "the model card. --guidance is NOT used.")
+    p.add_argument("--klein-offload", action="store_true",
+                   help="enable_model_cpu_offload for --model flux2-klein-* "
+                        "(lower VRAM, slower). Try without it first on 24GB.")
     p.add_argument("--gate-a-ckpt", default=None,
                    help="checkpoint path for --model gate-a-transport "
                         "(e.g. runs/gate_a_sigma_0.3/ckpt_final.pt)")

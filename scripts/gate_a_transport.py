@@ -194,8 +194,10 @@ def cmd_train(args) -> int:
     pf = PairFlowConfig(mask_dropout=args.mask_dropout,
                         cond_dropout=args.cond_dropout,
                         sigma0=args.sigma0,
+                        interval_conditioning=args.interval_conditioning,
                         perceptual_weight=args.perceptual_weight,
-                        perceptual_feature=args.perceptual_feature)
+                        perceptual_feature=args.perceptual_feature,
+                        perceptual_mask_erode=args.perceptual_mask_erode)
 
     def loss_fn(model, batch, step, cfg):
         dev, mdt = args.device, model.model_dtype
@@ -544,7 +546,8 @@ def _teacher_forced_rollout(adapter, z_src, z_tgt, mask, pe, pooled, steps):
     return acc
 
 def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False,
-                         ablate_mask_dc: bool = False, steps: int = 1, teacher_forcing: bool = False) -> dict:
+                         ablate_mask_dc: bool = False, steps: int = 1, teacher_forcing: bool = False,
+                         ablate_text: str | None = None, readout_r: float = 0.0) -> dict:
     """Run one already-loaded checkpoint over the whole dataloader and
     return summarize_diagnostics()' summary dict. Pulled out of
     cmd_diagnose so multiple --ckpt values share one adapter/dataloader
@@ -579,10 +582,23 @@ def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False,
     unconstrained output rather than a masked one. Mutually exclusive
     with ablate_mask/ablate_mask_dc (this checks the normal, lambda=1,
     DC-intact path at various step counts, not a combination of ablations).
+
+    ablate_text ("zero" | "shuffle") is the instruction counterpart of
+    ablate_mask: the mask and z_src are untouched, only the text the MODEL
+    sees changes (transport/pairflow.py::ablate_text_condition). A small
+    drop in `centered` means the edit direction is coming from the image
+    and mask, not from the instruction. One-step readout only. With
+    "shuffle" a trailing batch of one item is skipped (nothing to swap
+    with), so n can be one short of the cache size.
+
+    readout_r is the interval endpoint for the one-step query. 0.0 (= s)
+    is what checkpoints trained before 9c67baa saw; interval-conditioned
+    checkpoints read out at 1.0, matching apply_transport and Gate C.
     """
     import torch
 
-    from transport.pairflow import apply_transport, direction_position_diagnostics
+    from transport.pairflow import (ablate_text_condition, apply_transport,
+                                    direction_position_diagnostics)
 
     raws, pooleds, centereds = [], [], []
     with torch.no_grad():
@@ -593,6 +609,11 @@ def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False,
             pe = batch["prompt_embeds"].to(device)
             pooled = batch["pooled"].to(device)
             b = z_src.shape[0]
+
+            if ablate_text is not None:
+                if ablate_text == "shuffle" and b < 2:
+                    continue
+                pe, pooled = ablate_text_condition(pe, pooled, ablate_text)
 
             if steps > 1 and teacher_forcing:
                 u_eff = _teacher_forced_rollout(adapter, z_src, z_tgt, mask, pe, pooled, steps)
@@ -606,7 +627,8 @@ def _diagnose_checkpoint(adapter, dl, device, bias, ablate_mask: bool = False,
                 # s=0, z=z_src exactly: the one-step readout's actual query
                 # point (apply_transport's first grid point, at sigma0=0).
                 model_mask = None if ablate_mask else mask
-                u_eff = adapter(z_src, s0, s0, pe, pooled, mask=model_mask,
+                r0 = torch.full((b,), float(readout_r), device=device)
+                u_eff = adapter(z_src, s0, r0, pe, pooled, mask=model_mask,
                                mask_dc_ablate=ablate_mask_dc)
 
             v_clean = z_tgt - z_src
@@ -705,6 +727,16 @@ def cmd_diagnose(args) -> int:
     if args.teacher_forcing and (args.ablate_mask or args.ablate_mask_dc):
         raise SystemExit("--teacher-forcing doesn't compose with "
                          "--ablate-mask/--ablate-mask-dc -- run separately.")
+    if args.ablate_text and (args.steps > 1 or args.s_sweep):
+        raise SystemExit("--ablate-text is a one-step-readout check and "
+                         "doesn't compose with --steps > 1 or --s-sweep -- "
+                         "run separately.")
+    if args.ablate_text == "shuffle" and args.batch_size < 2:
+        raise SystemExit("--ablate-text shuffle swaps instructions within a "
+                         "batch and needs --batch-size >= 2")
+    if args.readout_r != 0.0 and (args.steps > 1 or args.s_sweep):
+        raise SystemExit("--readout-r only applies to the one-step readout; "
+                         "--steps > 1 and --s-sweep set r themselves.")
     if args.teacher_forcing:
         print("[diagnose] --teacher-forcing: query points are forced back onto "
               "the ground-truth line at every step. Compare against the same "
@@ -739,6 +771,16 @@ def cmd_diagnose(args) -> int:
               "per-channel spatial mean (its DC offset) from delta_z "
               "before adding it to z. Compare against a normal run to see "
               "whether that constant component is load-bearing or wasted.")
+    if args.ablate_text:
+        what = ("zeroed (the cond_dropout input)" if args.ablate_text == "zero"
+                else "swapped with a batch neighbour's")
+        print(f"[diagnose] --ablate-text {args.ablate_text}: instruction "
+              f"embeddings {what}; mask and z_src untouched, scoring "
+              "unchanged. Compare `centered` against a normal run: a small "
+              "drop means the instruction is not what sets the direction.")
+    if args.readout_r != 0.0:
+        print(f"[diagnose] --readout-r {args.readout_r}: one-step query at "
+              f"(s=0, r={args.readout_r}) instead of (s=0, r=0).")
     if args.steps > 1:
         print(f"[diagnose] --steps {args.steps}: naive multi-step Euler "
               "integration (apply_transport, unpinned) in place of the "
@@ -781,11 +823,14 @@ def cmd_diagnose(args) -> int:
                                        ablate_mask=args.ablate_mask,
                                        ablate_mask_dc=args.ablate_mask_dc,
                                        steps=args.steps,
-                                       teacher_forcing=args.teacher_forcing)
+                                       teacher_forcing=args.teacher_forcing,
+                                       ablate_text=args.ablate_text,
+                                       readout_r=args.readout_r)
         summaries[ckpt_path] = summary
         n = summary["raw"]["n"]
         tag = (" [lambda=0, mask ablated]" if args.ablate_mask else
               " [DC offset ablated]" if args.ablate_mask_dc else
+              f" [text {args.ablate_text}]" if args.ablate_text else
               f" [{args.steps}-step Euler]" if args.steps > 1 else "")
         print(f"\n[diagnose] {ckpt_path} (step {sd.get('step', '?')}){tag} -- "
               f"model's own cos(u, v_clean) under three treatments "
@@ -2124,6 +2169,13 @@ def main() -> int:
                         "split between a mask-independent global operating "
                         "point and a mask-conditioned local edit, NOT "
                         "checkpoint-compatible with 'single'.")
+    t.add_argument("--interval-conditioning",
+                   action=argparse.BooleanOptionalAction, default=True,
+                   help="train over random sub-intervals [s, r] (default, "
+                        "the setting since 9c67baa). --no-interval-"
+                        "conditioning uses the plain s=0 objective but "
+                        "passes r=1, NOT the r=s of the documented "
+                        "checkpoints. Incompatible with --sigma0 > 0.")
     t.add_argument("--perceptual-weight", type=float, default=0.0,
                    help="weight on feature-space perceptual loss. 0.0 "
                         "(default) is the original MSE-only objective. "
@@ -2135,6 +2187,10 @@ def main() -> int:
                    choices=("dinov2", "lpips"),
                    help="'dinov2' (recommended) or 'lpips' (kept as the "
                         "failed baseline).")
+    t.add_argument("--perceptual-mask-erode", type=int, default=1,
+                   help="erode the DINO patch mask by this many patches "
+                        "(1 avoids boundary patches whose receptive field "
+                        "crosses the mask edge; 0 disables)")
     t.add_argument("--log-every", type=int, default=25)
     t.add_argument("--ckpt-every", type=int, default=500,
                    help="numbered snapshots land every 5x this")
@@ -2261,6 +2317,18 @@ def main() -> int:
                         "isolate the mask path's contribution. Compare "
                         "against a normal (lambda=1) run on the same "
                         "checkpoint/cache.")
+    d.add_argument("--ablate-text", default=None, choices=("zero", "shuffle"),
+                   help="instruction ablation, the text counterpart of "
+                        "--ablate-mask. 'zero' blanks the instruction "
+                        "(what cond_dropout trains on); 'shuffle' gives "
+                        "each item a batch neighbour's instruction. The "
+                        "mask is left intact, so combine with nothing "
+                        "else to isolate the text; one-step readout only.")
+    d.add_argument("--readout-r", type=float, default=0.0,
+                   help="interval endpoint r for the one-step query at "
+                        "s=0. 0.0 (default) is r = s, what checkpoints "
+                        "trained before 9c67baa saw; use 1.0 for "
+                        "interval-conditioned checkpoints.")
     d.add_argument("--ablate-mask-dc", action="store_true",
                    help="DC-offset ablation: subtract mask_enc's own "
                         "per-channel spatial mean from delta_z before "

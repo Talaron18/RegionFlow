@@ -1,0 +1,242 @@
+[
+ {
+  "panel": "panel_0000",
+  "verdict": "clean",
+  "notes": "",
+  "instruction": "Erase the man in a white shirt standing to the right of the picnic table."
+ },
+ {
+  "panel": "panel_0001",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Erase the black woman looking at her smartphone."
+ },
+ {
+  "panel": "panel_0002",
+  "verdict": "clean",
+  "notes": "",
+  "instruction": "Add a cat sleeping on the beige sofa with 2 long seat cushions."
+ },
+ {
+  "panel": "panel_0003",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Change the african ameerican man wearing a suit to an african american woman wearing a suit"
+ },
+ {
+  "panel": "panel_0004",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Change the screen of the laptop with the coffee cup to display a beach scene."
+ },
+ {
+  "panel": "panel_0005",
+  "verdict": "wrong_edit",
+  "notes": "not a good sample. I may give it a pass as well",
+  "instruction": "Add a child standing beside the rear of a car made by Suzuki."
+ },
+ {
+  "panel": "panel_0006",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Get rid of the empty blender."
+ },
+ {
+  "panel": "panel_0007",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Change the teddy bear dressed like a bride to a teddy bear dressed as a superhero."
+ },
+ {
+  "panel": "panel_0008",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Make the cow laying behind another cow black and white in color."
+ },
+ {
+  "panel": "panel_0009",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Swap the yellow and black back pack sitting on top of a blue suitcase with a basketball."
+ },
+ {
+  "panel": "panel_0010",
+  "verdict": "wrong_edit",
+  "notes": "look AI as well",
+  "instruction": "Remove the word Autism written on the white horse's back end."
+ },
+ {
+  "panel": "panel_0011",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Add a wine glass in front of the woman on cell phone."
+ },
+ {
+  "panel": "panel_0012",
+  "verdict": "clean",
+  "notes": "",
+  "instruction": "Make the girl in a red shirt sitting between two boys wear a blue shirt."
+ },
+ {
+  "panel": "panel_0013",
+  "verdict": "no_edit",
+  "notes": "",
+  "instruction": "Remove the goatee of the man with a goatee wearing a football jersey with the number 12 on it."
+ },
+ {
+  "panel": "panel_0014",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Swap the white dog sitting on the lap of the woman dressed in blue with a cat."
+ },
+ {
+  "panel": "panel_0015",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Change the color of the black umbrella held by the woman to red."
+ },
+ {
+  "panel": "panel_0016",
+  "verdict": "clean",
+  "notes": "",
+  "instruction": "Add a necklace to the woman holding a beer while eating."
+ },
+ {
+  "panel": "panel_0017",
+  "verdict": "clean",
+  "notes": "",
+  "instruction": "Turn the bluejeans in to blue shorts of the man in a blue jacket looking to the right."
+ },
+ {
+  "panel": "panel_0018",
+  "verdict": "degraded",
+  "notes": "",
+  "instruction": "Remove the mint green antique scooter."
+ },
+ {
+  "panel": "panel_0019",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Make the person holding a white umbrella wear a denim jacket."
+ },
+ {
+  "panel": "panel_0020",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Turn the man in sunglasses and a red shirt into a golden statue"
+ },
+ {
+  "panel": "panel_0021",
+  "verdict": "clean",
+  "notes": "",
+  "instruction": "Change the color of the shirt of the man in a grey suite and red tie holding a cane to blue."
+ },
+ {
+  "panel": "panel_0022",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Put black dots on the parasol held by the girl in daisy dress."
+ },
+ {
+  "panel": "panel_0023",
+  "verdict": "clean",
+  "notes": "",
+  "instruction": "Change the black blazer to a gray blazer of the man on the left writing."
+ },
+ {
+  "panel": "panel_0024",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Add a scenic beach wallpaper to the screen of the laptop with nothing on it."
+ },
+ {
+  "panel": "panel_0025",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Remove the apple with face and knife through eye."
+ },
+ {
+  "panel": "panel_0026",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Remove the vase on the middle."
+ },
+ {
+  "panel": "panel_0027",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Add sunglass to the lady in black dress."
+ },
+ {
+  "panel": "panel_0028",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Turn off the light of the microwave that has another microwave on top of it."
+ },
+ {
+  "panel": "panel_0029",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Replace the cow in back with a cat"
+ },
+ {
+  "panel": "panel_0030",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Change the guy sitting down in the white sweatshirt to a red sweatshirt."
+ },
+ {
+  "panel": "panel_0031",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Remove half of the brown cake."
+ },
+ {
+  "panel": "panel_0032",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Change the white cat on the right to an orange cat."
+ },
+ {
+  "panel": "panel_0033",
+  "verdict": "clean",
+  "notes": "",
+  "instruction": "Add a red bow to the hair of the little blond girl eating pizza."
+ },
+ {
+  "panel": "panel_0034",
+  "verdict": "clean",
+  "notes": "",
+  "instruction": "Change the bird standing sideways to a birdhouse."
+ },
+ {
+  "panel": "panel_0035",
+  "verdict": "no_edit",
+  "notes": "",
+  "instruction": "Let the middle bench be red."
+ },
+ {
+  "panel": "panel_0036",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Change the shirt color of the tennis player on right to red."
+ },
+ {
+  "panel": "panel_0037",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Add a parrot on the shoulder of the chef standing in front of a stove."
+ },
+ {
+  "panel": "panel_0038",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Add a bird to the bench next to the bench with the bird on it."
+ },
+ {
+  "panel": "panel_0039",
+  "verdict": "wrong_edit",
+  "notes": "",
+  "instruction": "Make the smiling man that is wearing glasses wear a red hair bow."
+ }
+]
