@@ -220,3 +220,27 @@ Record separately, as they are what paste-back cannot fix: visible seams or ligh
 mismatch at the mask edge; edits that need to extend past the mask (added objects,
 shadows, pose changes); removals, where the pasted region still shows the model's
 whole-image re-render; and the 4 true wrong edits, which a mask does not address.
+
+### Composite baseline — result (2026-11-15, user's run and audit, same 40 ids)
+
+| arm | clean | degraded | destroyed | wrong_edit | no_edit | clean % |
+|---|---|---|---|---|---|---|
+| klein 4B, no mask | 9 | 1 | 0 | 28 | 2 | 22% |
+| klein 4B + paste-back through the oracle mask | **19** | 4 | 0 | 4 | **13** | **48%** |
+
+Metric side: 39 of 40 audited cases are now valid+measurable (was 5), as expected when
+everything outside the mask is the source.
+
+**Reading, by the rule fixed above: 48% is in the 40–70% band.** The mask removes
+leakage (wrong_edit 28 → 4) and more than doubles the clean rate, but paste-back
+alone is not enough.
+
+What is left, 21 of 40 (totals only; per-case pairing needs the comp ledger and key):
+- 13 `no_edit`. Expected mechanism, not yet checked per case: where klein edited
+  only a sibling, the target region it pastes back is unchanged. A mask applied
+  AFTER generation cannot redirect the edit; the model has to be told where.
+- 4 `wrong_edit`, the same count as the rater's "true wrong edits" in the plain arm.
+- 4 `degraded`, the paste-back's own cost (seams or mismatch at the edge), up from 1.
+
+The sample is stratified (16 measurable / 15 mis-targeted / 9 off-instance), so 48% is
+not a population rate; the weighted figure needs the per-case files.
