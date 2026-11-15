@@ -244,3 +244,51 @@ What is left, 21 of 40 (totals only; per-case pairing needs the comp ledger and 
 
 The sample is stratified (16 measurable / 15 mis-targeted / 9 off-instance), so 48% is
 not a population rate; the weighted figure needs the per-case files.
+
+### Composite baseline — paired with the plain arm (ledgers pushed 2026-11-15)
+
+Plain klein verdict (rows) → paste-back verdict (columns), same 40 ids:
+
+| plain \ paste-back | clean | degraded | wrong_edit | no_edit |
+|---|---|---|---|---|
+| clean (9) | 6 | 1 | 1 | 1 |
+| degraded (1) | 1 | 0 | 0 | 0 |
+| wrong_edit (28) | 12 | 3 | 3 | 10 |
+| no_edit (2) | 0 | 0 | 0 | 2 |
+
+13 cases became clean, 3 stopped being clean (exact two-sided sign test p = 0.021).
+
+Paste-back clean rate by the plain run's metric class:
+
+| plain run's class | share of all 151 | paste-back clean | plain clean |
+|---|---|---|---|
+| measurable (target changed most) | 108 (72%) | 13 / 16 | 6 / 16 |
+| mis-targeted | 34 (23%) | 6 / 15 | 2 / 15 |
+| off-instance | 9 (6%) | 0 / 9 | 1 / 9 |
+
+Weighted to all 151: paste-back ≈ **67%** clean, plain ≈ 30%. Still inside the
+40–70% band, just under its upper edge; small strata, one rater.
+
+- **Where the model already edits the target, a mask plus paste-back is nearly
+  enough** (13 of 16).
+- **All 13 `no_edit` cases come from the two classes where the plain edit landed
+  elsewhere** (6 mis-targeted, 7 off-instance). Confirmed: a mask applied after
+  generation cannot move the edit.
+- **Some of those are a mask-coverage limit, not a model failure.** Several are
+  additions whose correct location is beside the referenced instance ("add a wine
+  glass in front of the woman", "add a child standing beside the rear of a car",
+  "add a bird to the bench next to..."). The oracle mask is the referenced instance,
+  so paste-back deletes a correctly placed addition. By instruction text about 3–4 of
+  the 13; not verified against the images.
+- The 4 `wrong_edit` cases are 3 carried over (cake, dog→cat, laptop wallpaper) plus
+  one that was clean in the plain arm (bird → birdhouse, noted "leak and false").
+
+**What a method now has to beat:** ≈ 67% clean overall, 81% where the base already
+targets correctly. The residual is the ≈ 28% of cases where the base edits the wrong
+place, plus additions that belong outside the instance mask.
+
+**Next baseline before any training — crop, edit, paste.** Crop to the target's
+box with a margin so siblings are out of view, edit the crop with the benchmark's
+single-instance instruction (`edit_instruction_single`), paste back. It tells the
+model where without changing the model. If it clears the residual, the result is a
+pipeline (referring segmentation → crop → edit → paste), not a learned mechanism.
