@@ -191,20 +191,22 @@ python bench/run_gate_c.py --model flux2-klein-4b --klein-composite \
   --save-images runs/gate_c/img_klein4b_comp_oracle
 ```
 
-Blind audit, **same 40 ids as the klein audit**, both arms pooled and shuffled:
+Audit the composite arm on the **same 40 ids** as the klein audit. `--carry-over`
+reads any JSON list of records with an `id`, so the klein key file serves directly:
 
 ```bash
 python bench/blind_audit.py --build \
-  --arm klein:runs/gate_c/klein4b_none.jsonl:runs/gate_c/img_klein4b_none \
   --arm comp:runs/gate_c/klein4b_comp_oracle.jsonl:runs/gate_c/img_klein4b_comp_oracle \
-  --reference klein --carry-over runs/gate_c/blind_klein_ledger_ids.json --extra 0 \
+  --reference comp --carry-over runs/gate_c/blind_klein_key.json --extra 0 \
   --out-dir runs/gate_c/blind_comp \
   --ledger runs/gate_c/blind_comp_ledger.json --key runs/gate_c/blind_comp_key.json
+python bench/blind_audit.py --score runs/gate_c/blind_comp_ledger.json \
+  --key runs/gate_c/blind_comp_key.json
 ```
 
-(`blind_klein_ledger_ids.json` = the 40 ids from `blind_klein_key.json`; see the
-one-liner in the chat. Not yet checked that `blind_audit.py` accepts this file
-shape.)
+One arm, 40 panels. It is not blind to the arm (the rater knows these are paste-backs),
+but it is paired with the klein verdicts case by case. Not run here: `--extra 0` with
+a carry-over is untested.
 
 How the composite arm's clean rate (of 40) will be read:
 
