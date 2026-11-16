@@ -32,6 +32,22 @@ shows what a mask alone buys, and what it costs at the boundary.
         --mask-mode oracle --out runs/gate_c/klein4b_comp_oracle.jsonl \
         --save-images runs/gate_c/img_klein4b_comp_oracle
 
+CROP BASELINE (--klein-crop). Tells the model WHERE without changing the
+model: crop the source to the mask's bounding box plus a margin, so the
+siblings are (mostly) out of view; edit that crop; paste it back. Run it
+with --ablation so the benchmark's single-instance instruction
+("Replace the cow with a cat") is scored too -- the full referring
+expression ("the cow in back") describes context the crop no longer shows.
+
+    python bench/run_gate_c.py --model flux2-klein-4b --klein-crop --ablation \
+        --mask-mode oracle --out runs/gate_c/klein4b_crop_oracle.jsonl \
+        --save-images runs/gate_c/img_klein4b_crop_oracle
+
+--klein-crop-paste mask (default) pastes back through the mask, as the
+composite arm does: nothing outside the mask changes. `box` pastes the
+whole crop, which keeps additions placed beside the object but lets the
+margin change too.
+
 NOT RUN ON A GPU when written. `self_test` checks the call the wrapper
 makes against a stub pipeline; whether the real pipeline accepts it is
 what the 4-case smoke run above is for. Look at those four images first.
@@ -69,6 +85,38 @@ def composite(src, edited, mask, feather: float = 4.0):
     return Image.composite(edited.convert("RGB"), src, alpha)
 
 
+def _alpha(mask, size):
+    """The runner's conditioning image as a binary L image at `size`."""
+    from PIL import Image  # noqa: PLC0415
+    a = mask.convert("L")
+    if a.size != size:
+        a = a.resize(size, Image.NEAREST)
+    return a.point(lambda v: 255 if v >= 128 else 0)
+
+
+def crop_box(mask, size, margin: float = 0.25, min_margin: int = 16):
+    """Bounding box of the white mask region, grown by `margin` of its own
+    width/height on each side (at least `min_margin` px), clamped to `size`."""
+    box = _alpha(mask, size).getbbox()
+    if box is None:
+        raise SystemExit("--klein-crop: the mask is empty, nothing to crop to")
+    x0, y0, x1, y1 = box
+    mx = max(min_margin, int(round(margin * (x1 - x0))))
+    my = max(min_margin, int(round(margin * (y1 - y0))))
+    W, H = size
+    return (max(0, x0 - mx), max(0, y0 - my), min(W, x1 + mx), min(H, y1 + my))
+
+
+def model_size(w: int, h: int, area: int = 512 * 512, max_side: int = 1024,
+               multiple: int = SIZE_MULTIPLE) -> tuple[int, int]:
+    """Size to run the model at for a w x h crop: same aspect, about `area`
+    pixels, sides multiples of `multiple` and at most `max_side`. A small
+    crop is upsampled so the object gets the model's full resolution."""
+    s = (area / float(w * h)) ** 0.5
+    s = min(s, max_side / float(w), max_side / float(h))
+    return snap_size(w * s, h * s, multiple)
+
+
 def snap_size(w: int, h: int, multiple: int = SIZE_MULTIPLE) -> tuple[int, int]:
     """Nearest multiple-of-`multiple` size, never below one multiple."""
     def _snap(x):
@@ -82,14 +130,24 @@ class Flux2KleinModel:
     def __init__(self, name: str = "flux2-klein-4b", steps: int = 4,
                  guidance: float = 1.0, device: str = "cuda",
                  offload: bool = False, pipe=None,
-                 composite_mask: bool = False, feather: float = 4.0):
+                 composite_mask: bool = False, feather: float = 4.0,
+                 crop: bool = False, crop_margin: float = 0.25,
+                 crop_paste: str = "mask"):
         if name not in REPOS:
             raise SystemExit(f"unknown klein model {name!r}; "
                              f"known: {sorted(REPOS)}")
         self.repo = REPOS[name]
         self.composite_mask, self.feather = bool(composite_mask), float(feather)
         # distinct name so composite results never pool with the plain arm
-        self.name = name + ("+composite" if self.composite_mask else "")
+        self.crop, self.crop_margin = bool(crop), float(crop_margin)
+        if crop_paste not in ("mask", "box"):
+            raise SystemExit(f"crop_paste must be 'mask' or 'box', got {crop_paste!r}")
+        self.crop_paste = crop_paste
+        if self.crop and self.composite_mask:
+            raise SystemExit("--klein-crop already pastes back; do not combine "
+                             "it with --klein-composite")
+        self.name = name + ("+composite" if self.composite_mask else
+                            f"+crop-{crop_paste}" if self.crop else "")
         self.steps, self.g = int(steps), float(guidance)
         self.device, self.offload = device, bool(offload)
         if pipe is not None:            # injected (self_test)
@@ -121,6 +179,11 @@ class Flux2KleinModel:
         return torch.Generator(device=dev).manual_seed(int(seed))
 
     def __call__(self, img, prompt, seed, mask=None):
+        if self.crop:
+            if mask is None:
+                raise SystemExit("--klein-crop needs a mask to crop to; use "
+                                 "--mask-mode oracle (or sibling as a control).")
+            return self._crop_edit(img, prompt, seed, mask)
         if mask is not None and not self.composite_mask:
             raise SystemExit(
                 f"{self.name} has no mask input; run it with --mask-mode none, "
@@ -143,8 +206,54 @@ class Flux2KleinModel:
         return edited
 
 
+def _crop_edit_impl(self, img, prompt, seed, mask):
+    from PIL import Image, ImageFilter  # noqa: PLC0415
+
+    src = img.convert("RGB")
+    box = crop_box(mask, src.size, self.crop_margin)
+    src_crop = src.crop(box)
+    mw, mh = model_size(*src_crop.size)
+    edited = self.pipe(prompt=prompt,
+                       image=src_crop.resize((mw, mh), Image.LANCZOS),
+                       height=mh, width=mw,
+                       num_inference_steps=self.steps, guidance_scale=self.g,
+                       generator=self._generator(seed)).images[0]
+    edited = edited.convert("RGB").resize(src_crop.size, Image.LANCZOS)
+    if self.crop_paste == "mask":
+        region = composite(src_crop, edited, _alpha(mask, src.size).crop(box),
+                           self.feather)
+    else:
+        # whole crop, faded out toward the box edge so no hard rectangle shows
+        a = Image.new("L", src_crop.size, 0)
+        inset = int(round(2 * self.feather))
+        if src_crop.size[0] > 2 * inset and src_crop.size[1] > 2 * inset:
+            a.paste(255, (inset, inset, src_crop.size[0] - inset,
+                          src_crop.size[1] - inset))
+        else:
+            a.paste(255, (0, 0) + src_crop.size)
+        if self.feather > 0:
+            a = a.filter(ImageFilter.GaussianBlur(radius=self.feather))
+        region = Image.composite(edited, src_crop, a)
+    out = src.copy()
+    out.paste(region, box[:2])
+    return out
+
+
+Flux2KleinModel._crop_edit = _crop_edit_impl
+
+
 def self_test() -> None:
     from PIL import Image  # noqa: PLC0415
+
+    # torch is only needed for the real generator. Without it, stand in a
+    # token so the rest of the wrapper is still exercised (the generator
+    # stream check below is then skipped, and says so).
+    try:
+        import torch  # noqa: PLC0415,F401
+        have_torch = True
+    except ImportError:
+        have_torch = False
+        Flux2KleinModel._generator = lambda self, seed: ("seed", int(seed))
 
     assert snap_size(512, 512) == (512, 512)
     assert snap_size(500, 333) == (496, 336)
@@ -173,11 +282,14 @@ def self_test() -> None:
     assert kw["num_inference_steps"] == 4 and kw["guidance_scale"] == 1.0
 
     # same seed -> same generator stream; different seed -> different
-    import torch  # noqa: PLC0415
-    a = torch.rand(3, generator=m._generator(7))
-    b = torch.rand(3, generator=m._generator(7))
-    c = torch.rand(3, generator=m._generator(8))
-    assert torch.equal(a, b) and not torch.equal(a, c)
+    if have_torch:
+        import torch  # noqa: PLC0415
+        a = torch.rand(3, generator=m._generator(7))
+        b = torch.rand(3, generator=m._generator(7))
+        c = torch.rand(3, generator=m._generator(8))
+        assert torch.equal(a, b) and not torch.equal(a, c)
+    else:
+        print("  (torch not installed: generator stream check skipped)")
 
     # a mask must be refused, never dropped
     try:
@@ -224,6 +336,49 @@ def self_test() -> None:
         pass
     else:
         raise AssertionError("composite without a mask was accepted")
+
+    # ---- crop baseline -------------------------------------------------
+    assert crop_box(msk, (512, 512)) == (75, 75, 225, 225)       # 100px box, 25% margin
+    assert crop_box(msk, (512, 512), margin=0.0) == (84, 84, 216, 216)  # min margin 16
+    edge = Image.new("L", (512, 512), 0); edge.paste(255, (0, 0, 40, 40))
+    assert crop_box(edge, (512, 512)) == (0, 0, 56, 56)          # clamped at the border
+    assert model_size(150, 150) == (512, 512)
+    mw_, mh_ = model_size(300, 100)
+    assert mw_ % 16 == 0 and mh_ % 16 == 0 and abs(mw_ * mh_ - 512 * 512) < 0.1 * 512 * 512
+    assert max(model_size(4000, 40)) <= 1024
+    try:
+        crop_box(Image.new("L", (512, 512), 0), (512, 512))
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("empty mask was accepted")
+
+    cm = Flux2KleinModel(pipe=_Red(), device="cpu", crop=True, feather=0)
+    assert cm.name == "flux2-klein-4b+crop-mask"
+    o = np.asarray(cm(src, "x", seed=7, mask=msk))
+    # the model saw the CROP (upsampled to its working size), not the frame
+    assert calls[-1]["image"].size == (512, 512) == (calls[-1]["width"], calls[-1]["height"])
+    assert (o[inside] == (255, 0, 0)).all()
+    assert (o[~inside] == (0, 0, 255)).all(), "crop+mask paste changed pixels outside the mask"
+    cb = Flux2KleinModel(pipe=_Red(), device="cpu", crop=True, crop_paste="box", feather=0)
+    assert cb.name == "flux2-klein-4b+crop-box"
+    o = np.asarray(cb(src, "x", seed=7, mask=msk))
+    inbox = np.zeros((512, 512), bool); inbox[75:225, 75:225] = True
+    assert (o[inbox] == (255, 0, 0)).all()
+    assert (o[~inbox] == (0, 0, 255)).all(), "box paste changed pixels outside the crop"
+    cbf = Flux2KleinModel(pipe=_Red(), device="cpu", crop=True, crop_paste="box", feather=4)
+    o = np.asarray(cbf(src, "x", seed=7, mask=msk))
+    assert (o[~inbox] == (0, 0, 255)).all(), "feathered box paste leaked outside the crop"
+    assert tuple(o[150, 150]) == (255, 0, 0)
+    for bad in (lambda: cm(src, "x", seed=0),
+                lambda: Flux2KleinModel(pipe=_Red(), crop=True, composite_mask=True),
+                lambda: Flux2KleinModel(pipe=_Red(), crop=True, crop_paste="oval")):
+        try:
+            bad()
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError("bad crop configuration was accepted")
 
     try:
         Flux2KleinModel(name="flux2-klein-99b", pipe=_Pipe())

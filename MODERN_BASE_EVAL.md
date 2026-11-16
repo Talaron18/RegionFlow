@@ -292,3 +292,41 @@ box with a margin so siblings are out of view, edit the crop with the benchmark'
 single-instance instruction (`edit_instruction_single`), paste back. It tells the
 model where without changing the model. If it clears the residual, the result is a
 pipeline (referring segmentation → crop → edit → paste), not a learned mechanism.
+
+## Crop-edit-paste baseline — scope (written before any run)
+
+`--klein-crop`: crop the source to the oracle mask's box plus a 25% margin (min 16 px),
+upsample the crop to about 512² for the model, edit it, paste it back through the mask
+(`--klein-crop-paste mask`, feather 4). Margin, feather and dilation are frozen here.
+Run with `--ablation` so both the full referring instruction and the benchmark's
+single-instance instruction are produced; **the single instruction is the primary
+arm**, because the full one refers to context the crop no longer shows.
+
+```bash
+python bench/run_gate_c.py --model flux2-klein-4b --klein-crop --ablation \
+  --mask-mode oracle --out runs/gate_c/klein4b_crop_oracle.jsonl \
+  --save-images runs/gate_c/img_klein4b_crop_oracle
+
+python bench/blind_audit.py --build \
+  --arm crop:runs/gate_c/klein4b_crop_oracle.jsonl:runs/gate_c/img_klein4b_crop_oracle \
+  --reference crop --prompt-kind single \
+  --carry-over runs/gate_c/blind_klein_key.json --extra 0 \
+  --out-dir runs/gate_c/blind_crop \
+  --ledger runs/gate_c/blind_crop_ledger.json --key runs/gate_c/blind_crop_key.json
+```
+
+Same 40 ids as the two earlier audits. Not checked here: that `--save-images` keeps
+the `single` and `full` outputs apart, and that the audit finds the `single` images.
+Look at the first few panels against the instruction before judging all 40.
+
+Reading of the crop arm's clean count (of 40; paste-back alone was 19):
+
+| crop clean | reading |
+|---|---|
+| ≥ 30 | Cropping tells the model where well enough. The practical answer is a pipeline (find the object → crop → edit → paste). A learned region mechanism would need a different justification (speed, edits needing scene context, additions outside the box). |
+| 24–29 | A real gain over paste-back, with a residual. Classify it before deciding. |
+| ≤ 23 | No meaningful gain over paste-back. Telling the model where needs to happen inside the model: the case for a region-conditioned adapter. |
+
+Record separately: cases that fail *because* context was cropped away (lighting or
+scale mismatch after paste, instructions that need the scene), and additions that
+belong outside the mask (re-check those with `--klein-crop-paste box`).

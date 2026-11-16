@@ -253,11 +253,16 @@ def load_model(args):
             device=args.device, steps_readout=args.gate_a_steps_readout,
             mask_encoder_kind=args.gate_a_mask_encoder_kind)
     if args.model in KLEIN_MODELS:
+        if args.klein_crop and args.mask_mode == "none":
+            raise SystemExit(
+                "--klein-crop crops to a mask, so it needs --mask-mode oracle\n"
+                "(sibling is its positive control).")
         if args.klein_composite and args.mask_mode == "none":
             raise SystemExit(
                 "--klein-composite pastes the edit back through a mask, so it\n"
                 "needs --mask-mode oracle (white and sibling are its controls).")
-        if args.mask_mode != "none" and not args.klein_composite:
+        if args.mask_mode != "none" and not (args.klein_composite
+                                             or args.klein_crop):
             raise SystemExit(
                 f"{args.model} takes a prompt and reference image only -- no\n"
                 "mask or region input is documented for FLUX.2 klein. Run it\n"
@@ -269,7 +274,9 @@ def load_model(args):
         return Flux2KleinModel(
             args.model, steps=args.klein_steps, guidance=args.klein_guidance,
             device=args.device, offload=args.klein_offload,
-            composite_mask=args.klein_composite, feather=args.klein_feather)
+            composite_mask=args.klein_composite, feather=args.klein_feather,
+            crop=args.klein_crop, crop_margin=args.klein_crop_margin,
+            crop_paste=args.klein_crop_paste)
     if args.model in MODEL_REPOS:
         if args.model == "refedit-sd3" and args.mask_mode != "none":
             print("  NOTE: RefEdit-SD3 is finetuned on UltraEdit-FREEFORM, so a "
@@ -724,6 +731,22 @@ def main():
                         "the --mask-mode mask. Removes sibling leakage by "
                         "construction; results are written under the model "
                         "name '<model>+composite'.")
+    p.add_argument("--klein-crop", action="store_true",
+                   help="crop-edit-paste baseline for --model flux2-klein-*: "
+                        "crop the source to the --mask-mode mask's box plus a "
+                        "margin, edit the crop, paste it back. Use with "
+                        "--ablation so the single-instance instruction is "
+                        "scored. Results are written under "
+                        "'<model>+crop-<paste>'.")
+    p.add_argument("--klein-crop-margin", type=float, default=0.25,
+                   help="margin around the mask's box, as a fraction of the "
+                        "box's width/height per side (min 16 px). FREEZE "
+                        "before scoring.")
+    p.add_argument("--klein-crop-paste", default="mask", choices=("mask", "box"),
+                   help="mask: paste back through the mask (nothing outside "
+                        "it changes). box: paste the whole crop, which keeps "
+                        "additions beside the object but lets the margin "
+                        "change.")
     p.add_argument("--klein-feather", type=float, default=4.0,
                    help="Gaussian radius in px for the composite's edge; "
                         "0 = hard edge. FREEZE before scoring, like "
