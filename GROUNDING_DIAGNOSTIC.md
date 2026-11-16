@@ -1,6 +1,25 @@
 # Does klein know where the referent is? — diagnostic scope
 
-Status: **scope only; nothing built or run.** Readings are fixed here first.
+Status: **probe built (`bench/klein_grounding_probe.py`), not yet run on a GPU.**
+Readings below were fixed before any run.
+
+Checked on CPU (2026-11-16, diffusers 0.43.0): on a small random
+`Flux2Transformer2DModel`, installing the probe leaves the model output bit-identical,
+the recorded weights reproduce the stock attention output in all five blocks (max
+difference < 1e-4), a wrong token-layout assumption is refused, and removing the probe
+restores the model. Not checked: the real pipeline's token counts and call count per
+step; the script stops with an error if either differs from what it expects.
+
+```bash
+python bench/klein_grounding_probe.py --self-test
+python bench/klein_grounding_probe.py --limit 4 --swap \
+  --out runs/gate_c/klein_grounding_smoke.jsonl \
+  --save-maps runs/gate_c/klein_grounding_smoke_maps      # look at the PNGs
+python bench/klein_grounding_probe.py --swap \
+  --out runs/gate_c/klein_grounding.jsonl --save-maps runs/gate_c/klein_grounding_maps
+python bench/klein_grounding_probe.py --report runs/gate_c/klein_grounding.jsonl \
+  --outcomes runs/gate_c/klein4b_none.jsonl
+```
 
 ## Question
 
