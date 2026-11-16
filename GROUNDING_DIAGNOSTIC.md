@@ -1,6 +1,25 @@
 # Does klein know where the referent is? — diagnostic scope
 
-Status: **scope only; nothing built or run.** Readings are fixed here first.
+Status: **probe built (`bench/klein_grounding_probe.py`), not yet run on a GPU.**
+Readings below were fixed before any run.
+
+Checked on CPU (2026-11-16, diffusers 0.43.0): on a small random
+`Flux2Transformer2DModel`, installing the probe leaves the model output bit-identical,
+the recorded weights reproduce the stock attention output in all five blocks (max
+difference < 1e-4), a wrong token-layout assumption is refused, and removing the probe
+restores the model. Not checked: the real pipeline's token counts and call count per
+step; the script stops with an error if either differs from what it expects.
+
+```bash
+python bench/klein_grounding_probe.py --self-test
+python bench/klein_grounding_probe.py --limit 4 --swap \
+  --out runs/gate_c/klein_grounding_smoke.jsonl \
+  --save-maps runs/gate_c/klein_grounding_smoke_maps      # look at the PNGs
+python bench/klein_grounding_probe.py --swap \
+  --out runs/gate_c/klein_grounding.jsonl --save-maps runs/gate_c/klein_grounding_maps
+python bench/klein_grounding_probe.py --report runs/gate_c/klein_grounding.jsonl \
+  --outcomes runs/gate_c/klein4b_none.jsonl
+```
 
 ## Question
 
@@ -99,3 +118,53 @@ predictor to compare against the human audit, which the current judge cannot pro
 Attention is evidence about where information flows, not proof of what the model
 "knows"; 151 cases; one base model; the audit split has only 40 cases. A result on
 klein 4B need not hold for the 9B model or for Qwen-Image-2.1.
+
+---
+
+## Result (2026-11-16, user's GPU run, 151 cases, `--swap`)
+
+Primary statistic, map averaged over all 25 blocks and 4 steps:
+
+| instruction | pointing accuracy | chance | target preference (median) |
+|---|---|---|---|
+| full referring expression | **78.1%** | 42.4% | 1.44 |
+| single-instance (category only) | 59.6% | 42.4% | 1.19 |
+| swapped (another case's instruction) | 51.0% | 42.4% | 1.07 |
+
+Paired, full vs single: +18.5 points; 35 cases correct only with the full
+instruction, 7 only with the single one (exact two-sided sign test p < 0.0001).
+The instruction tokens put about 12% of their attention on reference-image tokens,
+69% on text, 19% on the output tokens.
+
+Full instruction, split by what the plain no-mask run did:
+
+| plain run's class | n | pointing accuracy |
+|---|---|---|
+| measurable (target changed most) | 108 | 87.0% |
+| mis-targeted (a sibling changed more) | 34 | 61.8% |
+| off-instance | 9 | 33.3% |
+
+**Reading against the table fixed above.** Row 1 is not met (+18.5 is under 20, and
+pointing in mis-targeted cases is 61.8%, under 70). Row 2 is not met (well over +10).
+Row 3 fits: pointing is high where the edit landed on the target and falls to about the
+single-instruction level (59.6%) where it did not. So **mis-aiming goes with a
+grounding failure**, and attention on the target is a usable training signal.
+
+Derived from the counts: when the probe points at the target (118 cases), the edit was
+mis-aimed in 24 (20%); when it points elsewhere (33 cases), in 19 (58%).
+
+**What this does not yet answer.** The audit found sibling leakage in 9 of 16 audited
+`measurable` cases, a class where pointing is 87%. If those leaked cases point
+correctly, leakage there is a generation failure (the model finds the referent and the
+edit spreads) and needs the preservation loss; if they do not, it is grounding again.
+That needs the per-case file joined with the audit ledgers.
+
+Controls behaved as intended, with one thing to note: the swapped and single
+instructions score 51–60%, above the 42.4% chance. Attention density favours the target
+somewhat regardless of the text (size, position or saliency), so the referring
+expression's own contribution is the +18.5, not the gap to chance.
+
+Exploratory only: pointing is at or below chance in blocks 0 and 3, rises through the
+single-stream blocks to about 80% around blocks 12–19, and falls in the last few; it
+declines from the first step to the last. Association, not causation: nothing here
+shows that fixing attention would fix the edit.
