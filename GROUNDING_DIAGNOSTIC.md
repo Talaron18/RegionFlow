@@ -391,38 +391,24 @@ single-stream blocks to about 80% around blocks 12–19, and falls in the last f
 declines from the first step to the last. Association, not causation: nothing here
 shows that fixing attention would fix the edit.
 
-### Joined with the two blind audits (40 cases; per-case file pushed 2026-11-17)
+### Addendum to the join: target preference by failure type (2026-11-16, exploratory)
 
-> Added by a parallel session from the same per-case file. Its counts agree with the
-> join recorded earlier in this file ("Join with the audit ledgers"): 12 of 15 leaks and
-> 4 of 10 unedited cases point at the target. New here: the target-preference medians
-> and the prediction in the last paragraph.
+Added by a second pass over the same join; the counts agree with "Join with the audit
+ledgers" above (leaks point at the target in 12 of 15). The one thing it adds is the
+size of the preference, not just its direction. Raw densities, full instruction,
+plain-arm `wrong_edit` cases split by their paste-back verdict:
 
-The two audits together give each failed case a type: a plain-arm wrong edit that
-paste-back **fixed** was leakage onto siblings; one that paste-back turned into
-**no edit** was aimed at the wrong place; one that stayed wrong is a different edit
-on the target.
+| case type | n | points at target | target preference (median) |
+|---|---|---|---|
+| clean in the plain arm | 9 | 7 | 1.92 |
+| leak (paste-back clean or degraded) | 15 | 12 | 1.32 |
+| mis-aimed (paste-back `no_edit`) | 10 | 4 | 0.86 |
+| a different edit (wrong in both arms) | 3 | 2 | 2.86 |
 
-| case type (from the two audits) | n | probe points at target (full) | same, single instruction | target preference (median) |
-|---|---|---|---|---|
-| clean in the plain arm | 9 | 7 (78%) | 6 (67%) | 1.92 |
-| **leak**: wrong, fixed by paste-back | 15 | 12 (80%) | 8 (53%) | 1.32 |
-| **mis-aimed**: wrong, no edit after paste-back | 10 | 4 (40%) | 1 (10%) | 0.86 |
-| true wrong edit (wrong in both arms) | 3 | 2 | 1 | 2.86 |
-
-- **Leak cases are grounded.** Attention points at the target as often as in clean
-  cases (80% vs 78%), and the edit spreads anyway. For leakage, the model finds the
-  referent and fails in generation.
-- **Mis-aimed cases are not grounded** (40%; target preference below 1, i.e. attention
-  favours a sibling).
-- **Target preference orders the three outcomes:** 1.92 clean, 1.32 leak, 0.86
-  mis-aimed. Leak cases point at the right instance but by a smaller margin. This
-  suggests one continuous quantity, how strongly attention separates the target from
-  its siblings, behind both failures. Suggestive only: n = 9 / 15 / 10, one rater,
-  medians.
-
-So the two failures have different immediate causes, as the split by metric class
-already hinted, and both losses are motivated: a sibling-preservation loss for leakage
-in grounded cases, a grounding loss (with referent-only pairs) for mis-aimed ones. The
-ordering above adds a testable prediction: a grounding loss that widens the
-target-vs-sibling margin should reduce leakage as well as mis-aiming.
+The medians order the three outcomes: clean, then leak, then mis-aimed. Leak cases
+favour the target, by a smaller margin than clean ones, which fits the near-tie caveat
+under "Looking at the maps". If it holds, one quantity (how strongly attention
+separates the target from its siblings) sits behind both failures, and a loss that
+widens that margin should reduce leakage as well as mis-aiming. Grouping chosen after
+seeing the data; n = 9 / 15 / 10; one rater; medians; raw (not interior) densities.
+A prediction to test in training, not a result.
