@@ -1,7 +1,7 @@
 # Does klein know where the referent is? — diagnostic scope
 
-Status: **probe built (`bench/klein_grounding_probe.py`), not yet run on a GPU.**
-Readings below were fixed before any run.
+Status: **probe run on all 151 cases (2026-11-16); result and the join with the audit
+are at the end of this file.** Readings below were fixed before any run.
 
 Checked on CPU (2026-11-16, diffusers 0.43.0): on a small random
 `Flux2Transformer2DModel`, installing the probe leaves the model output bit-identical,
@@ -163,6 +163,64 @@ Controls behaved as intended, with one thing to note: the swapped and single
 instructions score 51–60%, above the 42.4% chance. Attention density favours the target
 somewhat regardless of the text (size, position or saliency), so the referring
 expression's own contribution is the +18.5, not the gap to chance.
+
+### Join with the audit ledgers (2026-11-16, the 40 audited ids)
+
+Per-case file joined with the plain audit (`blind_klein_*`) and the paste-back audit
+(`blind_comp_*`). The join is valid: the probe's instruction equals the plain run's
+prompt in 151 of 151 cases and both take their seed from `case_seed(id, 0)`.
+Pointing = primary statistic, full instruction.
+
+**The question fixed above** (audited `measurable` cases judged `wrong_edit`):
+
+| group | n | points at target | single instruction | chance |
+|---|---|---|---|---|
+| measurable, judged clean | 6 | 6 | 3 | 36% |
+| measurable, judged wrong_edit | 9 | **7** | 4 | 46% |
+| — of those, leaks (paste-back verdict clean or degraded) | 7 | **5** | 3 | 45% |
+| — of those, a different edit on the target (refedit-72, -150) | 2 | 2 | 1 | 50% |
+
+The leaked cases mostly point correctly (5 of 7; misses are refedit-154 and -196), so
+by the rule above leakage in this class **leans towards a generation failure**: the
+referent is found and the edit spreads anyway. It is 7 cases and one more miss would
+put it at 4 of 7, so this is a direction, not a result.
+
+**Exploratory (grouping chosen after seeing the data, stratified sample).** The
+paste-back verdict says what happened to the target itself, so it splits the 40 by
+whether the target was edited at all:
+
+| what happened to the target (paste-back verdict) | n | points at target | chance |
+|---|---|---|---|
+| edited as asked (clean or degraded) | 23 | 20 (87%) | 43% |
+| not edited (no_edit) | 13 | 5 (38%) | 43% |
+| a different edit (wrong_edit) | 4 | 2 | 46% |
+
+Fisher exact, edited vs not edited: p = 0.006. This mostly restates the 151-case
+outcome split, since all 13 `no_edit` cases come from the mis-targeted and off-instance
+classes. Across all classes, leaks (plain `wrong_edit`, paste-back clean or degraded)
+point correctly in 12 of 15, against 7 of 7 for cases clean in the plain arm whose
+target was also edited as asked.
+
+**Reading.** Two failures with different signatures: where the target is not edited,
+attention is at chance (grounding); where the target is edited and a sibling changes
+too, attention is mostly on the target (generation). That is the table's "both losses,
+ablated" outcome rather than grounding alone. Not shown: that either is causal, or that
+the leak figure holds beyond 15 cases and one rater.
+
+### Looking at the maps
+
+`python bench/grounding_heatmaps.py` writes one panel per case (source, plain edit,
+attention for the full / single / swapped instruction) plus `index.html` to
+`runs/gate_c/klein_grounding_heat/`. It needs only numpy and Pillow and the files the
+probe saved; the source image is recovered from the probe's own overlay. Colour is a
+multiple of uniform attention, clipped at the pooled 99th percentile per case. The
+probe's own overlays are scaled to the map's maximum and come out nearly black.
+
+Caveat the pictures make visible: `pointing` compares MEAN density per instance, so a
+"yes" can be a near-tie. Of the 118 full-instruction "yes" cases, 8 have target
+preference under 1.1 and 24 under 1.25 (refedit-113 is one: 1.08, with the visible hot
+spots on the sibling). Look at the low end of each "points" section before leaning on
+78.1%.
 
 Exploratory only: pointing is at or below chance in blocks 0 and 3, rises through the
 single-stream blocks to about 80% around blocks 12–19, and falls in the last few; it

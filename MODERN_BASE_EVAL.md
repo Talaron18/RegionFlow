@@ -348,6 +348,14 @@ outside the mask is the source. As with UltraEdit's oracle arm, the where-metric
 saturated and say nothing about whether the edit is right. Full vs single prompt shows
 no difference on them (sign test p = 0.74). Only the blind audit can score this arm.
 
+**Audit panels built (2026-11-16), verdicts pending.** `runs/gate_c/blind_crop/` has 40
+panels on the same 40 ids; the key's metrics match the `single` records in 40 of 40 and
+the `single` and `full` images differ in 38 of 40 (the other two, refedit-14 and -156,
+have identical prompts). `blind_audit.py` now filters each arm to `--prompt-kind`;
+before, a two-prompt file was keyed by id and the last line won, which happened to be
+`single`. The `READING` footer that `--score` prints is about RefEdit-SD3 and does not
+apply; read the count against the table above.
+
 Noted while reading the diffusers source (0.43.0): the library ships a
 `Flux2KleinInpaintPipeline` that takes `mask_image`. That is a third mask-given
 baseline (masking inside the sampler rather than after it) and should be scored
