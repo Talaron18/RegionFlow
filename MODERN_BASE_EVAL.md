@@ -330,3 +330,25 @@ Reading of the crop arm's clean count (of 40; paste-back alone was 19):
 Record separately: cases that fail *because* context was cropped away (lighting or
 scale mismatch after paste, instructions that need the scene), and additions that
 belong outside the mask (re-check those with `--klein-crop-paste box`).
+
+### Crop baseline — automated result (2026-11-16, user's run; audit pending)
+
+`flux2-klein-4b+crop-mask`, oracle mask, 151 cases × {full, single} prompt:
+
+| | full | single |
+|---|---|---|
+| mis-targeted | 1 (refedit-27) | 1 (refedit-27) |
+| measurable | 150 | 150 |
+| valid (K=10) | 146 (97%) | 147 (97%) |
+| leakage ratio median | 0.002 | 0.002 |
+| sibling excess median | −0.0009 | −0.0008 |
+
+These are at the ground-truth floor (0.011 / −0.005) **by construction**: everything
+outside the mask is the source. As with UltraEdit's oracle arm, the where-metrics are
+saturated and say nothing about whether the edit is right. Full vs single prompt shows
+no difference on them (sign test p = 0.74). Only the blind audit can score this arm.
+
+Noted while reading the diffusers source (0.43.0): the library ships a
+`Flux2KleinInpaintPipeline` that takes `mask_image`. That is a third mask-given
+baseline (masking inside the sampler rather than after it) and should be scored
+alongside paste-back and crop before a learned mechanism is claimed to beat "a mask".
