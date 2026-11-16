@@ -331,7 +331,7 @@ Record separately: cases that fail *because* context was cropped away (lighting 
 scale mismatch after paste, instructions that need the scene), and additions that
 belong outside the mask (re-check those with `--klein-crop-paste box`).
 
-### Crop baseline — automated result (2026-11-16, user's run; audit result below)
+### Crop baseline — automated result (2026-11-16, user's run, before the dilation fix)
 
 `flux2-klein-4b+crop-mask`, oracle mask, 151 cases × {full, single} prompt:
 
@@ -357,6 +357,10 @@ before, a two-prompt file was keyed by id and the last line won, which happened 
 apply; read the count against the table above.
 
 ### Crop baseline — audit result (2026-11-16, user's audit, same 40 ids, single prompt)
+
+> **Read the correction further down first.** In 12 of these 40 cases the crop box was
+> enlarged by a dilation bug, in 4 of them to the whole image. The counts below are as
+> observed; the reading is on hold until the rerun.
 
 | arm | clean | degraded | destroyed | wrong_edit | no_edit | clean % |
 |---|---|---|---|---|---|---|
@@ -416,7 +420,8 @@ unnoted destroyed/degraded and three `no_edit`). Type only; no verdict was chang
 
 Clean in at least one of the two mask baselines: 26 of 40. Clean in neither: 14.
 
-**What this means for the method question.** A fixed pipeline (mask, then paste-back
+**What this means for the method question (WITHDRAWN 2026-11-16, see the correction
+below; kept for the record).** A fixed pipeline (mask, then paste-back
 or crop) reaches roughly two thirds clean on this benchmark either way. The largest
 single residual is not the model but the paste: an instance mask is the wrong shape
 for additions and for edits that change the object's outline. Lost scene context
@@ -426,6 +431,255 @@ Limits: one rater; 40 stratified cases with strata as small as 9, so per-class r
 estimates. This audit was not blind to the arm and was the rater's third pass over the
 same 40 ids; `destroyed` appears four times here after none in the two earlier
 sittings, so a shift in how the rubric was applied cannot be excluded.
+
+### Correction (2026-11-16): the crop was not a crop in 54 of 151 cases
+
+Found while checking the box-paste run against its images. `run_gate_c.dilate` grew the
+mask with `np.roll`, which wraps round the image. A target within 8 px of a border
+reappeared as a strip on the opposite border; the crop takes the mask's bounding box,
+so the box stretched across the image.
+
+Evidence, all from files on disk:
+- Predicting each case's crop box with the wrap explains every changed pixel of the
+  box-paste images in 151 of 151 cases; predicting it without the wrap leaves changes
+  outside the box in 52.
+- In the 22 cases where the wrapped box is the whole image, the crop arm's `full`
+  output is pixel-identical to the paste-back arm's: same input, prompt and seed.
+
+| | of 151 | of the 40 audited |
+|---|---|---|
+| mask reaches a border (a strip of up to 8 px on the opposite side, every dilated arm) | 67 | 16 |
+| crop box enlarged | 54 | 12 |
+| crop box = the whole image (intended in 3) | 22 | 4 |
+
+In the enlarged cases the box covered a median 81% of the image where 38% was
+intended. Ids and box sizes: `runs/gate_c/crop_wrap_affected.json`.
+
+**What this does to the results above.**
+- **Crop audit, 24 of 40.** The count stands as observed, but in 12 of the 40 the arm
+  as run was not the arm as specified, so its reading against the 24–29 band is **on
+  hold** until the rerun. Not known: which way the count moves.
+- **Residual classification.** Five of the 16 non-clean cases are among the 12
+  (refedit-184, -153, -39 `no_edit`; -183 `destroyed`; -113 `degraded`). For -184 and
+  -39 the model was given the whole image. Their failure types are unexplained until
+  rerun.
+- **Withdrawn:** "the largest single residual is not the model but the paste" and
+  "lost scene context accounts for two cases". Both leaned on affected cases.
+- **Crop automated table.** Where-metrics under mask paste are saturated by
+  construction, so those numbers barely depend on the box; they will be re-recorded
+  with the rerun.
+- **Paste-back and UltraEdit-oracle arms.** Same dilation, so in the 67 border cases
+  their masks carried the strip of up to 8 px on the opposite border. Small next to
+  what those arms measure; not re-run. The frozen metric's own `off_instance._dilate`
+  wraps the same way and has been left untouched: it removes that strip from the
+  off-instance area. Changing it is a separate decision.
+- **Not affected:** the plain arm (no mask), and the grounding probe, its join with
+  the audits and the feature check, which use the undilated masks.
+
+**Fix.** `dilate` now pads before rolling. Its self-test checks that an interior mask
+is bit-identical to the old function and that refedit-184's box no longer reaches the
+far borders (bounding box rows 332–511, columns 0–118; before, the whole image).
+`python bench/run_gate_c.py --self-test` passes on CPU. Not run: any model.
+
+### Crop with box paste — automated result (2026-11-16, user's run, BEFORE the fix)
+
+`flux2-klein-4b+crop-box`, 151 cases, single prompt, split by whether the wrap enlarged
+the crop box:
+
+| | box enlarged (54) | box as intended (97) |
+|---|---|---|
+| mis-targeted | 11 | 2 |
+| valid (K=10) | 12 | 62 |
+| sibling excess > 0.02 (cut-off picked here) | 19 | 25 |
+
+Most of the run's 13 mis-targeted cases come from the enlarged boxes, where siblings
+were inside the crop. In the 97 cases run as intended, box paste still shows sibling
+change in about a quarter; that mixes real edits with the crop's resample round trip,
+and the split between the two is not known.
+
+Seen in the images, for the record and not as verdicts: with box paste a whole parrot
+appears on the chef's shoulder in refedit-29 (mask paste left a sliver), the cape in
+-154 is no longer cut, and in -57 the neighbouring glass loses its straw. -29, -154
+and -57 had the intended box. The additions in -153 and -39 and the hair bow in -184
+(which landed on the wrong man) came from enlarged or whole-image boxes and say
+nothing about cropping.
+
+**Untested baseline worth one line:** a text rule (instructions that add an object get
+box paste, the rest mask paste) is still a fixed pipeline. 27 of the 151 instructions
+start with add / put / place / insert, 10 of them among the audited 40.
+
+### Rerun after the fix (commands; nothing below has run)
+
+```bash
+python bench/run_gate_c.py --self-test
+python bench/run_gate_c.py --model flux2-klein-4b --klein-crop --ablation \
+  --mask-mode oracle --out runs/gate_c/klein4b_crop2_oracle.jsonl \
+  --save-images runs/gate_c/img_klein4b_crop2_oracle
+python bench/run_gate_c.py --model flux2-klein-4b --klein-crop --klein-crop-paste box \
+  --ablation --mask-mode oracle --out runs/gate_c/klein4b_cropbox2_oracle.jsonl \
+  --save-images runs/gate_c/img_klein4b_cropbox2_oracle
+```
+
+New file names, so the first runs stay on disk for comparison. Before trusting the
+rerun: the 97 cases whose box did not change should reproduce their old images within
+a small tolerance (same input, prompt and seed). If they do, only the 12 enlarged ids
+among the 40 need new verdicts for the crop arm. That mixes two sittings, so whether
+to re-judge 12 or all 40 is the rater's call. The band (≥ 30, 24–29, ≤ 23) is
+unchanged.
+
+### Rerun after the fix — result (2026-11-16, user's runs, checked from the saved images)
+
+- **The fix took effect.** Box-paste changes lie inside the intended crop box in 151 of
+  151 cases.
+- **Unaffected cases reproduce.** The 84 cases whose mask never reached a border are
+  pixel-identical to the first run in both arms; the 13 that only carried a strip
+  differ in at most 0.3% of pixels; all 54 enlarged cases changed.
+
+| single prompt, 151 cases | mask paste, first run | mask paste, rerun | box paste, first run | box paste, rerun |
+|---|---|---|---|---|
+| mis-targeted | 1 | 1 | 13 | 4 |
+| valid (K=10) | 147 | 148 | 74 | 91 |
+| leakage ratio median | 0.002 | 0.001 | 0.060 | 0.024 |
+| sibling excess > 0.02 (cut-off picked here) | 4 | 5 | 44 | 33 |
+| hot spot louder than the target | 0 | 0 | 34 | 27 |
+
+Mask paste stays saturated, as it must. Box paste with the correct box: mis-targeting
+falls from 13 to 4, and about a fifth of cases (33) still show sibling change, which
+mixes real edits with the crop's resample round trip.
+
+**Audit still owed.** Of the 40 audited ids, 12 have a new crop output; the other 28
+are unchanged (24 pixel-identical, 4 within the strip). `runs/gate_c/crop2_rejudge_ids.json`
+lists those 12 plus 8 of the 24 identical ones (seed 1116) as hidden repeats, so the
+same sitting also measures how consistently the rubric is applied:
+
+```bash
+python bench/blind_audit.py --build \
+  --arm crop:runs/gate_c/klein4b_crop2_oracle.jsonl:runs/gate_c/img_klein4b_crop2_oracle \
+  --reference crop --prompt-kind single \
+  --carry-over runs/gate_c/crop2_rejudge_ids.json --extra 0 \
+  --out-dir runs/gate_c/blind_crop2 \
+  --ledger runs/gate_c/blind_crop2_ledger.json --key runs/gate_c/blind_crop2_key.json
+```
+
+Fixed before judging: the corrected crop count is the 17 clean among the 28 unchanged
+ids plus the clean verdicts among the 12, read against the same band (≥ 30, 24–29,
+≤ 23). On the 8 repeats, the first-pass verdicts were 5 clean, 1 degraded, 1 wrong_edit,
+1 no_edit; fewer than 6 of 8 matching means the rubric has drifted enough that the
+three arms' counts should not be compared to within a few cases.
+
+## Predicted-mask pipeline — scope (written before any run, 2026-11-17)
+
+Every mask result above uses the benchmark's own mask. A mask-free method competes
+with a pipeline that has to FIND the instance first: referring segmentation, then
+paste-back. This measures that pipeline's first step on the same 151 cases.
+
+**Model.** One backend, a sentence-level referring-segmentation model (Sa2VA family;
+the exact checkpoint is recorded in every output row). The benchmark has only the full
+editing instruction, not the referring phrase, so the model must take a sentence. Two
+caveats fixed here: Sa2VA is trained on RefCOCO-family data and RefEdit-Bench's images
+come from RefCOCO (the instructions were written by hand), so its score here may be
+inflated; and it runs the model repository's own code.
+
+**Prompt, frozen (no variants after a run):**
+`Please segment the existing object in the image that this editing instruction refers to: {instruction}`
+For "add X beside Y" the benchmark's target is Y, which is what this asks for. The
+4-case smoke run is for mechanics only, not for tuning this sentence.
+
+**Primary statistic: which instance the predicted mask lands on,** not IoU with the
+whole instance. Many instructions name a part (shirt, screen, goatee) while the ground
+truth is the whole person or laptop; a correct part mask would fail an IoU test. With
+`in_T` = share of predicted pixels inside the target and `in_S` = the largest share
+inside any one sibling (target pixels removed):
+
+| class | rule (frozen) |
+|---|---|
+| `target` | `in_T` ≥ 0.5 and `in_S` < 0.2 |
+| `sibling` | `in_S` ≥ 0.5 and `in_T` < 0.2 |
+| `both` | `in_T` ≥ 0.2 and `in_S` ≥ 0.2 (paste-back would leak through this mask) |
+| `empty` | fewer than 0.05% of the image's pixels |
+| `other` | anything else |
+
+Reported with it: a sensitivity table over the two thresholds (0.5 / 0.7 / 0.9 ×
+0.1 / 0.2 / 0.3), IoU with the target as a secondary number, and the model's raw text
+answer per case.
+
+**Controls, run through the same save, load and score path:** the ground-truth target
+mask must score 151 of 151 `target`; the largest sibling's mask must score 0. Then the
+single-instance instruction, on the 141 cases whose two prompts differ: it names only
+the category, so its `target` rate shows how much comes from something other than the
+referring expression. It is not a clean null (its edit words carry some referent
+information, as the attention probe found).
+
+**Reading (amends the rule proposed in chat, because of the contamination):**
+
+| `target` class, full instruction | reading |
+|---|---|
+| ≤ 113 of 151 (75%) | Strong evidence: same-kind referents are hard for a pipeline too, even with a model that may have seen these images. The mask-free method direction is alive, and the benchmark claim extends beyond editors. |
+| ≥ 136 of 151 (90%) | Finding the instance is solved ON THIS BENCHMARK, possibly inflated. A method cannot claim aiming as its contribution here without a set the segmenter has not seen. Not, by itself, a decision about the paper. |
+| 114–135 | Mixed. Report by class and move to the end-to-end arm. |
+
+Reported separately, because it is where a pipeline would have to beat the editor: the
+43 cases where plain klein edited off target, against the 108 where it did not; and
+for comparison klein's own rates (edit on target 108 of 151; attention points at the
+target 118 of 151).
+
+**Then, end to end:** paste-back with the predicted masks
+(`--klein-composite --mask-mode predicted --pred-masks DIR`), compared with oracle
+paste-back case by case. A predicted mask goes through the same 8 px dilation; an
+empty mask yields the source unchanged. Whether to audit it is decided after the
+automatic numbers.
+
+**Built (2026-11-17), not yet run on a model.** `bench/predict_masks.py` and
+`--mask-mode predicted` in `bench/run_gate_c.py`; both self-tests pass on CPU.
+Checkpoint: `ByteDance/Sa2VA-Qwen2_5-VL-7B` (Apache-2.0, about 34 GB on disk, greedy
+decoding per its own code; revision recorded per row). Its card's example omits a
+`processor` argument that this checkpoint's code requires; the backend follows the
+official demo script instead. It needs a recent `transformers` and `qwen_vl_utils`:
+**run it in a separate environment, and do not upgrade the one klein runs in**, or
+klein's outputs may stop being pixel-comparable with the earlier arms.
+
+Run in this order; each step gates the next.
+
+```bash
+# 1. controls: no model. Must print target 151 of 151, then 0 of 151.
+python bench/predict_masks.py --backend oracle
+python bench/predict_masks.py --backend sibling
+
+# 2. runner path: paste-back through the ORACLE masks read from disk.
+python bench/run_gate_c.py --model flux2-klein-4b --klein-composite \
+  --mask-mode predicted --pred-masks runs/gate_c/pred_masks_oracle_full \
+  --out runs/gate_c/klein4b_comp_predoracle.jsonl \
+  --save-images runs/gate_c/img_klein4b_comp_predoracle
+
+# 3. smoke: 4 cases, mechanics only. Look at the overlays and raw answers.
+python bench/predict_masks.py --backend sa2va --limit 4 \
+  --out runs/gate_c/pred_masks_smoke.jsonl --out-dir runs/gate_c/pred_masks_smoke \
+  --save-overlays runs/gate_c/pred_overlays_smoke
+
+# 4. full runs, then the report
+python bench/predict_masks.py --backend sa2va --prompt-kind full \
+  --save-overlays runs/gate_c/pred_overlays_sa2va_full
+python bench/predict_masks.py --backend sa2va --prompt-kind single
+python bench/predict_masks.py --report runs/gate_c/pred_masks_sa2va_full.jsonl \
+  --report-single runs/gate_c/pred_masks_sa2va_single.jsonl \
+  --outcomes runs/gate_c/klein4b_none.jsonl
+
+# 5. end to end: paste-back through the predicted masks (full instruction only)
+python bench/run_gate_c.py --model flux2-klein-4b --klein-composite \
+  --mask-mode predicted --pred-masks runs/gate_c/pred_masks_sa2va_full \
+  --out runs/gate_c/klein4b_comp_pred.jsonl \
+  --save-images runs/gate_c/img_klein4b_comp_pred
+```
+
+Checks fixed here. Step 1: anything other than 151 and 0 stops the line; list the ids
+(a sibling lying wholly inside the target would score as `target`, a benchmark fact
+rather than a bug). Step 2: on the 84 cases whose mask never reached a border, the
+images must be pixel-identical to the existing paste-back arm; that validates the
+predicted-mask path of the runner, which has never executed, and gives a post-fix
+oracle baseline for step 5. Step 5 uses the full instruction only: the masks come from
+it, so a single-prompt edit through them would mix two conditions. After step 4, count
+masks the scorer calls `empty` (under 0.05% of the image) that are not all-zero, since
+the runner only skips all-zero masks.
 
 Noted while reading the diffusers source (0.43.0): the library ships a
 `Flux2KleinInpaintPipeline` that takes `mask_image`. That is a third mask-given

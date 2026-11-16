@@ -343,6 +343,49 @@ interior densities; a swapped mask order is caught) and a dry run of `--report` 
 real attention file with random features, which gave chance-level rows. The extraction
 itself has not run.
 
+### Feature check — result (2026-11-16, user's run)
+
+Extraction: 151 cases measured, none skipped; the mask check compared all 151 against
+the probe's recorded densities, largest relative gap 1e-8. Interior densities usable
+in 150 of 151.
+
+Primary (swapped instruction, different-category partner, two instances; bar 41 of 60):
+
+| | larger | lower in frame | brighter | more saturated |
+|---|---|---|---|---|
+| primary | 31 / 60 | 34 / 60 | 36 / 60 | 26 / 59 |
+| interior cells only | 29 / 60 | 30 / 60 | 36 / 60 | 24 / 59 |
+
+**No feature reaches the bar. By the rule fixed above, stop here:** the
+referent-independent part of the attention is not described by size, height,
+brightness or saturation at this sample size; the swapped map itself stays the
+definition of the hard subset; no features are added after the fact.
+
+What else the run shows:
+- **A size preference is not shown.** 31 of 60, and 29 of 60 on interior cells; a
+  sample of 60 cannot exclude a moderate one. The impression that large objects get
+  more attention may be total attention (a large instance collects more at equal
+  density, and the heat maps show both); that was not computed.
+- **The coverage bias does not move the headline.** Recomputed on interior cells
+  (150 cases), full-instruction pointing is 76.7% against 78.0% raw; 8 cases change.
+  By the plain run's class: measurable 83% (raw 87%), mis-targeted 23 of 34 = 68% (raw
+  62%), all off-target 60% (raw 56%); well-aimed against off-target p = 0.005. Full
+  against single, paired: 37 cases correct only with the full instruction, 9 only with
+  the single one (p < 0.0001). The primary result and its row-3 reading stand; note
+  that mis-targeted pointing on interior cells sits two points under the 70% line of
+  row 1.
+- **Not touched by the dilation bug** found the same day (`MODERN_BASE_EVAL.md`): the
+  probe, the join and this check all use the undilated masks.
+
+Context lines, not tested against the bar (the report prints about fifty comparisons):
+brightness is the one feature that recurs. Attention's top instance is the brightest in
+80 of 151 under the swapped instruction (p = 0.009) and 86 of 151 under the full one
+(p = 0.0003), and full-instruction pointing is 88% when the target is the brighter
+instance against 68% when it is not (p = 0.003). The primary test for brightness was
+36 of 60 (p = 0.16). This is a hypothesis for a new set of images, not a finding here.
+No feature predicts where the plain edit lands (closest: 22% off target when the target
+is the larger one against 35%, p = 0.10).
+
 Exploratory only: pointing is at or below chance in blocks 0 and 3, rises through the
 single-stream blocks to about 80% around blocks 12–19, and falls in the last few; it
 declines from the first step to the last. Association, not causation: nothing here
