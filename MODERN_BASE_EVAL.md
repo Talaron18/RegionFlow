@@ -348,13 +348,69 @@ outside the mask is the source. As with UltraEdit's oracle arm, the where-metric
 saturated and say nothing about whether the edit is right. Full vs single prompt shows
 no difference on them (sign test p = 0.74). Only the blind audit can score this arm.
 
-**Audit panels built (2026-11-16), verdicts pending.** `runs/gate_c/blind_crop/` has 40
+**Audit panels built (2026-11-16).** `runs/gate_c/blind_crop/` has 40
 panels on the same 40 ids; the key's metrics match the `single` records in 40 of 40 and
 the `single` and `full` images differ in 38 of 40 (the other two, refedit-14 and -156,
 have identical prompts). `blind_audit.py` now filters each arm to `--prompt-kind`;
 before, a two-prompt file was keyed by id and the last line won, which happened to be
 `single`. The `READING` footer that `--score` prints is about RefEdit-SD3 and does not
 apply; read the count against the table above.
+
+### Crop baseline — audit result (2026-11-16, user's audit, same 40 ids, single prompt)
+
+| arm | clean | degraded | destroyed | wrong_edit | no_edit | clean % |
+|---|---|---|---|---|---|---|
+| klein 4B, no mask | 9 | 1 | 0 | 28 | 2 | 22% |
+| + paste-back through the oracle mask | 19 | 4 | 0 | 4 | 13 | 48% |
+| + crop, edit, paste | **24** | 3 | **4** | 3 | 6 | **60%** |
+
+**Reading, by the rule fixed above: 24 is in the 24–29 band, on its lower edge.** One
+verdict fewer would be the "no meaningful gain" band, so the count alone does not
+separate the two readings. Three things say the gain over paste-back is small:
+
+- Paired with paste-back on the same ids: 7 became clean, 2 stopped being clean
+  (exact two-sided sign test p = 0.18). Against the plain arm: 17 and 2 (p = 0.001).
+- Weighted to all 151 by the plain run's class, crop ≈ **65%** clean and paste-back
+  ≈ 67%. The sample over-represents the classes where crop helps.
+- The two arms win on different cases:
+
+| plain run's class | share of all 151 | plain clean | paste-back clean | crop clean |
+|---|---|---|---|---|
+| measurable (target changed most) | 108 (72%) | 6 / 16 | 13 / 16 | 11 / 16 |
+| mis-targeted | 34 (23%) | 2 / 15 | 6 / 15 | 9 / 15 |
+| off-instance | 9 (6%) | 1 / 9 | 0 / 9 | 4 / 9 |
+
+Where the base edits the wrong place, cropping helps (13 of 24 against 6 of 24). Where
+the base already aims correctly, cropping is slightly worse (11 against 13 of 16) and
+brings a failure paste-back never had: 4 `destroyed`.
+
+**The 13 cases paste-back left unedited** (the ones a mask after generation cannot
+fix): crop made 4 clean (refedit-190, -14, -130, -176), 6 are still `no_edit`, and 3
+became wrong_edit / destroyed / degraded. Telling the model where by cropping fixes
+under a third of them.
+
+**Residual, 16 of 40** (grouped by instruction text and the rater's notes; not
+re-checked against the images):
+- 6 `no_edit`. Three are additions whose place is beside the instance, outside the
+  mask (refedit-153 child beside the car, -39 wine glass in front of the woman, -172
+  bird on the bench): the same three flagged under paste-back, a mask-coverage limit.
+  Re-check these with `--klein-crop-paste box`. The other three are small attribute
+  edits the model did not make (refedit-199 goatee, -156 apple, -184 hair bow).
+- 4 `destroyed` (refedit-183, -72 "a cat-dog", -151 "floating birdhouse", -29) and 3
+  `degraded` (refedit-57, -154, -113 "this cat is big as a cow"). The notes on -113 and
+  -151 are scale or placement errors, which is what losing the scene context would
+  produce; the other five have no note.
+- 3 `wrong_edit` (refedit-117; -84 suit recoloured along with the shirt; -150 half the
+  cake, wrong in all three arms).
+
+Clean in at least one of the two mask baselines: 26 of 40. Clean in neither: 14.
+
+**What this means for the method question.** A fixed pipeline (mask, then paste-back
+or crop) reaches roughly two thirds clean on this benchmark either way, and neither
+dominates. What neither fixes: edits the model does not make even when shown only the
+target, additions that belong outside the instance mask, and the loss of scene context
+when cropping. One rater, 40 stratified cases, strata as small as 9: the per-class
+rows are estimates.
 
 Noted while reading the diffusers source (0.43.0): the library ships a
 `Flux2KleinInpaintPipeline` that takes `mask_image`. That is a third mask-given
