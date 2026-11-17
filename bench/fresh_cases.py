@@ -333,6 +333,15 @@ def edit(args):
             kimg = Image.fromarray((keep * 255).astype(np.uint8))
             composite(img, e, kimg, plain.feather).save(out / f"{c['id']}_attrib.png")
             kimg.save(out / f"{c['id']}_attrib_mask.png")
+            # ablation, no extra klein run: the same rule with NO counterfactual, i.e.
+            # keep every change vs the source that connects to the mask (an edit-vs-
+            # source contrast, DiffEdit-like). The gap to _attrib is what the
+            # counterfactual itself buys.
+            keep0, dbg0 = attribution_mask(
+                np.asarray(img), np.asarray(e.convert("RGB").resize(img.size)), [],
+                np.asarray(mimg) >= 128)
+            composite(img, e, Image.fromarray((keep0 * 255).astype(np.uint8)),
+                      plain.feather).save(out / f"{c['id']}_connected.png")
             print(f"  {c['id']}: attribution with {len(cis)} counterfactual(s): {dbg}")
         print(f"  {c['id']}: {w}x{h}, dilate {r}px, seed {seed} -> {out}/{c['id']}_*.png")
 

@@ -80,3 +80,29 @@ expression" (answer: the contrast is between two full edited outputs, used to su
 spillover shared across referents, not to localise the edit); and a comparison against
 single-pass leakage fixes (MICE, BindEdit, IDA, MIRAGE). Owed before any novelty claim:
 DiffEdit's citation list and a read of RefEdit's method section.
+
+### DiffEdit, read from the paper (user-supplied PDF, 2026-11-18)
+
+- **Mask (Sec. 3.2, Step 1):** noise estimates of the input image at 50% noise, under
+  the query text vs a reference text (or empty text); extreme values removed, spatial
+  differences averaged over n = 10 noises, rescaled to [0, 1], binarised at 0.5. Masks
+  "generally somewhat overshoot". Editing then runs DDIM decoding with the latents
+  outside the mask replaced by the DDIM-encoded source (ỹ_t = M y_t + (1 − M) x_t).
+- **Selecting an object** (App. A.5, examples 7–12) is done by contrasting a query
+  with a similar reference caption ("a bowl of fruits" vs "a bowl of pears"). That
+  selects an object *type*, not one of several instances.
+- **Its own failure modes (Fig. 19):** columns 4–5, "mask does not isolate object to be
+  edited, both objects": multiple similar objects enter the mask when the query needs
+  only one, causing over-editing. Columns 1–3: inserting an object fails or lands in the
+  wrong place, because the mask "seeks an anchor visual element".
+
+**What this means for us.** DiffEdit names both of our problems as unsolved failure
+modes of its contrast: same-kind instances (Level 1) and additions outside an existing
+object (Level 2). Our contrast differs in three ways: (1) between two *referents* under
+the same edit, not edit vs no-edit; (2) between two finished outputs in pixel space,
+after editing, not between noise estimates before; (3) the referent's own region comes
+from a segmenter, and the contrast only decides what to keep *outside* it. The direct
+ablation is the same rule with no counterfactual (keep every change vs the source that
+connects to the mask): `<id>_connected.png`, written by `--edit` at no extra klein cost.
+A DiffEdit-mask baseline on klein (contrasting velocity predictions under the
+instruction vs empty text) is still owed if reviewers want the original method.
