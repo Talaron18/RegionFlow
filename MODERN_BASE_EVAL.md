@@ -872,3 +872,66 @@ Noted while reading the diffusers source (0.43.0): the library ships a
 `Flux2KleinInpaintPipeline` that takes `mask_image`. That is a third mask-given
 baseline (masking inside the sampler rather than after it) and should be scored
 alongside paste-back and crop before a learned mechanism is claimed to beat "a mask".
+
+## Fresh-case aiming test — scope (written before any case, 2026-11-18)
+
+**Question.** Sa2VA finds the target in 137 of 151 RefEdit-Bench cases, but it was trained
+on RefCOCO-family data and every RefEdit-Bench image is a RefCOCO photograph. Is 91% a
+property of the pipeline, or of this benchmark? This decides whether aiming is still
+open (learned-grounding line) or closed (evaluation finding + edit quality).
+
+**Two arms, written by the user, nothing run until both are frozen.**
+- **Arm A (the band):** 50 cases on images that are not COCO and not from any
+  referring-segmentation set (RefCOCO/+/g, gRefCOCO, ReasonSeg, GranD/SA-1B, MeViS,
+  Ref-YouTube-VOS). Own photos are best; PIE-Bench++ or ImgEdit images are allowed if
+  their source is checked and recorded. MagicBrush is COCO, so arm B only.
+- **Arm B (interpretation only):** 20 cases on RefEdit-Bench / COCO images with freshly
+  written instructions, preferably aimed at an instance the benchmark did not target.
+  It separates "the images are familiar" from "the user's expressions are harder than
+  RefEdit's".
+
+**Case rules (enforced by `bench/fresh_cases.py --check`).**
+- Each image has at least two instances of the target's category; every same-category
+  instance gets a box (target first). Ground truth is boxes, not masks.
+- At most 2 cases per image (different targets). Arm A: ≥ 10 cases of each expression
+  type: `attribute` ("the woman in red"), `spatial` ("the left cup"), `relation` ("the
+  dog next to the bench").
+- One editing sentence in RefEdit style, with only the referring words needed to
+  disambiguate; mix edit kinds (replace, change colour/attribute, add, remove).
+- Choose the image and target before writing the sentence. Write all cases, run
+  `--check`, record `sha256sum runs/fresh/cases.json` here, then run. No case is edited
+  or dropped after a run.
+
+**Pipeline, unchanged:** same Sa2VA checkpoint, same frozen prompt, images resized to
+512×512, same `target / sibling / both / other / empty` scorer with t_in 0.5 and
+t_leak 0.2, against boxes (sibling boxes minus the target box). Every overlay is viewed;
+a class the viewer disagrees with (boxes are crude where instances overlap) goes into
+`overrides.json` with a reason, and the report prints the band with and without them.
+
+**Bands on arm A target rate (agreed 2026-11-18):**
+
+| arm A target | reading |
+|---|---|
+| ≥ 85% (≥ 43 of 50) | Aiming is solved in general for this pipeline. The paper is the evaluation finding plus the edit-quality residual. |
+| 71–84% | Mixed: report per expression type; no line reopened or closed. |
+| ≤ 70% (≤ 35 of 50) | Aiming is open off RefCOCO; the learned-grounding line returns, and an uncontaminated split becomes part of the contribution. |
+
+Arm B read with arm A when A ≤ 84%: B ≥ 17 of 20 → the drop comes from the images
+(familiarity/contamination); B ≤ 14 of 20 → the fresh expressions are harder than
+RefEdit's, which reopens aiming for a different reason. 50 cases give about ±10 points
+at 95%, so the bands are coarse on purpose.
+
+Commands (arm A and B in one `cases.json`; GUI annotator needs a matplotlib window, e.g.
+WSLg; any tool giving pixel boxes `[x0, y0, x1, y1]` works instead):
+
+```bash
+python bench/fresh_cases.py --annotate /path/to/images --cases runs/fresh/cases.json
+python bench/fresh_cases.py --check --cases runs/fresh/cases.json
+sha256sum runs/fresh/cases.json          # record above before running
+# in the Sa2VA venv:
+python bench/fresh_cases.py --run --cases runs/fresh/cases.json \
+  --out runs/fresh/sa2va.jsonl --out-dir runs/fresh/masks --save-overlays runs/fresh/overlays
+# view every overlay, write runs/fresh/overrides.json if needed, then:
+python bench/fresh_cases.py --report runs/fresh/sa2va.jsonl --cases runs/fresh/cases.json \
+  --overrides runs/fresh/overrides.json
+```
