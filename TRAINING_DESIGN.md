@@ -1,5 +1,11 @@
 # Referent-grounded editing on FLUX.2 klein — training design (draft)
 
+> **Superseded (2026-11-18).** This design assumed aiming was the open problem. The
+> predicted-mask results in `MODERN_BASE_EVAL.md` (steps 4–5: Sa2VA finds the target in
+> 137/151; its paste-back pipeline sits about 3/40 below oracle paste-back) put aiming in
+> the "solved on this benchmark" band fixed before the run. Do not build from this file
+> unless an uncontaminated test reopens aiming. Kept for the record.
+
 Status: **design draft for discussion. Nothing here is built or run, and nothing is
 frozen yet.** It becomes a scope (with thresholds fixed) only after the two results it
 still waits on, listed at the end.
