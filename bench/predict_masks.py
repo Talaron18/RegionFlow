@@ -191,8 +191,9 @@ def make_sa2va(model_path: str, device: str):
     import torch  # noqa: PLC0415
     from transformers import AutoModel, AutoProcessor  # noqa: PLC0415
     model = AutoModel.from_pretrained(
-        model_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True,
-        use_flash_attn=True, trust_remote_code=True).eval().to(device)
+        model_path, dtype=torch.bfloat16, low_cpu_mem_usage=True,
+        use_flash_attn=True, trust_remote_code=True,
+        device_map={"": device}).eval()
     processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
 
     def backend(src_img, prompt, tmask, smasks):
