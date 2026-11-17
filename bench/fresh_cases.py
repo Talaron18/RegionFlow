@@ -92,10 +92,11 @@ def check_cases(cases: list[dict]) -> list[str]:
         for b in [c.get("target")] + list(c.get("siblings") or []):
             if not (isinstance(b, (list, tuple)) and len(b) == 4 and b[2] > b[0] and b[3] > b[1]):
                 errs.append(f"{i}: bad box {b} (want [x0, y0, x1, y1], x1>x0, y1>y0)")
-        per_img[c.get("image")] += 1
+        if c.get("arm") in ("A", "B"):        # smoke cases may reuse an image freely
+            per_img[c.get("image")] += 1
     for img, n in per_img.items():
         if n > 2:
-            errs.append(f"{img}: {n} cases (max 2 per image)")
+            errs.append(f"{img}: {n} counted cases (max 2 per image)")
     a = [c for c in cases if c.get("arm") == "A"]
     if a and any(sum(c.get("expr_type") == t for c in a) < 10 for t in EXPR_TYPES):
         errs.append("arm A: needs >= 10 cases of each expr_type "
