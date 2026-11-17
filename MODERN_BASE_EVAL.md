@@ -935,3 +935,35 @@ python bench/fresh_cases.py --run --cases runs/fresh/cases.json \
 python bench/fresh_cases.py --report runs/fresh/sa2va.jsonl --cases runs/fresh/cases.json \
   --overrides runs/fresh/overrides.json
 ```
+
+### Fresh-case smoke run (2026-11-18, user's runs; images viewed; arm S, never counted)
+
+Sa2VA puts the mask on the intended instance in all three cases (`in_T` 1.00,
+`in_S` 0.00): the back-right girl in dark blue, not the front-right girl in light blue,
+and the left Special Week in both spellings. Three cases say nothing about the rate.
+
+- **Teio (both spellings).** klein changes 0.3% of pixels; the user confirms it does not
+  know Tokai Teio. This is missing character knowledge, not instance selectivity, so it
+  is out of scope. Named-identity edits stay out of arm A.
+- **Ice axe** ("make the girl in the back row in blue hold an ice axe in her hand").
+  All three arms fail, each differently:
+  - *plain:* a stray blade behind the middle girl's head, attached to no one, plus a
+    third arm from the target reaching down past the front-right girl to hold the shaft.
+    Her two raised gloves are still there.
+  - *paste-back:* keeps the third arm (inside her mask) and cuts the axe off at the mask
+    edge. The mask removes the off-target object and leaves the anatomy error.
+  - *crop-box:* a plausible axe in front of her, but its shaft is gripped by the red
+    glove next to her, while her own navy gloves stay raised. The object lands in the
+    region and is attached to the wrong hand.
+
+Reading: a correct mask is not enough for an edit that must attach an object to the
+referent's body. Choosing a better region (crop-box) fixes the object being cut off,
+but the remaining failures are a limb that should not exist and an attachment to the
+wrong hand. The 40-panel audit already contains the same kind: refedit-27 (burger in
+hand) and -29 (parrot on shoulder).
+
+Count from `bench/cases_refedit_final.json`, by reading the instructions: about 10 of
+151 cases add an object attached to the referent's body (refedit-27, -29, -36, -71,
+-73, -85, -88, -141, -162, -184). Most "holding/wearing" matches are in the referring
+words, not the edit. So this kind is rare on this benchmark; how badly it fails here
+is not yet counted.
