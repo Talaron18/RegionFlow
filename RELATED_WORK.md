@@ -52,3 +52,31 @@ ReferPix2Pix (openreview unreachable); RegionRoute's backbone; whether BindEdit
 FlowMimic's attention target; MIRAGE's mask use and numbers; every numeric result (none
 are quoted here). Not checked: MGIE, InstructEdit, InstDiffEdit, GLIGEN, MIGC, LoMOE,
 InfoEdit, OmniEdit, AnyEdit, ImgEdit, GEdit, the Kontext and Qwen-Image-Edit reports.
+
+## Referent-counterfactual change attribution — prior-art check (2026-11-18)
+
+Search-level check by a research subagent (abstracts and HTML pages, not full reads;
+Semantic Scholar was unreachable from the session, so DiffEdit's citing papers were NOT
+enumerated). Result: **not found**, which is not the same as novel.
+
+- **Closest prior work.** DiffEdit (arXiv 2210.11427) builds its mask by contrasting
+  noise predictions under a query text vs a reference text. Watch Your Steps (ECCV 2024,
+  arXiv 2308.08947) contrasts predictions with vs without the instruction. Both contrast
+  *edit vs no edit*, so neither separates same-category instances: "red jacket" applies
+  to every girl.
+- **Mask-free localisation** (Prompt-to-Prompt local blend, InstructEdit, ZONE, FoI,
+  LEDITS++) uses attention or grounding; none found contrasting two referents.
+- **Multi-instance leakage** (MIRAGE 2604.05180, Instance-Disentangled Attention
+  2602.08749, MICE 2606.31278, BindEdit 2606.18906, AdaptEdit 2604.23763) separates
+  instances through attention or per-instance masks in one pass; none described runs
+  two edits that differ only in the referent.
+- **Attachment / interaction editing:** Add-it (ICLR 2025, placement affordance),
+  InteractEdit/IEBench (2503.09130), HOI-Edit (2606.19073, instance-level HOI evaluator,
+  closest), MPIE-Bench (2607.27616, multi-person interaction, not opened). No benchmark
+  for extra limbs in instruction editing found.
+
+Reviewer objections to expect: "DiffEdit with the reference text set to a sibling
+expression" (answer: the contrast is between two full edited outputs, used to subtract
+spillover shared across referents, not to localise the edit); and a comparison against
+single-pass leakage fixes (MICE, BindEdit, IDA, MIRAGE). Owed before any novelty claim:
+DiffEdit's citation list and a read of RefEdit's method section.
