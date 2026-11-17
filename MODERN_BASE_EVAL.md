@@ -1012,16 +1012,21 @@ referent's face or body changed beyond the edit, or merged with someone) >
 `off_target` (the edit is right, something else changed) > `degraded` > `clean`.
 
 **Statistics, on fresh cases Sa2VA aimed correctly (class `target`; mis-aimed cases are
-reported separately), crop-box arm:** A = clean rate on all aimed attach cases;
+reported separately), crop-box arm.** "Edit right" = verdict `clean`, `off_target` or
+`degraded`: the edit on the referent is right, whatever else happened (amended
+2026-11-18 after the second smoke run, before any arm-T case was written: crop-box
+pastes its whole box and recolours siblings inside it by construction, which must not
+count as an attachment failure; `off_target` is reported beside it).
+A = edit-right rate on all aimed attach cases;
 F = share of attach failures that are `wrong_owner` or `anatomy`; Z = share that are
-`no_object`; gap = clean rate of in-body controls minus clean rate of their attach
+`no_object`; gap = edit-right rate of in-body controls minus that of their attach
 partners, **on pairs only** (same image, same person, both aimed), with the discordant
 counts (attach-only failures, control-only failures). For the `no_object` failures, the
 plain arm's verdict on the same case says whether klein drew the object at all.
 
 | result (rows read top to bottom, first match) | reading |
 |---|---|
-| A ≥ 70% | Attachment is not a major residual for this pipeline; no method target here. |
+| A ≥ 70% edit-right | Attachment is not a major residual for this pipeline; no method target here. |
 | A ≤ 50% and Z ≥ 50% | The object does not appear. If plain drew it in ≥ half of those cases, the region choice is the problem (cheap to fix); if not, klein does not do these edits. Neither is attachment. |
 | A ≤ 50%, F ≥ 50% and paired gap ≥ 25 points | Attachment is a specific residual (worse than in-body edits on the same people, failing by owner or anatomy): candidate method target. |
 | A ≤ 50% and paired gap < 25 points | A general quality problem in these scenes, not specific to attachment. |
@@ -1054,3 +1059,33 @@ python bench/attach_audit.py --build \
 # judge every panel in runs/fresh/attach_blind/ledger.json (do not open key.json), then
 python bench/attach_audit.py --score runs/fresh/attach_blind --aiming runs/fresh/attach_sa2va.jsonl
 ```
+
+### Second smoke run (2026-11-18, user's runs; every grid and overlay viewed)
+
+**Box bug, mine:** the classroom file is 2364×1330 and its boxes were drawn on a
+2000×1125 copy, so the run scored the two desk cases `both` / `other`. Rescored from the
+saved masks with the boxes rescaled, both are `target` (teacher's desk `in_T` 1.00;
+left desk 0.82, its mask also covers the chair beside it). Boxes fixed in
+`bench/smoke_cases_example.json`; cases now record `image_wh`, and `--run` / `--edit`
+refuse a file whose size differs.
+
+| case | Sa2VA | plain klein | paste-back | crop-box |
+|---|---|---|---|---|
+| rain jacket (back-right girl) | target | target **and middle girl** yellow | only the target yellow | target yellow; middle girl's jacket and the front girl's hood partly yellow (inside the box) |
+| jacket to red (same girl) | **empty mask** ("Sure, it is [SEG].") | every girl red or orange, front-right girl's whole outfit red | source unchanged | not run (empty mask) |
+| teacher's desk white | target | every desk and chair white | only the teacher's desk white | teacher's desk and the student desks next to it white |
+| near-left desk red | target (+ chair) | most desks and chairs on the left red | target desk and the chair beside it red | target desk, the desk behind it and chairs red |
+
+Readings:
+- **Plain klein leaks on every familiar edit here.** Each colour or garment change
+  spread to same-category instances, in photos and in the illustration. The leakage
+  that started this project is strong in these scenes, not only in RefEdit-Bench.
+- **Paste-back is right on all three cases with a mask**; its errors are the mask's
+  (the chair under the left-desk mask). On these edits the pipeline is close to done.
+- **Crop-box leaks inside its box by construction.** It is still the arm that keeps an
+  added object whole (the ice axe), so it stays primary for arm T with the "edit right"
+  statistic above; it is not a preservation baseline.
+- **One segmenter miss:** "Change the jacket of the girl in the back row in blue to red"
+  gives an empty mask, while the rain-jacket sentence on the same girl gives a correct
+  one. Same instruction-shape as the earlier misses (the sentence names a colour the edit
+  should produce). One case, not counted.

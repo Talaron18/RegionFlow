@@ -78,6 +78,16 @@ def box_mask(box, orig_wh, size=SIZE) -> np.ndarray:
     return m
 
 
+def check_size(case: dict, wh) -> None:
+    """Boxes are in the pixels of the image they were drawn on. A resized copy would
+    silently move every box (the smoke classroom photo was 2364x1330, boxed at
+    2000x1125), so a case that records `image_wh` must match the file."""
+    want = case.get("image_wh")
+    if want is not None and tuple(want) != tuple(wh):
+        raise SystemExit(f"{case['id']}: {case['image']} is {wh[0]}x{wh[1]} but its boxes "
+                         f"were drawn at {want[0]}x{want[1]}; redraw or rescale them")
+
+
 def check_cases(cases: list[dict]) -> list[str]:
     """Rule violations (empty list = OK). Rules are the scope's, not style."""
     errs, ids, per_img = [], set(), Counter()
@@ -176,6 +186,7 @@ def run(args):
                 continue
             img = Image.open(c["image"]).convert("RGB")
             wh = img.size
+            check_size(c, wh)
             src = img.resize((SIZE, SIZE), Image.BILINEAR)
             T = box_mask(c["target"], wh)
             S = [box_mask(b, wh) for b in c["siblings"]]
@@ -220,6 +231,7 @@ def edit(args):
             print(f"  {c['id']}: no mask at {mpath}; run --run first")
             continue
         img = Image.open(c["image"]).convert("RGB")
+        check_size(c, img.size)
         w, h = model_size(*img.size, area=1024 * 1024)
         img = img.resize((w, h), Image.BICUBIC)
         r = max(1, round(8 * max(w, h) / SIZE))
@@ -352,6 +364,7 @@ def annotate(image_dir: Path, cases_path: Path) -> None:
             print("  not saved (needs n, a target box and >= 1 sibling box)")
             continue
         cases.append({"id": f"fresh-{len(cases) + 1:03d}", "image": str(p),
+                      "image_wh": list(Image.open(p).size),
                       "instruction": instr, "expr_type": et, "arm": arm,
                       "target": boxes[0], "siblings": boxes[1:]})
         cases_path.parent.mkdir(parents=True, exist_ok=True)
@@ -410,6 +423,13 @@ def self_test() -> None:
     s2 = summarise(recs, {"c25": {"cls": "target"}, "c26": {"cls": "target"}})["A"]
     assert s2["target"] == 27 and band(s2["rate"]) == BANDS[2][1]
     assert band(0.70) == BANDS[0][1] and band(0.85) == BANDS[2][1]
+    check_size({"id": "x", "image": "i", "image_wh": [10, 20]}, (10, 20))
+    check_size({"id": "x", "image": "i"}, (99, 99))
+    try:
+        check_size({"id": "x", "image": "i", "image_wh": [2000, 1125]}, (2364, 1330))
+        raise AssertionError("size mismatch not caught")
+    except SystemExit:
+        pass
     print("SELF-TEST OK")
 
 

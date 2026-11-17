@@ -37,7 +37,11 @@
     640
    ]
   ],
-  "note": "boxes for the 452x640 poster; target = back-right girl, front-right girl in light blue is the distractor"
+  "note": "boxes for the 452x640 poster; target = back-right girl, front-right girl in light blue is the distractor",
+  "image_wh": [
+   452,
+   640
+  ]
  },
  {
   "id": "smoke-teio-raw",
@@ -71,7 +75,11 @@
     950
    ]
   ],
-  "note": "boxes for the 1448x1086 source; the user's original wording"
+  "note": "boxes for the 1448x1086 source; the user's original wording",
+  "image_wh": [
+   1448,
+   1086
+  ]
  },
  {
   "id": "smoke-teio",
@@ -105,7 +113,11 @@
     950
    ]
   ],
-  "note": "same case, names spelled as written in English sources"
+  "note": "same case, names spelled as written in English sources",
+  "image_wh": [
+   1448,
+   1086
+  ]
  },
  {
   "image": "runs/fresh/smoke_images/yamanosusume.jpg",
@@ -145,7 +157,11 @@
   "expr_type": "attribute",
   "id": "smoke-rain",
   "instruction": "Make the girl in the back row in blue wear a yellow rain jacket instead",
-  "note": "in-body edit: the change stays inside her mask"
+  "note": "in-body edit: the change stays inside her mask",
+  "image_wh": [
+   452,
+   640
+  ]
  },
  {
   "image": "runs/fresh/smoke_images/yamanosusume.jpg",
@@ -185,7 +201,11 @@
   "expr_type": "attribute",
   "id": "smoke-red",
   "instruction": "Change the jacket of the girl in the back row in blue to red",
-  "note": "colour change, the easiest kind for klein"
+  "note": "colour change, the easiest kind for klein",
+  "image_wh": [
+   452,
+   640
+  ]
  },
  {
   "id": "smoke-desk-teacher",
@@ -194,32 +214,36 @@
   "image": "runs/fresh/smoke_images/classroom.jpg",
   "instruction": "Make the large dark wooden teacher's desk white",
   "target": [
-   1110,
-   418,
-   1552,
-   700
+   1312,
+   494,
+   1834,
+   827
   ],
   "siblings": [
    [
-    1095,
-    535,
-    1362,
-    700
+    1294,
+    632,
+    1610,
+    827
    ],
    [
-    1370,
-    625,
-    1752,
-    872
+    1619,
+    739,
+    2071,
+    1031
    ],
    [
-    880,
-    463,
-    1062,
-    600
+    1040,
+    547,
+    1255,
+    709
    ]
   ],
-  "note": "2000x1125 photo; only neighbouring student desks boxed (target rate does not need every sibling)"
+  "note": "2364x1330 photo; only neighbouring student desks boxed (target rate does not need every sibling)",
+  "image_wh": [
+   2364,
+   1330
+  ]
  },
  {
   "id": "smoke-desk-left",
@@ -228,37 +252,41 @@
   "image": "runs/fresh/smoke_images/classroom.jpg",
   "instruction": "Paint the desk closest to the camera on the left red",
   "target": [
-   245,
-   765,
-   640,
-   1125
+   290,
+   904,
+   756,
+   1330
   ],
   "siblings": [
    [
-    252,
-    595,
-    515,
-    812
+    298,
+    703,
+    609,
+    960
    ],
    [
-    978,
-    678,
-    1372,
-    1000
+    1156,
+    801,
+    1622,
+    1182
    ],
    [
-    1330,
-    880,
-    2000,
-    1125
+    1572,
+    1040,
+    2364,
+    1330
    ],
    [
-    190,
-    500,
-    372,
-    640
+    225,
+    591,
+    440,
+    756
    ]
   ],
-  "note": "2000x1125 photo; the bottom-right desk is the near distractor"
+  "note": "2364x1330 photo; the bottom-right desk is the near distractor",
+  "image_wh": [
+   2364,
+   1330
+  ]
  }
 ]

@@ -40,6 +40,11 @@ from pathlib import Path
 VERDICTS = ("no_object", "wrong_owner", "anatomy", "identity", "off_target",
             "degraded", "clean")
 ATTACH_FAIL = ("wrong_owner", "anatomy")
+# The EDIT on the referent is right. off_target / degraded are preservation and
+# finish problems, reported separately: the crop-box arm pastes its whole box, so it
+# recolours siblings inside the box by construction (smoke run, 2026-11-18), and that
+# must not count as an attachment failure in the attach cases or the controls.
+EDIT_OK = ("clean", "off_target", "degraded")
 FRESH_ARMS = ("plain", "paste", "cropbox")
 PRIMARY_ARM = "cropbox"        # fixed before judging: the arm that does not cut objects
 
@@ -220,8 +225,9 @@ def score(out_dir: Path, aiming_path: str | None) -> dict:
     if att:
         prim = {i: v[(i, PRIMARY_ARM)][0] for i in att}
         cnt = Counter(prim.values())
-        na, fails = len(att), len(att) - cnt["clean"]
-        a = cnt["clean"] / na
+        ok = sum(cnt[x] for x in EDIT_OK)
+        na, fails = len(att), len(att) - ok
+        a = ok / na
         f = sum(cnt[x] for x in ATTACH_FAIL) / fails if fails else 0.0
         z = cnt["no_object"] / fails if fails else 0.0
         nob = [i for i in att if prim[i] == "no_object"]
@@ -234,16 +240,18 @@ def score(out_dir: Path, aiming_path: str | None) -> dict:
                  if v[(i, PRIMARY_ARM)][2] in ctrl]
         gap = b = c_ = None
         if pairs:
-            ca = sum(prim[i] == "clean" for i, _ in pairs) / len(pairs)
-            cc = sum(v[(j, PRIMARY_ARM)][0] == "clean" for _, j in pairs) / len(pairs)
+            good = lambda x: x in EDIT_OK  # noqa: E731
+            ca = sum(good(prim[i]) for i, _ in pairs) / len(pairs)
+            cc = sum(good(v[(j, PRIMARY_ARM)][0]) for _, j in pairs) / len(pairs)
             gap = cc - ca
-            b = sum(prim[i] != "clean" and v[(j, PRIMARY_ARM)][0] == "clean" for i, j in pairs)
-            c_ = sum(prim[i] == "clean" and v[(j, PRIMARY_ARM)][0] != "clean" for i, j in pairs)
+            b = sum(not good(prim[i]) and good(v[(j, PRIMARY_ARM)][0]) for i, j in pairs)
+            c_ = sum(good(prim[i]) and not good(v[(j, PRIMARY_ARM)][0]) for i, j in pairs)
         res = {"A": a, "F": f, "Z": z, "plain_drew": pd, "gap": gap, "n_attach": na,
                "n_pairs": len(pairs), "attach_only_fails": b, "control_only_fails": c_,
                "reading": reading(a, f, z, gap, pd)}
-        print(f"\n  primary arm {PRIMARY_ARM}, aimed fresh attach cases: clean {cnt['clean']}/{na} "
-              f"(A = {a:.0%}); of failures, owner+anatomy F = {f:.0%}, no_object Z = {z:.0%}"
+        print(f"\n  primary arm {PRIMARY_ARM}, aimed fresh attach cases: edit right "
+              f"{ok}/{na} (A = {a:.0%}; clean {cnt['clean']}, off_target {cnt['off_target']}, "
+              f"degraded {cnt['degraded']}); of failures, owner+anatomy F = {f:.0%}, no_object Z = {z:.0%}"
               f" (plain drew the object in {len(drew)}/{len(nob)} of those)")
         if pairs:
             print(f"  paired with in-body controls: {len(pairs)} pairs, control clean minus "
