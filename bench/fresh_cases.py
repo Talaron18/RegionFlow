@@ -105,6 +105,11 @@ def check_cases(cases: list[dict]) -> list[str]:
             errs.append(f"{i}: arm must be one of {ARMS}")
         if c.get("arm") in ("A", "B", "T") and c.get("domain") not in DOMAINS:
             errs.append(f"{i}: domain must be one of {DOMAINS}")
+        cis = c.get("counter_instructions")
+        if cis is not None and not (isinstance(cis, list) and all(
+                isinstance(x, str) and x.strip() and x != c.get("instruction") for x in cis)):
+            errs.append(f"{i}: counter_instructions must be non-empty sentences that differ "
+                        "from the instruction (same edit, a sibling as referent)")
         if c.get("arm") == "T":
             if c.get("edit_kind") not in EDIT_KINDS:
                 errs.append(f"{i}: edit_kind must be one of {EDIT_KINDS}")
@@ -208,6 +213,74 @@ def run(args):
 
 # ----------------------------------------------------------------- edit ---
 
+# ------------------------------------------------------------ attribution ---
+# Referent-counterfactual change attribution (MODERN_BASE_EVAL.md, "Attribution arm").
+# The editor runs again, same seed, with the same edit aimed at a SIBLING
+# ("counter_instructions"). Outside the referent's mask, a pixel the real edit changed
+# is kept only if (a) it changed vs the source, (b) it differs from EVERY counterfactual
+# output (so it depends on who was referred to, not on the edit alone), and (c) it is
+# connected to the mask through such pixels. Inside the mask everything is kept, so a
+# leak that also hits the target cannot erase the target's own edit. Parameters fixed
+# here before any GPU run: decided on a 1/4-resolution grid after a 3x3 box blur (a
+# 5x5 one erased a one-cell-wide shaft in the synthetic test),
+# thresholds 30/255 (the change threshold used for every smoke count so far).
+T_CHANGE, T_UNIQUE, ATTR_SCALE = 30, 30, 4
+
+
+def _boxblur(a: np.ndarray, k: int = 5) -> np.ndarray:
+    """k x k mean over an (H, W, C) float array, edge-padded. numpy only."""
+    p = k // 2
+    a = np.pad(a, ((p, p), (p, p), (0, 0)), mode="edge")
+    c = a.cumsum(0).cumsum(1)
+    c = np.pad(c, ((1, 0), (1, 0), (0, 0)))
+    return (c[k:, k:] - c[:-k, k:] - c[k:, :-k] + c[:-k, :-k]) / (k * k)
+
+
+def _dilate3(m: np.ndarray) -> np.ndarray:
+    o = m.copy()
+    o[1:] |= m[:-1]; o[:-1] |= m[1:]; o[:, 1:] |= m[:, :-1]; o[:, :-1] |= m[:, 1:]
+    return o
+
+
+def reconstruct(seed: np.ndarray, allowed: np.ndarray, max_iter: int = 10_000) -> np.ndarray:
+    """Pixels of `allowed` 4-connected to `seed` (geodesic dilation until stable)."""
+    r = seed & allowed
+    for _ in range(max_iter):
+        n = _dilate3(r) & allowed
+        if (n == r).all():
+            return r
+        r = n
+    return r
+
+
+def attribution_mask(src, edit, counters, mask, t_change=T_CHANGE, t_unique=T_UNIQUE,
+                     scale=ATTR_SCALE):
+    """src/edit/counters: (H, W, 3) uint8 arrays, same size; mask: bool (H, W), already
+    dilated. Returns (keep bool (H, W), debug dict). keep = mask | attributed region."""
+    H, W = mask.shape
+    h, w = max(1, H // scale), max(1, W // scale)
+
+    def small(a):
+        a = a[: h * scale, : w * scale].astype(np.float64)
+        return _boxblur(a.reshape(h, scale, w, scale, 3).mean((1, 3)), 3)
+    S, E = small(src), small(edit)
+    changed = np.abs(E - S).max(-1) > t_change
+    if counters:
+        unique = np.min([np.abs(E - small(c)).max(-1) for c in counters], axis=0) > t_unique
+    else:
+        unique = np.ones_like(changed)
+    m = mask[: h * scale, : w * scale].reshape(h, scale, w, scale).any((1, 3))
+    grown = reconstruct(m, m | (changed & unique))
+    up = np.repeat(np.repeat(grown, scale, 0), scale, 1)
+    keep = np.zeros((H, W), bool)
+    keep[: h * scale, : w * scale] = up
+    keep |= mask
+    dbg = {"changed_outside": int((changed & ~m).sum()),
+           "spillover_dropped": int((changed & ~unique & ~m).sum()),
+           "attributed_kept": int((grown & ~m).sum()), "grid": (h, w)}
+    return keep, dbg
+
+
 def edit(args):
     """klein 4B on each case whose Sa2VA mask exists: plain edit, paste-back
     through the mask (dilated 8 px at 512, scaled), and crop-and-paste-the-box.
@@ -248,6 +321,19 @@ def edit(args):
             crop(img, c["instruction"], seed, mask=mimg).save(out / f"{c['id']}_cropbox.png")
         else:
             print(f"  {c['id']}: empty mask, no crop arm")
+        cis = c.get("counter_instructions") or []
+        if cis and m.any():
+            cfs = [plain(img, ci, seed) for ci in cis]          # same seed as the real edit
+            for k, cf in enumerate(cfs):
+                cf.save(out / f"{c['id']}_counter{k}.png")
+            keep, dbg = attribution_mask(
+                np.asarray(img), np.asarray(e.convert("RGB").resize(img.size)),
+                [np.asarray(cf.convert("RGB").resize(img.size)) for cf in cfs],
+                np.asarray(mimg) >= 128)
+            kimg = Image.fromarray((keep * 255).astype(np.uint8))
+            composite(img, e, kimg, plain.feather).save(out / f"{c['id']}_attrib.png")
+            kimg.save(out / f"{c['id']}_attrib_mask.png")
+            print(f"  {c['id']}: attribution with {len(cis)} counterfactual(s): {dbg}")
         print(f"  {c['id']}: {w}x{h}, dilate {r}px, seed {seed} -> {out}/{c['id']}_*.png")
 
 
@@ -423,6 +509,24 @@ def self_test() -> None:
     s2 = summarise(recs, {"c25": {"cls": "target"}, "c26": {"cls": "target"}})["A"]
     assert s2["target"] == 27 and band(s2["rate"]) == BANDS[2][1]
     assert band(0.70) == BANDS[0][1] and band(0.85) == BANDS[2][1]
+    # attribution: a leak that also happens under the counterfactual is dropped, an
+    # extension that only happens for the real referent and touches the mask is kept
+    H = W = 64
+    src = np.zeros((H, W, 3), np.uint8)
+    mask = np.zeros((H, W), bool); mask[20:40, 4:20] = True            # the referent
+    e = src.copy(); e[20:40, 4:20] = 200                               # its own edit
+    e[10:20, 8:12] = 200                                               # axe sticking out
+    e[20:40, 44:60] = 200                                              # leak on a sibling
+    cf = src.copy(); cf[20:40, 44:60] = 200; cf[20:40, 4:20] = 200     # leak hits both
+    keep, dbg = attribution_mask(src, e, [cf], mask)
+    assert keep[12, 9] and keep[30, 10], "extension or referent dropped"
+    assert not keep[30, 50], "spillover kept"
+    assert dbg["spillover_dropped"] > 0 and dbg["attributed_kept"] > 0, dbg
+    far = e.copy(); far[50:60, 30:40] = 200                            # unique, not touching
+    keep2, _ = attribution_mask(src, far, [cf], mask)
+    assert not keep2[55, 35], "disconnected change kept"
+    keep3, _ = attribution_mask(src, e, [], mask)                       # no counterfactual
+    assert keep3[30, 50] is not None
     check_size({"id": "x", "image": "i", "image_wh": [10, 20]}, (10, 20))
     check_size({"id": "x", "image": "i"}, (99, 99))
     try:

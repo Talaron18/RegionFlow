@@ -41,6 +41,10 @@
   "image_wh": [
    452,
    640
+  ],
+  "counter_instructions": [
+   "make the girl in the back row in pink hold an ice axe in her hand",
+   "make the girl in the back row with her arm raised hold an ice axe in her hand"
   ]
  },
  {
@@ -161,6 +165,9 @@
   "image_wh": [
    452,
    640
+  ],
+  "counter_instructions": [
+   "Make the girl in the back row in pink wear a yellow rain jacket instead"
   ]
  },
  {
@@ -205,6 +212,9 @@
   "image_wh": [
    452,
    640
+  ],
+  "counter_instructions": [
+   "Change the jacket of the girl in the back row in pink to red"
   ]
  },
  {
@@ -243,6 +253,9 @@
   "image_wh": [
    2364,
    1330
+  ],
+  "counter_instructions": [
+   "Make the student desk next to the teacher's desk white"
   ]
  },
  {
@@ -287,6 +300,9 @@
   "image_wh": [
    2364,
    1330
+  ],
+  "counter_instructions": [
+   "Paint the desk closest to the camera on the right red"
   ]
  }
 ]

@@ -1089,3 +1089,42 @@ Readings:
   gives an empty mask, while the rain-jacket sentence on the same girl gives a correct
   one. Same instruction-shape as the earlier misses (the sentence names a colour the edit
   should produce). One case, not counted.
+
+## Attribution arm — design and smoke criteria (written before any GPU run, 2026-11-18)
+
+**Idea (referent-counterfactual change attribution).** Neither fixed region works: the
+referent's mask cuts off what extends past it (axe, parrot), and the crop box recolours
+neighbours inside it. Instead, let the editor's own outputs decide. Run klein again,
+same seed, with the same edit aimed at a sibling (`counter_instructions`, written per
+case: "make the girl in the back row in pink hold an ice axe…"). Outside the referent's
+(dilated) Sa2VA mask, keep a pixel only if it changed vs the source, differs from every
+counterfactual output, and connects to the mask through such pixels. Inside the mask
+everything is kept, so a leak that also hits the target cannot erase the target's edit.
+Paste the edit through that region, feathered as paste-back.
+
+Fixed now: 1/4-resolution grid, 3×3 box blur, both thresholds 30/255, 4-connectivity.
+One extra klein run per counterfactual sentence. Code: `attribution_mask` in
+`bench/fresh_cases.py`; `--edit` writes `<id>_attrib.png`, `<id>_attrib_mask.png` and
+`<id>_counter<k>.png` for cases with `counter_instructions`, and prints
+`changed_outside / spillover_dropped / attributed_kept` (grid cells). Tested on synthetic
+images and end to end with a fake pipe; not run on a GPU.
+
+**Known limits, stated before the run.** A leak that happens only for the real referent
+is kept. If two prompts with the same seed diverge everywhere (klein regenerates the
+whole image), every change looks referent-specific and the arm degenerates toward
+"plain, connected to the mask"; `spillover_dropped` near zero on a case with a visible
+leak is that failure.
+
+**Smoke reading, on the four smoke cases with a mask and counterfactuals** (axe, rain
+jacket, teacher's desk, near-left desk; red jacket has no mask):
+- *Works:* on at least 2 of the 3 in-body cases the attrib image has no sibling change
+  that paste-back does not also have, **and** on the axe it keeps visibly more of the
+  object than paste-back. Then it becomes a fourth arm in arm T, scored on edit-right
+  and `off_target` against paste-back and crop-box, written into the arm-T scope before
+  any arm-T case exists.
+- *Fails:* it keeps sibling changes paste-back removes on 2 or more in-body cases, or
+  `spillover_dropped` is near zero where the plain edit visibly leaked. Then the
+  counterfactual does not isolate spillover with this editor; one diagnosis only
+  (view `<id>_counter0.png` against `<id>_plain.png`), no threshold tuning on these
+  cases.
+- Anything else: report the four cases, decide with the user.

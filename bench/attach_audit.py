@@ -45,7 +45,7 @@ ATTACH_FAIL = ("wrong_owner", "anatomy")
 # recolours siblings inside the box by construction (smoke run, 2026-11-18), and that
 # must not count as an attachment failure in the attach cases or the controls.
 EDIT_OK = ("clean", "off_target", "degraded")
-FRESH_ARMS = ("plain", "paste", "cropbox")
+FRESH_ARMS = ("plain", "paste", "cropbox", "attrib")
 PRIMARY_ARM = "cropbox"        # fixed before judging: the arm that does not cut objects
 
 
@@ -296,7 +296,7 @@ def self_test() -> None:
                                 refedit_arm=[], out_dir=str(td / "blind"), shuffle_seed=1)
         build(ns)
         key = json.loads((td / "blind" / "key.json").read_text())
-        assert len(key) == 12 and Image.open(td / "blind" / "panel_0000.png").size == (808, 228)
+        assert len(key) == 4 * len(FRESH_ARMS) and Image.open(td / "blind" / "panel_0000.png").size == (808, 228)
         led = json.loads((td / "blind" / "ledger.json").read_text())
         kk = {k["panel"]: k for k in key}
         for e in led:
