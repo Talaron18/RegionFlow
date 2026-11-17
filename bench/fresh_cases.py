@@ -43,8 +43,14 @@ from predict_masks import (PROMPT, classify, load_done, make_backend, process_ca
 
 SIZE = 512
 EXPR_TYPES = ("attribute", "spatial", "relation")
-ARMS = ("A", "B", "S")     # A: non-COCO images (the band); B: COCO/RefEdit images, fresh text;
-                           # S: smoke cases -- seen before freezing, never in any count
+ARMS = ("A", "B", "S", "T")  # A: non-COCO images (the band); B: COCO/RefEdit images, fresh text;
+                           # S: smoke cases -- seen before freezing, never in any count;
+                           # T: attachment-edit count (bench/attach_audit.py)
+DOMAINS = ("photo", "illustration", "painting")
+A_MIN = {"photo": 25, "illustration": 15, "painting": 15}     # arm A: 60 cases at least
+EDIT_KINDS = ("attach", "inbody")
+ATTACH_KINDS = ("hold", "wear", "onbody")
+T_MIN = {"attach": 30, "inbody": 15, "hold": 10, "wear": 8, "onbody": 5, "domain": 8}
 # Band on arm A target rate (fixed 2026-11-18, before any case was written).
 BANDS = ((0.70, "<= 70%: aiming is OPEN off RefCOCO; the learned-grounding line returns"),
          (0.85, "71-84%: mixed; report per type, no line reopened or closed"),
@@ -86,13 +92,20 @@ def check_cases(cases: list[dict]) -> list[str]:
         if c.get("expr_type") not in EXPR_TYPES:
             errs.append(f"{i}: expr_type must be one of {EXPR_TYPES}")
         if c.get("arm") not in ARMS:
-            errs.append(f"{i}: arm must be A, B or S")
+            errs.append(f"{i}: arm must be one of {ARMS}")
+        if c.get("arm") in ("A", "B", "T") and c.get("domain") not in DOMAINS:
+            errs.append(f"{i}: domain must be one of {DOMAINS}")
+        if c.get("arm") == "T":
+            if c.get("edit_kind") not in EDIT_KINDS:
+                errs.append(f"{i}: edit_kind must be one of {EDIT_KINDS}")
+            if c.get("edit_kind") == "attach" and c.get("attach_kind") not in ATTACH_KINDS:
+                errs.append(f"{i}: attach_kind must be one of {ATTACH_KINDS}")
         if not c.get("siblings"):
             errs.append(f"{i}: needs at least one same-category sibling box")
         for b in [c.get("target")] + list(c.get("siblings") or []):
             if not (isinstance(b, (list, tuple)) and len(b) == 4 and b[2] > b[0] and b[3] > b[1]):
                 errs.append(f"{i}: bad box {b} (want [x0, y0, x1, y1], x1>x0, y1>y0)")
-        if c.get("arm") in ("A", "B"):        # smoke cases may reuse an image freely
+        if c.get("arm") in ("A", "B", "T"):   # smoke cases may reuse an image freely
             per_img[c.get("image")] += 1
     for img, n in per_img.items():
         if n > 2:
@@ -101,6 +114,40 @@ def check_cases(cases: list[dict]) -> list[str]:
     if a and any(sum(c.get("expr_type") == t for c in a) < 10 for t in EXPR_TYPES):
         errs.append("arm A: needs >= 10 cases of each expr_type "
                     + str(Counter(c.get("expr_type") for c in a)))
+    if a and any(sum(c.get("domain") == d for c in a) < n for d, n in A_MIN.items()):
+        errs.append(f"arm A: needs per-domain minimums {A_MIN}, has "
+                    + str(Counter(c.get("domain") for c in a)))
+    # arm A and arm T must not share images: T's images are segmented and edited
+    # in the open, A's must be unseen until A is frozen.
+    shared = {c["image"] for c in a} & {c["image"] for c in cases if c.get("arm") == "T"}
+    if shared:
+        errs.append(f"arms A and T share {len(shared)} image(s), e.g. {sorted(shared)[:2]}")
+    errs += check_t([c for c in cases if c.get("arm") == "T"])
+    return errs
+
+
+def check_t(t: list[dict]) -> list[str]:
+    """Arm T: attachment edits plus in-body controls on the same person."""
+    if not t:
+        return []
+    errs = []
+    att = [c for c in t if c.get("edit_kind") == "attach"]
+    inb = [c for c in t if c.get("edit_kind") == "inbody"]
+    have = Counter(c.get("attach_kind") for c in att)
+    if len(att) < T_MIN["attach"] or len(inb) < T_MIN["inbody"]:
+        errs.append(f"arm T: needs >= {T_MIN['attach']} attach and >= {T_MIN['inbody']} "
+                    f"inbody cases, has {len(att)} / {len(inb)}")
+    for k in ATTACH_KINDS:
+        if have[k] < T_MIN[k]:
+            errs.append(f"arm T: needs >= {T_MIN[k]} attach_kind={k}, has {have[k]}")
+    dom = Counter(c.get("domain") for c in att)
+    if any(dom[d] < T_MIN["domain"] for d in DOMAINS):
+        errs.append(f"arm T: needs >= {T_MIN['domain']} attach cases per domain, has {dict(dom)}")
+    pairs = {(c["image"], tuple(c["target"])) for c in att if "target" in c}
+    for c in inb:
+        if (c.get("image"), tuple(c.get("target") or ())) not in pairs:
+            errs.append(f"{c.get('id')}: inbody control must share image and target box "
+                        "with an attach case")
     return errs
 
 
@@ -136,7 +183,9 @@ def run(args):
                                   args.model_path if args.backend == "sa2va" else "",
                                   backend, src, token + PROMPT.format(instruction=c["instruction"]),
                                   T, S, out_dir)
-            rec.update(arm=c["arm"], expr_type=c["expr_type"], gt="boxes")
+            rec.update(arm=c["arm"], expr_type=c["expr_type"], gt="boxes",
+                       domain=c.get("domain", ""), edit_kind=c.get("edit_kind", ""),
+                       attach_kind=c.get("attach_kind", ""))
             fh.write(json.dumps(rec) + "\n")
             fh.flush()
             if ov:
@@ -203,9 +252,15 @@ def summarise(recs: list[dict], overrides: dict | None = None) -> dict:
         for t in EXPR_TYPES:
             ct = [k for r, k in zip(rs, cls) if r["expr_type"] == t]
             by_type[t] = (sum(k == "target" for k in ct), len(ct))
+        by_domain = {}
+        for d in DOMAINS:
+            cd = [k for r, k in zip(rs, cls) if r.get("domain") == d]
+            if cd:
+                by_domain[d] = (sum(k == "target" for k in cd), len(cd))
         hit = sum(k == "target" for k in cls)
         out[arm] = {"n": len(rs), "target": hit, "rate": hit / len(rs),
-                    "classes": dict(Counter(cls)), "by_type": by_type}
+                    "classes": dict(Counter(cls)), "by_type": by_type,
+                    "by_domain": by_domain}
     return out
 
 
@@ -226,8 +281,14 @@ def report(path, cases_path, overrides_path) -> None:
             print(f"  arm {arm}: target {s['target']}/{s['n']} ({100 * s['rate']:.1f}%)  "
                   f"classes {s['classes']}")
             print("    by type: " + "  ".join(f"{t} {a}/{b}" for t, (a, b) in s["by_type"].items()))
+            if s["by_domain"]:
+                print("    by domain: " + "  ".join(f"{d} {a}/{b}"
+                                                  for d, (a, b) in s["by_domain"].items()))
             if arm == "A":
-                print(f"    band: {band(s['rate'])}")
+                print(f"    band (all domains): {band(s['rate'])}")
+                for d, (h, n) in s["by_domain"].items():
+                    if h / n <= 0.70:
+                        print(f"    domain reading: aiming is OPEN for {d} ({h}/{n} <= 70%)")
     if ovr:
         a0 = summarise(recs).get("A")
         a1 = summarise(recs, ovr).get("A")
@@ -317,9 +378,25 @@ def self_test() -> None:
     assert score_masks(T, T, [S2])["cls"] == "target"
     base = {"image": "x.jpg", "instruction": "i", "target": [0, 0, 1, 1],
             "siblings": [[2, 2, 3, 3]], "arm": "A"}
-    good = [dict(base, id=f"c{k}", image=f"im{k // 2}.jpg", expr_type=EXPR_TYPES[k % 3])
-            for k in range(30)]
+    doms = ["photo"] * 30 + ["illustration"] * 15 + ["painting"] * 15
+    good = [dict(base, id=f"c{k}", image=f"im{k // 2}.jpg", expr_type=EXPR_TYPES[k % 3],
+                 domain=doms[k]) for k in range(60)]
     assert check_cases(good) == [], check_cases(good)
+    assert any("per-domain" in e for e in check_cases(
+        [dict(g, domain="photo") for g in good]))
+    # arm T: 30 attach (10 hold / 12 wear / 8 onbody, domains 10/10/10) + 15 controls
+    tt = []
+    for k in range(30):
+        tt.append(dict(base, id=f"t{k}", arm="T", image=f"t{k}.jpg", expr_type="spatial",
+                       domain=DOMAINS[k % 3], edit_kind="attach",
+                       attach_kind="hold" if k < 10 else "wear" if k < 22 else "onbody",
+                       target=[0, 0, 5, 5]))
+    for k in range(15):
+        tt.append(dict(tt[k], id=f"u{k}", edit_kind="inbody"))
+    assert check_cases(good + tt) == [], check_cases(good + tt)
+    assert any("share" in e for e in check_cases(good + [dict(tt[0], image="im0.jpg")]))
+    bad_ctrl = dict(tt[30], target=[1, 1, 9, 9])
+    assert any("inbody control" in e for e in check_cases(tt[:30] + [bad_ctrl] + tt[31:]))
     bad = [dict(good[0], siblings=[]), dict(good[1], id="c0")]
     errs = check_cases(bad)
     assert any("sibling" in e for e in errs) and any("duplicate" in e for e in errs)

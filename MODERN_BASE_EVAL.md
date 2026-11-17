@@ -881,7 +881,7 @@ property of the pipeline, or of this benchmark? This decides whether aiming is s
 open (learned-grounding line) or closed (evaluation finding + edit quality).
 
 **Two arms, written by the user, nothing run until both are frozen.**
-- **Arm A (the band):** 50 cases on images that are not COCO and not from any
+- **Arm A (the band):** at least 60 cases (domains below) on images that are not COCO and not from any
   referring-segmentation set (RefCOCO/+/g, gRefCOCO, ReasonSeg, GranD/SA-1B, MeViS,
   Ref-YouTube-VOS). Own photos are best; PIE-Bench++ or ImgEdit images are allowed if
   their source is checked and recorded. MagicBrush is COCO, so arm B only.
@@ -908,17 +908,24 @@ t_leak 0.2, against boxes (sibling boxes minus the target box). Every overlay is
 a class the viewer disagrees with (boxes are crude where instances overlap) goes into
 `overrides.json` with a reason, and the report prints the band with and without them.
 
+**Domains (decided 2026-11-18, user: an ideal model should work on photos, paintings
+and illustrations).** Arm A is at least 60 cases: ≥ 25 photos, ≥ 15 illustrations,
+≥ 15 paintings, each case tagged `domain`. The band below is read on all of arm A;
+separately, any domain at ≤ 70% is reported as "aiming open for that domain" whatever
+the total says. At 15 cases a domain's rate is ±25 points, so a domain reading is a
+flag, not a measurement.
+
 **Bands on arm A target rate (agreed 2026-11-18):**
 
 | arm A target | reading |
 |---|---|
-| ≥ 85% (≥ 43 of 50) | Aiming is solved in general for this pipeline. The paper is the evaluation finding plus the edit-quality residual. |
+| ≥ 85% (≥ 51 of 60) | Aiming is solved in general for this pipeline. The paper is the evaluation finding plus the edit-quality residual. |
 | 71–84% | Mixed: report per expression type; no line reopened or closed. |
-| ≤ 70% (≤ 35 of 50) | Aiming is open off RefCOCO; the learned-grounding line returns, and an uncontaminated split becomes part of the contribution. |
+| ≤ 70% (≤ 42 of 60) | Aiming is open off RefCOCO; the learned-grounding line returns, and an uncontaminated split becomes part of the contribution. |
 
 Arm B read with arm A when A ≤ 84%: B ≥ 17 of 20 → the drop comes from the images
 (familiarity/contamination); B ≤ 14 of 20 → the fresh expressions are harder than
-RefEdit's, which reopens aiming for a different reason. 50 cases give about ±10 points
+RefEdit's, which reopens aiming for a different reason. 60 cases give about ±9 points
 at 95%, so the bands are coarse on purpose.
 
 Commands (arm A and B in one `cases.json`; GUI annotator needs a matplotlib window, e.g.
@@ -967,3 +974,75 @@ Count from `bench/cases_refedit_final.json`, by reading the instructions: about 
 -73, -85, -88, -141, -162, -184). Most "holding/wearing" matches are in the referring
 words, not the edit. So this kind is rare on this benchmark; how badly it fails here
 is not yet counted.
+
+## Attachment-edit count — scope (written before any case, 2026-11-18)
+
+**Question.** With aiming correct, how often does the pipeline fail when the edit must
+attach an object to the referred person's body (hold, wear, sit on), and is that worse
+than an edit inside the same person's outline? The smoke ice-axe case failed three ways
+(third arm, axe cut off, axe in the neighbour's hand); one case is not a rate.
+
+**Sets (judged together in one shuffled blind sitting; set and arm hidden).**
+- **Fresh (arm T in `fresh_cases.py`), the one the reading uses.** Multi-person scenes,
+  the referent among at least one same-category sibling.
+  - ≥ 30 `attach` cases: ≥ 10 `hold` ("make the woman on the left hold an umbrella"),
+    ≥ 8 `wear` (hat, scarf, glasses, necklace), ≥ 5 `onbody` (a cat on her lap, a
+    parrot on his shoulder); ≥ 8 per domain (photo, illustration, painting).
+  - ≥ 15 `inbody` controls: a change inside the clothes the person already wears
+    (recolour, swap jacket for a rain jacket), each on the same image and the same
+    target box as one attach case. This separates "attachment is hard" from "anything
+    in these scenes is hard".
+  - No named characters (that is knowledge, not attachment). Arm T images are never
+    used in arm A. Max 2 cases per image (an attach case and its control). Write all,
+    `--check`, record the sha256, then run.
+- **RefEdit-Bench (supporting only).** The 10 attachment cases in
+  `bench/attach_ids_refedit.json`, from images already on disk: plain, oracle
+  paste-back (post-fix), crop-box. Note the paste arm here uses the benchmark's mask,
+  the fresh paste arm uses Sa2VA's.
+
+**Arms (fresh):** `fresh_cases.py --edit` writes plain, paste-back through the Sa2VA
+mask, and crop-box (crop around the mask, edit, paste the whole box). **Primary arm:
+crop-box**, fixed now because it is the arm that does not cut objects off; no best-of
+across arms.
+
+**Rubric (`bench/attach_audit.py`), the first that applies:** `no_object` (absent or
+cut off past recognition) > `wrong_owner` (held/worn by someone else or by no one) >
+`anatomy` (a body part added, missing or malformed, anyone's) > `identity` (the
+referent's face or body changed beyond the edit, or merged with someone) >
+`off_target` (the edit is right, something else changed) > `degraded` > `clean`.
+
+**Statistics, on fresh cases Sa2VA aimed correctly (class `target`; mis-aimed cases are
+reported separately):** A = crop-box clean rate on attach cases; F = share of crop-box
+attach failures that are `wrong_owner` or `anatomy`; C = crop-box clean rate on in-body
+controls.
+
+| result | reading |
+|---|---|
+| A ≥ 70% | Attachment is not a major residual for this pipeline; no method target here. |
+| A ≤ 50%, F ≥ 50% and C − A ≥ 25 points | Attachment is a specific residual (worse than in-body edits on the same people, failing by owner or anatomy): candidate method target. |
+| A ≤ 50% and C − A < 25 points | A general quality problem in these scenes, not specific to attachment. |
+| anything else | Mixed: report the cases. |
+
+At 30 cases a rate is about ±17 points; these bands only separate large effects.
+
+Commands:
+
+```bash
+python bench/fresh_cases.py --check --cases runs/fresh/attach.json
+sha256sum runs/fresh/attach.json        # record here before running
+# Sa2VA venv
+python bench/fresh_cases.py --run --cases runs/fresh/attach.json \
+  --out runs/fresh/attach_sa2va.jsonl --out-dir runs/fresh/attach_masks \
+  --save-overlays runs/fresh/attach_overlays
+# klein container (reads /data for the RefEdit panels)
+python bench/fresh_cases.py --edit --cases runs/fresh/attach.json \
+  --out-dir runs/fresh/attach_masks --edit-dir runs/fresh/attach_edits
+python bench/attach_audit.py --build \
+  --fresh-cases runs/fresh/attach.json --fresh-edits runs/fresh/attach_edits \
+  --refedit-arm plain:runs/gate_c/img_klein4b_none \
+  --refedit-arm paste:runs/gate_c/img_klein4b_comp_predoracle \
+  --refedit-arm cropbox:runs/gate_c/img_klein4b_cropbox2_oracle \
+  --out-dir runs/fresh/attach_blind
+# judge every panel in runs/fresh/attach_blind/ledger.json (do not open key.json), then
+python bench/attach_audit.py --score runs/fresh/attach_blind --aiming runs/fresh/attach_sa2va.jsonl
+```
