@@ -1,0 +1,20 @@
+[
+ {"id": "smoke-axe", "arm": "S", "expr_type": "attribute",
+  "image": "runs/fresh/smoke_images/yamanosusume.jpg",
+  "instruction": "make the girl in the back row in blue hold an ice axe in her hand",
+  "target": [262, 85, 445, 355],
+  "siblings": [[0, 0, 165, 315], [135, 105, 278, 300], [0, 250, 240, 640], [190, 250, 452, 640]],
+  "note": "boxes for the 452x640 poster; target = back-right girl, front-right girl in light blue is the distractor"},
+ {"id": "smoke-teio-raw", "arm": "S", "expr_type": "spatial",
+  "image": "runs/fresh/smoke_images/umamusume_pipeline.png",
+  "instruction": "turn the specialweek on the left into toukaiteio",
+  "target": [0, 520, 245, 905],
+  "siblings": [[1205, 220, 1435, 575], [615, 480, 835, 775], [995, 685, 1265, 950]],
+  "note": "boxes for the 1448x1086 source; the user's original wording"},
+ {"id": "smoke-teio", "arm": "S", "expr_type": "spatial",
+  "image": "runs/fresh/smoke_images/umamusume_pipeline.png",
+  "instruction": "Turn Special Week on the left into Tokai Teio",
+  "target": [0, 520, 245, 905],
+  "siblings": [[1205, 220, 1435, 575], [615, 480, 835, 775], [995, 685, 1265, 950]],
+  "note": "same case, names spelled as written in English sources"}
+]

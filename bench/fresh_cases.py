@@ -11,6 +11,11 @@ referring expressions it cannot have seen in RefCOCO?  (MODERN_BASE_EVAL.md, sec
     python bench/fresh_cases.py --run --cases runs/fresh/cases.json \
         --out runs/fresh/sa2va.jsonl --out-dir runs/fresh/masks \
         --save-overlays runs/fresh/overlays
+    # smoke: arm "S" cases (any number), then edit with klein (klein container):
+    python bench/fresh_cases.py --run --cases runs/fresh/smoke.json --out runs/fresh/smoke.jsonl \
+        --out-dir runs/fresh/smoke_masks --save-overlays runs/fresh/smoke_overlays
+    python bench/fresh_cases.py --edit --cases runs/fresh/smoke.json \
+        --out-dir runs/fresh/smoke_masks --edit-dir runs/fresh/smoke_edits
     # 3. after viewing every overlay
     python bench/fresh_cases.py --report runs/fresh/sa2va.jsonl --cases runs/fresh/cases.json \
         [--overrides runs/fresh/overrides.json]
@@ -38,7 +43,8 @@ from predict_masks import (PROMPT, classify, load_done, make_backend, process_ca
 
 SIZE = 512
 EXPR_TYPES = ("attribute", "spatial", "relation")
-ARMS = ("A", "B")          # A: non-COCO images (the band); B: COCO/RefEdit images, fresh text
+ARMS = ("A", "B", "S")     # A: non-COCO images (the band); B: COCO/RefEdit images, fresh text;
+                           # S: smoke cases -- seen before freezing, never in any count
 # Band on arm A target rate (fixed 2026-11-18, before any case was written).
 BANDS = ((0.70, "<= 70%: aiming is OPEN off RefCOCO; the learned-grounding line returns"),
          (0.85, "71-84%: mixed; report per type, no line reopened or closed"),
@@ -80,7 +86,7 @@ def check_cases(cases: list[dict]) -> list[str]:
         if c.get("expr_type") not in EXPR_TYPES:
             errs.append(f"{i}: expr_type must be one of {EXPR_TYPES}")
         if c.get("arm") not in ARMS:
-            errs.append(f"{i}: arm must be A or B")
+            errs.append(f"{i}: arm must be A, B or S")
         if not c.get("siblings"):
             errs.append(f"{i}: needs at least one same-category sibling box")
         for b in [c.get("target")] + list(c.get("siblings") or []):
@@ -137,6 +143,50 @@ def run(args):
             print(f"  {n + 1}/{len(cases)} {c['id']} [{c['arm']}/{c['expr_type']}] {rec['cls']}  "
                   f"in_T {rec['in_T']:.2f} in_S {rec['in_S']:.2f}")
     report(out_path, args.cases, None)
+
+
+# ----------------------------------------------------------------- edit ---
+
+def edit(args):
+    """klein 4B on each case whose Sa2VA mask exists: plain edit, paste-back
+    through the mask (dilated 8 px at 512, scaled), and crop-and-paste-the-box.
+    Same seed for all three. Runs at ~1 MP with the image's own aspect, not the
+    512x512 squash the segmenter sees; the 512 mask is resized NEAREST."""
+    from PIL import Image  # noqa: PLC0415
+
+    from flux2_klein_model import Flux2KleinModel, composite, model_size  # noqa: PLC0415
+    from run_gate_c import case_seed, dilate  # noqa: PLC0415
+    from predict_masks import load_mask  # noqa: PLC0415
+
+    cases = json.loads(Path(args.cases).read_text())
+    out = Path(args.edit_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    plain = Flux2KleinModel(device=args.device, offload=args.offload)
+    crop = Flux2KleinModel(pipe=plain.pipe, device=args.device, offload=args.offload,
+                           crop=True, crop_paste="box")
+    for c in cases:
+        mpath = Path(args.out_dir) / f"{c['id']}.png"
+        if not mpath.exists():
+            print(f"  {c['id']}: no mask at {mpath}; run --run first")
+            continue
+        img = Image.open(c["image"]).convert("RGB")
+        w, h = model_size(*img.size, area=1024 * 1024)
+        img = img.resize((w, h), Image.BICUBIC)
+        r = max(1, round(8 * max(w, h) / SIZE))
+        m512 = load_mask(mpath)
+        m = np.asarray(Image.fromarray((m512 * 255).astype(np.uint8)).resize(
+            (w, h), Image.NEAREST)) >= 128
+        mimg = Image.fromarray((dilate(m, r) * 255).astype(np.uint8))
+        seed = case_seed(c["id"], 0)
+        e = plain(img, c["instruction"], seed)
+        img.save(out / f"{c['id']}_source.png")
+        e.save(out / f"{c['id']}_plain.png")
+        composite(img, e, mimg, plain.feather).save(out / f"{c['id']}_paste.png")
+        if m.any():
+            crop(img, c["instruction"], seed, mask=mimg).save(out / f"{c['id']}_cropbox.png")
+        else:
+            print(f"  {c['id']}: empty mask, no crop arm")
+        print(f"  {c['id']}: {w}x{h}, dilate {r}px, seed {seed} -> {out}/{c['id']}_*.png")
 
 
 # --------------------------------------------------------------- report ---
@@ -299,6 +349,9 @@ def main():
     p.add_argument("--out-dir", default="runs/fresh/masks")
     p.add_argument("--save-overlays", default="runs/fresh/overlays")
     p.add_argument("--overwrite", action="store_true")
+    p.add_argument("--edit", action="store_true", help="klein edits through saved masks")
+    p.add_argument("--edit-dir", default="runs/fresh/edits")
+    p.add_argument("--offload", action="store_true")
     p.add_argument("--report", metavar="JSONL")
     p.add_argument("--overrides", metavar="JSON")
     p.add_argument("--self-test", action="store_true")
@@ -312,6 +365,8 @@ def main():
         print("OK" if not errs else "\n".join(errs))
     elif a.run:
         run(a)
+    elif a.edit:
+        edit(a)
     elif a.report:
         report(a.report, a.cases, a.overrides)
     else:
