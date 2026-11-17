@@ -567,6 +567,54 @@ ids plus the clean verdicts among the 12, read against the same band (≥ 30, 24
 1 no_edit; fewer than 6 of 8 matching means the rubric has drifted enough that the
 three arms' counts should not be compared to within a few cases.
 
+### Crop baseline — corrected audit result (2026-11-17, user's re-judge of 20 panels)
+
+**Rubric consistency.** On the 8 hidden repeats (panels pixel-identical to the first
+crop audit) 7 verdicts match; the one change is degraded → destroyed (refedit-154),
+and clean / not-clean agrees in 8 of 8. That clears the 6-of-8 bar fixed above. The
+rater may have recognised some panels, so this is an upper bound on consistency.
+
+**The 12 re-run cases** (first verdict → verdict with the correct crop box): 6 unchanged
+clean (refedit-14, -19, -74, -69, -15 and, new, -184 no_edit → clean); 2 lost clean
+(-139 and -126 → degraded); -39 no_edit → degraded; -183 destroyed → no_edit;
+-113 degraded → wrong_edit ("cat big as a cow", so that scale error is real with the
+intended box too); -153 still no_edit.
+
+| arm, same 40 ids | clean | degraded | destroyed | wrong_edit | no_edit |
+|---|---|---|---|---|---|
+| klein 4B, no mask | 9 | 1 | 0 | 28 | 2 |
+| + paste-back through the oracle mask | 19 | 4 | 0 | 4 | 13 |
+| + crop, edit, paste — first run (box wrong in 12) | 24 | 3 | 4 | 3 | 6 |
+| + crop, edit, paste — **corrected** | **23** | 5 | 3 | 4 | 5 |
+
+**Reading, by the rule fixed before the first run: 23 is in the "≤ 23" band — no
+meaningful gain over paste-back.** It sits on the band's edge exactly as 24 sat on the
+other side, but this time the other evidence agrees with the band:
+
+- Paired with paste-back: 6 became clean, 2 stopped being clean (sign test p = 0.29).
+  Against the plain arm: 17 and 3 (p = 0.003).
+- Weighted to all 151 by the plain run's class: crop ≈ 66%, paste-back ≈ 67%.
+
+| plain run's class | share of all 151 | plain clean | paste-back clean | crop clean (corrected) |
+|---|---|---|---|---|
+| measurable (target changed most) | 108 (72%) | 6 / 16 | 13 / 16 | 11 / 16 |
+| mis-targeted | 34 (23%) | 2 / 15 | 6 / 15 | 10 / 15 |
+| off-instance | 9 (6%) | 1 / 9 | 0 / 9 | 2 / 9 |
+
+The pattern from the first run survives the fix: where the base edits the wrong place,
+cropping helps (12 of 24 against 6 of 24); where it already aims correctly, the two
+are within two cases of each other. Of the 13 cases paste-back left unedited, crop
+makes 5 clean and leaves 5 unedited. Clean in at least one of the two baselines: 25
+of 40.
+
+**What stands.** With the benchmark's own mask, both fixed pipelines reach about two
+thirds clean and neither dominates. The rule's stated consequence for "≤ 23" was that
+telling the model where has to happen inside the model; read that as "cropping does
+not close the gap paste-back leaves", not as evidence that a learned mechanism would.
+Failure types for the six re-run cases that are not clean have not been re-classified,
+so the withdrawn sentences about the paste shape stay withdrawn. One rater, 40
+stratified cases, two sittings mixed for this arm.
+
 ## Predicted-mask pipeline — scope (written before any run, 2026-11-17)
 
 Every mask result above uses the benchmark's own mask. A mask-free method competes
@@ -680,6 +728,145 @@ oracle baseline for step 5. Step 5 uses the full instruction only: the masks com
 it, so a single-prompt edit through them would mix two conditions. After step 4, count
 masks the scorer calls `empty` (under 0.05% of the image) that are not all-zero, since
 the runner only skips all-zero masks.
+
+**Steps 1 and 2 — passed (2026-11-17, user's runs, checked from the saved files).**
+- Controls: the ground-truth mask scores `target` in 151 of 151; the largest sibling
+  scores `sibling` in 151 of 151, `target` in 0.
+- Runner path: paste-back through the oracle masks read from disk is pixel-identical
+  to the existing paste-back arm in all 84 cases whose mask never reached a border,
+  with identical target-change values. The other 67 differ in at most 3.8% of pixels,
+  which is the wrapped strip the dilation fix removed. `klein4b_comp_predoracle.jsonl`
+  is therefore the post-fix oracle paste-back baseline for step 5.
+
+Environment note: `qwen_vl_utils` was installed into the container that runs klein.
+Installed there: torch 2.6.0+cu124, diffusers 0.44.0.dev0, transformers 5.23.0. Whether
+that install changed anything klein uses is not known from the package list; an 8-case
+plain rerun compared against `img_klein4b_none` settles it. The checkpoint's config
+names transformers 4.56.1, so its code may not load under 5.x. Sa2VA therefore runs in a
+separate venv under WSL (transformers 4.56.1, torch 2.6.0+cu124), not in the klein
+container; the model loads straight to the GPU (`device_map`) because loading through
+CPU RAM ran WSL out of memory.
+
+**Klein environment check — passed (2026-11-18).** The container was recreated through
+`docker/compose.yml` (the one with `qwen_vl_utils` is gone). An 8-case plain rerun
+(`envcheck_none.jsonl`) is pixel-identical to `img_klein4b_none` in 8 of 8, with the same
+seeds and target/sibling change values, so step 5 runs on the same klein as every
+earlier arm.
+
+**Step 3 — smoke run passed (2026-11-18, 4 cases, overlays viewed).** Every raw answer
+is `Sure, [SEG].`; decoding greedy; revision `4cd6709067cf257235e922c201a6f265292f5fc8`.
+Classes match the overlays: refedit-2 (lower quilt), -5 (woman with pizza), -8 (pink
+case) are on the target with nothing on siblings. refedit-7 is a real miss: "Let the man
+with longer curly hair, wearing a loose tie be a woman" gets a mask on the woman at the
+left edge, not the man. The instruction names the edit's result ("a woman"), and the
+segmenter took it as the referent. Four cases say nothing about the rate; they show the
+pipeline runs and that the scorer reads the masks correctly.
+
+**Step 4 — result (2026-11-18, user's runs; misses checked against overlays and masks).**
+One mask per case; raw answers are `Sure, [SEG].` (109) or `Sure, it is [SEG].` (42);
+one revision throughout.
+
+| prompt | target | sibling | both | other | empty | median IoU |
+|---|---|---|---|---|---|---|
+| full instruction | **137** | 8 | 0 | 5 | 1 | 0.80 |
+| single-instance instruction | 92 | 38 | 2 | 14 | 5 | 0.27 |
+
+- **Reading: 137 of 151 is in the "≥ 136" band — finding the instance is solved on this
+  benchmark, possibly inflated by contamination.** It clears the band by one case, and
+  the sensitivity table puts it at 136 (t_in 0.7) and 121 (t_in 0.9). Even the strictest
+  cell is above the "≤ 113" band, so the line does not support "same-kind referents are
+  hard for a pipeline too".
+- The referring expression is what does it: on the 141 cases whose prompts differ, the
+  full instruction alone finds the target in 47, the single prompt alone in 2
+  (p < 1e-4).
+- Against the editor's own aiming (plain klein edit on target, 108 of 151): the
+  segmenter finds the target in 38 cases where klein missed, and misses in 9 where klein
+  hit (p = 2.5e-5). On the 43 cases klein edited off target it finds the target in 38.
+  Its misses do not concentrate where klein's do (Fisher p = 0.54).
+- Misses (14), from the overlays I viewed: the instruction names the edit's result and
+  the segmenter goes there (refedit-7 "be a woman" → the woman; refedit-100 "to a young
+  girl" → a girl), or it lands on a non-instance object (refedit-88 "the man in black
+  wear a scarf" → his chair). Not every miss was viewed; no count by type.
+- Post-step-4 check: one mask the scorer calls `empty` is not all-zero (refedit-71, 63
+  pixels, 81% inside the target, "Add a necklace to the woman…"). The runner will paste
+  through it, so step 5 edits a tiny region there rather than returning the source.
+
+What this means for the plan, per the reading fixed above: a method cannot claim
+**aiming** as its contribution on this benchmark, because an off-the-shelf segmenter
+plus the instruction already aims at 91% here. The open question moves to step 5:
+whether paste-back through these masks keeps the oracle paste-back's quality (about two
+thirds clean on the audit sample), i.e. whether the pipeline is a full answer or only
+an answer to the aiming half.
+
+**Step 5 — automatic result (2026-11-18, `klein4b_comp_pred.jsonl`, full instruction).**
+Measurable 140, mis-targeted 8, off-instance 3, against the post-fix oracle paste-back's
+150 measurable. The outcome follows the mask almost one to one: all 136 cases with a
+`target` mask whose oracle run was measurable stay measurable; 6 of 8 `sibling` masks
+become mis-targeted; the 3 off-instance cases are `other` masks. Nothing was skipped as
+empty; refedit-71's 63-pixel mask gives target change 0.0007 against 0.027, effectively
+no edit. **Under paste-back this metric mostly measures where the mask is, not whether
+the edit is any good,** so these numbers are not the comparison.
+
+What the metric misses, seen in the images: on some cases Sa2VA's mask lies inside the
+right person but covers only a small or scattered part of it, and paste-back through it
+cuts off the edit. refedit-29 ("add a parrot on the shoulder of the chef"): the mask is a
+few patches on his hair; oracle paste-back shows the parrot, predicted shows none.
+refedit-27 ("hold a burger instead of a glass"): the mask is scattered patches on her
+jacket, not the glass or hand; oracle shows a burger, predicted keeps a glass with a red
+fragment pasted onto it. Among the 137 `target` masks, 11 give a target change under half
+the oracle's (all with IoU ≤ 0.16). Two overlays viewed; the other nine are not
+classified (part mask versus fragment). Either way, "lands on the right object" is not
+"covers the pixels the edit needs".
+
+**Decision: a targeted two-arm blind audit, not a 40-panel rerun.** On the 40 audit ids,
+the predicted-mask image differs from the post-fix oracle paste-back image in more than
+1% of pixels in 17; the other 23 are near-identical and keep their verdicts. Of the 19
+oracle-clean ids, only refedit-160 (sibling mask) and -71 (63-pixel mask) differ
+materially, so a full 40-panel audit would land near 17 by construction and could not
+reach a low band. Instead, the 17 differing ids (`runs/gate_c/pred_audit_ids.json`) go
+into one shuffled build with both arms, predicted and post-fix oracle (34 panels, same
+sitting, arm hidden). Bands set 2026-11-18, after viewing refedit-29 and -27 and the
+image-difference counts above, before any panel is judged. Statistic: net loss = ids
+clean under oracle only minus ids clean under predicted only, among the 17.
+
+| net loss | reading |
+|---|---|
+| ≤ 2 | Predicted masks cost no more than the known misses: this frozen pipeline matches oracle paste-back on the audit sample. |
+| 3–4 | Mixed: report the cases. |
+| ≥ 5 | This frozen pipeline (this prompt, pasting through the raw mask) loses edits that oracle paste-back keeps, beyond its aiming misses. It does not show a mask-free method is needed: obvious variants (paste through the mask's box, more dilation, ask for the whole object) are untested, and the pipeline's ceiling is oracle paste-back either way. |
+
+Build in the klein container (it reads `/data`):
+
+```bash
+python bench/blind_audit.py --build \
+  --arm pred:runs/gate_c/klein4b_comp_pred.jsonl:runs/gate_c/img_klein4b_comp_pred \
+  --arm oracle:runs/gate_c/klein4b_comp_predoracle.jsonl:runs/gate_c/img_klein4b_comp_predoracle \
+  --reference oracle --carry-over runs/gate_c/pred_audit_ids.json --extra 0 \
+  --out-dir runs/gate_c/blind_pred \
+  --ledger runs/gate_c/blind_pred_ledger.json --key runs/gate_c/blind_pred_key.json
+```
+
+**Predicted-mask audit — result (2026-11-18, user's judging of 34 panels).** All 34
+judged. Among the 17 ids, oracle paste-back clean 8, predicted clean 5: **net loss 3, the
+"3–4, mixed" band.** No id is clean under predicted only. The three losses:
+- refedit-160, clean → wrong_edit ("leaked to sibling"): the mask is on the sibling
+  microwave. A known aiming miss.
+- refedit-71, clean → no_edit: the 63-pixel necklace mask. A known mask failure.
+- refedit-181, clean → degraded ("change the white cat on the right to an orange cat"):
+  the mask covers the cat but misses its tail, so the pasted cat is orange with the old
+  black tail. The one loss from mask shape alone.
+
+Also: refedit-29 degraded → no_edit (the parrot cut off; not a clean loss). The oracle
+arm, re-judged blind in this sitting, matches its earlier verdicts in 16 of 17
+(refedit-139 degraded → clean).
+
+On the 40 audit ids (the other 23 near-identical, verdicts carried): oracle paste-back
+about 19–20 clean, predicted about 16–17. Reading: on this sample the frozen pipeline
+loses about 3 of 40 against oracle paste-back, two from the 9% of masks that miss and one
+from an incomplete mask. It sits close to its ceiling, and its ceiling is oracle
+paste-back (19–20 of 40 on this stratified sample, about two thirds weighted to 151). The finding to carry forward: **with a
+segmenter that aims at 91%, the remaining gap is edit quality (no_edit, degraded,
+wrong_edit under a correct mask), not aiming.**
 
 Noted while reading the diffusers source (0.43.0): the library ships a
 `Flux2KleinInpaintPipeline` that takes `mask_image`. That is a third mask-given
