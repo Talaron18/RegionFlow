@@ -44,15 +44,25 @@ FRESH_ARMS = ("plain", "paste", "cropbox")
 PRIMARY_ARM = "cropbox"        # fixed before judging: the arm that does not cut objects
 
 
-def reading(a: float, f: float, c: float) -> str:
-    """a: primary-arm clean rate on aimed attach cases; f: share of its failures that
-    are wrong_owner/anatomy; c: primary-arm clean rate on aimed in-body controls."""
+def reading(a: float, f: float, z: float, gap: float | None, plain_drew: float) -> str:
+    """a: primary-arm clean rate, aimed attach cases; f / z: share of its failures that
+    are wrong_owner+anatomy / no_object; gap: PAIRED control clean rate minus attach
+    clean rate (same image, same person, both aimed); plain_drew: among the primary
+    arm's no_object cases, share where the plain arm's verdict is not no_object."""
     if a >= 0.70:
         return "attachment is NOT a major residual for this pipeline: no method target here"
-    if a <= 0.50 and f >= 0.50 and c - a >= 0.25:
+    if a <= 0.50 and z >= 0.50:
+        if plain_drew >= 0.50:
+            return ("fails by the object NOT APPEARING, and plain klein drew it: the region "
+                    "choice is the problem (cheap to fix), not attachment")
+        return ("fails by the object NOT APPEARING, and plain klein did not draw it either: "
+                "the editor does not do these edits, not attachment")
+    if gap is None:
+        return "no aimed pairs: the paired criterion cannot be read"
+    if a <= 0.50 and f >= 0.50 and gap >= 0.25:
         return ("attachment is a SPECIFIC residual (worse than in-body edits on the same "
                 "people, failing by owner/anatomy): candidate method target")
-    if a <= 0.50 and c - a < 0.25:
+    if a <= 0.50 and gap < 0.25:
         return "general quality problem in these scenes, not specific to attachment"
     return "mixed: report the cases"
 
@@ -99,6 +109,7 @@ def fresh_items(cases_path: Path, edit_dir: Path) -> list[dict]:
             p = edit_dir / f"{c['id']}_{arm}.png"
             if p.exists():
                 items.append({"set": "fresh", "id": c["id"], "arm": arm,
+                              "pair": f"{c['image']}|{list(c['target'])}",
                               "edit_kind": c["edit_kind"],
                               "attach_kind": c.get("attach_kind", ""),
                               "domain": c["domain"], "instruction": c["instruction"],
@@ -133,6 +144,7 @@ def refedit_items(ids_path: Path, arms: list[str], args) -> list[dict]:
                 print(f"  {cid}: no {name} image at {p}")
                 continue
             items.append({"set": "refedit", "id": cid, "arm": name, "edit_kind": "attach",
+                          "pair": "",
                           "attach_kind": "", "domain": "photo",
                           "instruction": row["editing_instruction"],
                           "src": src, "edit_path": p,
@@ -161,7 +173,7 @@ def build(args) -> None:
         ledger.append({"panel": pid, "verdict": None, "notes": "",
                        "instruction": it["instruction"]})
         key.append({"panel": pid, **{k: it[k] for k in
-                    ("set", "id", "arm", "edit_kind", "attach_kind", "domain")}})
+                    ("set", "id", "arm", "edit_kind", "attach_kind", "domain", "pair")}})
     (out / "ledger.json").write_text(json.dumps(ledger, indent=1))
     (out / "key.json").write_text(json.dumps(key, indent=1))
     print(f"{len(items)} panels -> {out}  (fill 'verdict' in ledger.json; do not open key.json)")
@@ -197,22 +209,45 @@ def score(out_dir: Path, aiming_path: str | None) -> dict:
         print(f"  {g[0]:<8} {g[1]:<7} {g[2]:<8} {g[3]:<9} {sum(c.values()):>3}  "
               + " ".join(f"{c[v]:>9}" for v in VERDICTS))
 
-    def rate(kind):
-        c = groups.get(("fresh", kind, PRIMARY_ARM, "aimed"), Counter())
-        n = sum(c.values())
-        return c, n
-    ca, na = rate("attach")
-    cc, nc = rate("inbody")
+    # per-case verdicts, fresh set, aimed only
+    v = {}
+    for k in key:
+        e = led[k["panel"]]["verdict"]
+        if e and k["set"] == "fresh" and (aimed is None or k["id"] in aimed):
+            v[(k["id"], k["arm"])] = (e, k["edit_kind"], k["pair"])
+    att = [i for (i, a), (e, kind, _p) in v.items() if a == PRIMARY_ARM and kind == "attach"]
     res = {}
-    if na and nc:
-        a, c = ca["clean"] / na, cc["clean"] / nc
-        fails = na - ca["clean"]
-        f = sum(ca[v] for v in ATTACH_FAIL) / fails if fails else 0.0
-        res = {"A": a, "F": f, "C": c, "n_attach": na, "n_inbody": nc,
-               "reading": reading(a, f, c)}
-        print(f"\n  primary arm {PRIMARY_ARM}, aimed fresh cases: attach clean {ca['clean']}/{na} "
-              f"(A = {a:.0%}); owner+anatomy share of failures F = {f:.0%}; "
-              f"in-body clean {cc['clean']}/{nc} (C = {c:.0%})")
+    if att:
+        prim = {i: v[(i, PRIMARY_ARM)][0] for i in att}
+        cnt = Counter(prim.values())
+        na, fails = len(att), len(att) - cnt["clean"]
+        a = cnt["clean"] / na
+        f = sum(cnt[x] for x in ATTACH_FAIL) / fails if fails else 0.0
+        z = cnt["no_object"] / fails if fails else 0.0
+        nob = [i for i in att if prim[i] == "no_object"]
+        drew = [i for i in nob if v.get((i, "plain"), ("no_object",))[0] != "no_object"]
+        pd = len(drew) / len(nob) if nob else 0.0
+        # paired: attach case and its in-body control, same image + target, both aimed
+        ctrl = {p: i for (i, a), (e, kind, p) in v.items()
+                if a == PRIMARY_ARM and kind == "inbody"}
+        pairs = [(i, ctrl[v[(i, PRIMARY_ARM)][2]]) for i in att
+                 if v[(i, PRIMARY_ARM)][2] in ctrl]
+        gap = b = c_ = None
+        if pairs:
+            ca = sum(prim[i] == "clean" for i, _ in pairs) / len(pairs)
+            cc = sum(v[(j, PRIMARY_ARM)][0] == "clean" for _, j in pairs) / len(pairs)
+            gap = cc - ca
+            b = sum(prim[i] != "clean" and v[(j, PRIMARY_ARM)][0] == "clean" for i, j in pairs)
+            c_ = sum(prim[i] == "clean" and v[(j, PRIMARY_ARM)][0] != "clean" for i, j in pairs)
+        res = {"A": a, "F": f, "Z": z, "plain_drew": pd, "gap": gap, "n_attach": na,
+               "n_pairs": len(pairs), "attach_only_fails": b, "control_only_fails": c_,
+               "reading": reading(a, f, z, gap, pd)}
+        print(f"\n  primary arm {PRIMARY_ARM}, aimed fresh attach cases: clean {cnt['clean']}/{na} "
+              f"(A = {a:.0%}); of failures, owner+anatomy F = {f:.0%}, no_object Z = {z:.0%}"
+              f" (plain drew the object in {len(drew)}/{len(nob)} of those)")
+        if pairs:
+            print(f"  paired with in-body controls: {len(pairs)} pairs, control clean minus "
+                  f"attach clean = {gap:+.0%}; attach-only failures {b}, control-only {c_}")
         print(f"  reading: {res['reading']}")
         if aimed is None:
             print("  WARNING: no --aiming file; mis-aimed cases are counted as aimed")
@@ -225,18 +260,21 @@ def self_test() -> None:
     import tempfile  # noqa: PLC0415
 
     from PIL import Image  # noqa: PLC0415
-    assert reading(0.8, 0.9, 0.9).startswith("attachment is NOT")
-    assert reading(0.4, 0.6, 0.8).startswith("attachment is a SPECIFIC")
-    assert reading(0.4, 0.6, 0.5).startswith("general")
-    assert reading(0.6, 0.6, 0.9).startswith("mixed")
-    assert reading(0.4, 0.3, 0.9).startswith("mixed")
+    assert reading(0.8, 0.9, 0.0, 0.1, 0).startswith("attachment is NOT")
+    assert reading(0.4, 0.6, 0.2, 0.4, 0).startswith("attachment is a SPECIFIC")
+    assert reading(0.4, 0.6, 0.2, 0.1, 0).startswith("general")
+    assert reading(0.6, 0.6, 0.2, 0.4, 0).startswith("mixed")
+    assert reading(0.4, 0.3, 0.2, 0.4, 0).startswith("mixed")
+    assert "region choice" in reading(0.3, 0.2, 0.6, 0.4, 0.7)
+    assert "does not do" in reading(0.3, 0.2, 0.6, 0.4, 0.2)
+    assert "cannot be read" in reading(0.4, 0.6, 0.2, None, 0)
     assert scaled_box([10, 20, 30, 40], (100, 200), (50, 100)) == [5, 10, 15, 20]
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         cases = []
         for k in range(4):
             Image.new("RGB", (200, 100), "gray").save(td / f"o{k}.png")
-            cases.append({"id": f"t{k}", "arm": "T", "image": str(td / f"o{k}.png"),
+            cases.append({"id": f"t{k}", "arm": "T", "image": str(td / f"o{k % 2}.png"),
                           "instruction": "make the left girl hold a cup",
                           "target": [0, 0, 100, 100], "siblings": [[100, 0, 200, 100]],
                           "domain": "photo", "edit_kind": "attach" if k < 2 else "inbody",
@@ -261,7 +299,9 @@ def self_test() -> None:
         (td / "aim.jsonl").write_text("\n".join(json.dumps({"id": f"t{k}", "cls": "target"})
                                                 for k in range(4)))
         r = score(td / "blind", str(td / "aim.jsonl"))
-        assert (r["A"], r["F"], r["C"]) == (0.5, 1.0, 1.0), r
+        # t0 clean / t1 anatomy; controls t2 (pairs t0) and t3 (pairs t1) clean
+        assert (r["A"], r["F"], r["n_pairs"], r["gap"]) == (0.5, 1.0, 2, 0.5), r
+        assert (r["attach_only_fails"], r["control_only_fails"]) == (1, 0), r
         assert r["reading"].startswith("attachment is a SPECIFIC")
         # a mis-aimed case drops out of the primary rate
         (td / "aim.jsonl").write_text("\n".join(json.dumps({"id": f"t{k}", "cls":

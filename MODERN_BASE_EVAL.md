@@ -1012,18 +1012,26 @@ referent's face or body changed beyond the edit, or merged with someone) >
 `off_target` (the edit is right, something else changed) > `degraded` > `clean`.
 
 **Statistics, on fresh cases Sa2VA aimed correctly (class `target`; mis-aimed cases are
-reported separately):** A = crop-box clean rate on attach cases; F = share of crop-box
-attach failures that are `wrong_owner` or `anatomy`; C = crop-box clean rate on in-body
-controls.
+reported separately), crop-box arm:** A = clean rate on all aimed attach cases;
+F = share of attach failures that are `wrong_owner` or `anatomy`; Z = share that are
+`no_object`; gap = clean rate of in-body controls minus clean rate of their attach
+partners, **on pairs only** (same image, same person, both aimed), with the discordant
+counts (attach-only failures, control-only failures). For the `no_object` failures, the
+plain arm's verdict on the same case says whether klein drew the object at all.
 
-| result | reading |
+| result (rows read top to bottom, first match) | reading |
 |---|---|
 | A ≥ 70% | Attachment is not a major residual for this pipeline; no method target here. |
-| A ≤ 50%, F ≥ 50% and C − A ≥ 25 points | Attachment is a specific residual (worse than in-body edits on the same people, failing by owner or anatomy): candidate method target. |
-| A ≤ 50% and C − A < 25 points | A general quality problem in these scenes, not specific to attachment. |
+| A ≤ 50% and Z ≥ 50% | The object does not appear. If plain drew it in ≥ half of those cases, the region choice is the problem (cheap to fix); if not, klein does not do these edits. Neither is attachment. |
+| A ≤ 50%, F ≥ 50% and paired gap ≥ 25 points | Attachment is a specific residual (worse than in-body edits on the same people, failing by owner or anatomy): candidate method target. |
+| A ≤ 50% and paired gap < 25 points | A general quality problem in these scenes, not specific to attachment. |
 | anything else | Mixed: report the cases. |
 
 At 30 cases a rate is about ±17 points; these bands only separate large effects.
+
+`refedit_items` (the RefEdit panels) is tested only with fake bench rows, COCO records
+and image dirs; the first real `--build` is its smoke test, so look at a few RefEdit
+panels (target outlined green, instruction caption) before judging any.
 
 Commands:
 
