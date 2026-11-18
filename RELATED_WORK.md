@@ -106,3 +106,55 @@ ablation is the same rule with no counterfactual (keep every change vs the sourc
 connects to the mask): `<id>_connected.png`, written by `--edit` at no extra klein cost.
 A DiffEdit-mask baseline on klein (contrasting velocity predictions under the
 instruction vs empty text) is still owed if reviewers want the original method.
+
+## MIRAGE, MPIE-Bench, HOI-Edit — read from the papers (2026-11-18)
+
+**MIRAGE** (Liu & Alaniz, arXiv 2604.05180; user-supplied PDF, method and results read).
+- *Method, training-free.* Qwen3-VL-8B splits the instruction into (referring
+  expression, atomic edit) pairs and predicts a **bounding box** per referent. Each box
+  crop is edited in its own branch during the early steps (t > ρT, best ρ = 0.6); the
+  branch latents overwrite the **box region** of the source's forward-diffused latents
+  ("reference trajectory"). Late steps run the global branch with the full instruction,
+  updating only inside the boxes; outside the boxes the latents always follow the
+  reference trajectory. Bases: FLUX.2 dev, FLUX.2 klein (9B, base-9B), Qwen-Image-Edit-2511.
+- *Benchmark (MIRA-Bench).* 100 FLUX.2-generated images with 3–5 similar instances,
+  five compositional edits per image (one per instance plus extras), VLM boxes refined by
+  SAM2, human-validated.
+- *Evaluation.* EditScore (a fine-tuned VLM judge in the VIEScore style) for prompt
+  following and consistency, using benchmark masks; GPT-5.1 for perceptual quality. No
+  human audit reported. On RefEdit-Bench, klein-base-9B overall 8.50 → 8.64 with MIRAGE.
+- *Relation to us.* Very close to our Level-1 pipeline: text-grounded region, edit the
+  crop, keep the source outside the region. It is our crop baseline moved inside the
+  sampler, with a box rather than a mask. Expected consequences, from our own smoke runs
+  of the same geometry: a sibling inside the referent's box can be edited (our crop-box
+  leak), and anything that should extend past the box is overwritten by the reference
+  trajectory (our paste-back cut). Its evaluation is a VLM judge, which we found blind to
+  sibling leakage on our audit. Code released; it should be run as a baseline.
+
+**MPIE-Bench** (arXiv 2607.27616, text read). Multi-reference composition: put several
+named people (identity references cropped from video frames) into a contact interaction
+(embrace, carry, grapple); 2,500 samples, 405 scenes, 14 interaction types. Not editing
+one instance in an existing image. **MPIE-Eval Anatomy** is an automatic extra-limb
+detector: a frozen Multi-HMR mesh reconstruction is compared with a classical human-like
+foreground mask; unexplained mass attached to a body counts as an extra or fused limb,
+detached blobs as floating parts. Ten editors (GPT-Image-2, Gemini 3 Pro Image, Seedream
+5 Pro, FLUX.1 Kontext, …) reach mesh Anatomy ≤ 0.65 while VLM checklists rate the same
+images above 0.95, and a five-rater study sides with the mesh scores. Two uses for us:
+independent evidence that VLM judges miss body errors (as ours misses sibling leakage),
+and a released scorer that could count extra limbs in arm T automatically.
+
+**HOI-Edit** (arXiv 2606.19073, ICML 2026, text read). Edits the interaction between an
+**existing** person and an **existing** object ("make the person pick up the apple at
+the very top"); 357 / 202 / 146 samples at three levels (L2 includes choosing among
+similar objects). **HOI-Eval** tracks the annotated person and object boxes into the
+edited image, then asks a VLM questions about the grounded pair (identity kept, action
+done, object in hand). Method **SCPE**: generate a video from the image with an
+image-to-video model, refine prompts in an agentic loop from the failed videos, take a
+frame as the edit. Reports "redundant limbs" from Kontext. Not about choosing one person
+among similar people, nor about adding a new object to one of them.
+
+**What is left uncovered by these three.** Adding a new object to one specific person
+among several similar people (the right owner, no extra limb, siblings untouched) in an
+existing image. MIRAGE handles the "which instance" part with boxes but cuts or leaks at
+the box edge; MPIE measures anatomy in composition, not editing; HOI-Edit evaluates
+person–object pairs but with a single person and existing objects.
