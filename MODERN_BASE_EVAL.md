@@ -1193,3 +1193,34 @@ table's own rule. Rejection stays in or out on the photo cases' own result.
 python bench/fresh_cases.py --edit --seeds 8 --only smoke-axe \
   --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_seeds
 ```
+
+### Seed sweep — result, seeds 0–7 (2026-11-19, user's run in `runs/fresh/smoke_seeds`)
+
+Labels are **mine**, from the sheet and full-resolution crops of the back row; the user
+had not sent labels. They stand unless the user disagrees on a specific seed.
+
+| seed | what is drawn | label |
+|---|---|---|
+| 0 | blade behind the middle girl held by no one; a third arm from the target holds a shaft | wrong_owner (also anatomy) |
+| 1 | no axe | no_object |
+| 2 | large blade held up between the back-left and middle girls, not by the target | wrong_owner |
+| 3 | no axe | no_object |
+| 4 | axe raised behind the middle girl's head, in a hand that is not the target's | wrong_owner |
+| 5 | axe held between the back-left and middle girls | wrong_owner |
+| 6 | **the target holds an ice-axe pick in her own left hand**; her right red mitten stays raised, two hands. Her left glove turned from navy to brown. **The back-left girl's open raised mitten became a fist** | off_target |
+| 7 | **the target holds a large axe in her own right (red-mitten) hand**, in front of her face; her left navy glove stays raised; the other girls unchanged | correct |
+
+**Reading by the rule: 1 of 8 correct, the "marginal" row.** Run seeds 8–15 once; 3 or
+more correct of 16 reads as "within reach". Seed 6 has the attachment right, and its one
+fault (another girl's hand) is outside the target's mask, which paste-back removes by
+construction. It is still `off_target` here, because the rule counts the raw output; the
+combination "pick a seed, then paste back" is the method this sweep is asking about, and
+it is noted so the follow-up can be read both ways, with the raw count deciding.
+
+Also seen: in 6 of 8 seeds the axe exists, and in 4 of those 6 it is in another girl's
+hand or in none. The object almost always appears; whose hand it goes to is the failure.
+
+```bash
+python bench/fresh_cases.py --edit --seeds 8 --seed-start 8 --only smoke-axe \
+  --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_seeds
+```

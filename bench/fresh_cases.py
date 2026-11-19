@@ -323,13 +323,15 @@ def seed_sweep(args):
         img = img.resize(model_size(*img.size, area=1024 * 1024), Image.BICUBIC)
         img.save(out / f"{c['id']}_source.png")
         paths = []
-        for k in range(args.seeds):
+        start = getattr(args, "seed_start", 0)
+        for k in range(start, start + args.seeds):
             seed = case_seed(c["id"], k)
             p = out / f"{c['id']}_seed{k}.png"
             plain(img, c["instruction"], seed).save(p)
             paths.append(p)
             print(f"  {c['id']} seed{k} ({seed}) -> {p}")
-        seed_sheet(paths, out / f"{c['id']}_seeds_sheet.png")
+        name = "seeds_sheet" if start == 0 else f"seeds{start}-{start + args.seeds - 1}_sheet"
+        seed_sheet(paths, out / f"{c['id']}_{name}.png")
 
 
 def edit(args):
@@ -616,6 +618,8 @@ def main():
     p.add_argument("--seeds", type=int, default=0,
                    help="with --edit: plain klein only, this many seeds per case")
     p.add_argument("--only", default="", help="comma-separated case ids")
+    p.add_argument("--seed-start", type=int, default=0,
+                   help="with --seeds: first seed index k (seeds k .. k+N-1)")
     p.add_argument("--offload", action="store_true")
     p.add_argument("--report", metavar="JSONL")
     p.add_argument("--overrides", metavar="JSON")
