@@ -438,7 +438,8 @@
     640
    ]
   ],
-  "note": "erase-then-redraw; optional pre_mask (white = may change, 452x640) confines step 1 to her"
+  "note": "erase-then-redraw; optional pre_mask (white = may change, 452x640) confines step 1 to her",
+  "pre_mask": "runs/fresh/smoke_images/yamanosusume_erase_mask.png"
  },
  {
   "id": "smoke-axe-moved",
