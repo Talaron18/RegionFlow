@@ -1158,3 +1158,38 @@ exhausted: paste-back already handles in-body edits, and for additions every reg
 rule (mask, box, attribution) can only keep or cut what the generator produced. The
 remaining failure is in generation itself: limbs that should not exist and objects bound
 to the wrong hand.
+
+## Seed sweep — is the right answer in klein's output at all? (rule written before any run, 2026-11-19)
+
+**Question.** Every region rule can only keep or cut what klein draws. If klein sometimes
+draws the axe in the target's own hand with two arms, a training-free "generate several,
+check the skeleton, keep a valid one" method is possible. If it never does, rejection
+cannot help and the line moves to skeleton conditioning or training.
+
+**Run.** `smoke-axe` only, plain klein (nothing pasted), seeds k = 0…7 with
+`case_seed("smoke-axe", k)`; seed 0 reproduces the earlier plain image (third arm, stray
+blade). Output: `<id>_seed<k>.png` and `<id>_seeds_sheet.png`.
+
+**Label each seed by eye, first that applies:**
+`no_object` (no axe, or unrecognisable) > `wrong_owner` (held by another girl, or by no
+one: floating, lying, stuck behind someone) > `anatomy` (anyone has an extra, missing or
+malformed limb or hand) > `off_target` (axe correct, but another girl's body or clothes
+changed) > `correct` (the back-right girl holds the axe in one of her own two hands, no
+body part added or lost anywhere).
+
+**Rule:**
+
+| correct of 8 | reading |
+|---|---|
+| ≥ 2 | The right answer is within klein's distribution. A skeleton check that picks it is worth building: next, the same sweep on 3–5 photo attachment cases with an automatic pose check. |
+| 1 | Marginal: 8 more seeds (k = 8…15); ≥ 3 of 16 reads as "within reach", fewer as "out of reach". |
+| 0 | Out of reach for rejection on this case: the line moves to giving klein the skeleton (a pose reference image, then training), not to more sampling. |
+
+One illustrated case decides only whether the idea survives the smoke, not the method.
+Seeds are not re-labelled after the sheet is seen, and no seeds are added beyond the
+table's own rule. Rejection stays in or out on the photo cases' own result.
+
+```bash
+python bench/fresh_cases.py --edit --seeds 8 --only smoke-axe \
+  --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_seeds
+```

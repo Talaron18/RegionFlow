@@ -281,6 +281,57 @@ def attribution_mask(src, edit, counters, mask, t_change=T_CHANGE, t_unique=T_UN
     return keep, dbg
 
 
+def seed_sheet(paths, out_path, cols=4, width=320):
+    """Contact sheet of seed outputs, each labelled with its file stem."""
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+    ims = [Image.open(p).convert("RGB") for p in paths]
+    w, h = ims[0].size
+    th = int(h * width / w)
+    rows = -(-len(ims) // cols)
+    sheet = Image.new("RGB", (cols * width, rows * (th + 16)), "white")
+    d = ImageDraw.Draw(sheet)
+    for k, (p, im) in enumerate(zip(paths, ims)):
+        x, y = (k % cols) * width, (k // cols) * (th + 16)
+        sheet.paste(im.resize((width, th)), (x, y + 16))
+        d.text((x + 3, y + 2), Path(p).stem, fill=(0, 0, 0))
+    sheet.save(out_path)
+
+
+def seed_sweep(args):
+    """Plain klein only, N seeds per case: <id>_seed<k>.png and <id>_seeds_sheet.png.
+    Seed k is case_seed(id, k); k = 0 is the seed every other arm used, so seed0
+    reproduces <id>_plain.png. Nothing is pasted or masked: this asks whether the
+    right answer is anywhere in klein's output distribution for the case."""
+    from PIL import Image  # noqa: PLC0415
+
+    from flux2_klein_model import Flux2KleinModel, model_size  # noqa: PLC0415
+    from run_gate_c import case_seed  # noqa: PLC0415
+
+    cases = json.loads(Path(args.cases).read_text())
+    if args.only:
+        want = set(args.only.split(","))
+        cases = [c for c in cases if c["id"] in want]
+        missing = want - {c["id"] for c in cases}
+        if missing:
+            raise SystemExit(f"--only ids not in {args.cases}: {sorted(missing)}")
+    out = Path(args.edit_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    plain = Flux2KleinModel(device=args.device, offload=args.offload)
+    for c in cases:
+        img = Image.open(c["image"]).convert("RGB")
+        check_size(c, img.size)
+        img = img.resize(model_size(*img.size, area=1024 * 1024), Image.BICUBIC)
+        img.save(out / f"{c['id']}_source.png")
+        paths = []
+        for k in range(args.seeds):
+            seed = case_seed(c["id"], k)
+            p = out / f"{c['id']}_seed{k}.png"
+            plain(img, c["instruction"], seed).save(p)
+            paths.append(p)
+            print(f"  {c['id']} seed{k} ({seed}) -> {p}")
+        seed_sheet(paths, out / f"{c['id']}_seeds_sheet.png")
+
+
 def edit(args):
     """klein 4B on each case whose Sa2VA mask exists: plain edit, paste-back
     through the mask (dilated 8 px at 512, scaled), and crop-and-paste-the-box.
@@ -562,6 +613,9 @@ def main():
     p.add_argument("--overwrite", action="store_true")
     p.add_argument("--edit", action="store_true", help="klein edits through saved masks")
     p.add_argument("--edit-dir", default="runs/fresh/edits")
+    p.add_argument("--seeds", type=int, default=0,
+                   help="with --edit: plain klein only, this many seeds per case")
+    p.add_argument("--only", default="", help="comma-separated case ids")
     p.add_argument("--offload", action="store_true")
     p.add_argument("--report", metavar="JSONL")
     p.add_argument("--overrides", metavar="JSON")
@@ -576,6 +630,8 @@ def main():
         print("OK" if not errs else "\n".join(errs))
     elif a.run:
         run(a)
+    elif a.edit and a.seeds > 0:
+        seed_sweep(a)
     elif a.edit:
         edit(a)
     elif a.report:
