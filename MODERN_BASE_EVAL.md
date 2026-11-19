@@ -1128,3 +1128,33 @@ jacket, teacher's desk, near-left desk; red jacket has no mask):
   (view `<id>_counter0.png` against `<id>_plain.png`), no threshold tuning on these
   cases.
 - Anything else: report the four cases, decide with the user.
+
+### Attribution arm — smoke result (2026-11-19, user's run in `runs/fresh/smoke_edits_attrib`; all grids viewed)
+
+Changed-pixel fractions (vs source, >30/255) and what the images show:
+
+| case | paste | crop-box | connected (no counter) | **attrib** | plain vs counter0 differ | seen |
+|---|---|---|---|---|---|---|
+| rain jacket | 0.051 | 0.109 | 0.063 | **0.052** | 0.077 | attrib ≈ paste: target yellow, middle girl not; `connected` keeps part of the middle girl's yellow, the counterfactual removes it |
+| teacher's desk | 0.042 | 0.100 | 0.435 | **0.043** | 0.010 | attrib ≈ paste; `connected` keeps every white desk, the counterfactual removes all of it |
+| near-left desk | 0.067 | 0.110 | 0.167 | **0.140** | 0.337 | **fails**: keeps red chairs and desks around the target. The counter run ("…on the right") spread red to a *different* set of desks, so the left-side leak looked referent-specific |
+| ice axe | 0.007 | 0.017 | 0.012 | **0.012** | 0.041 | keeps the shaft and pick that paste cut, i.e. it rescues **the third arm** holding them; the stray blade behind the middle girl (also in the counterfactual) is dropped |
+
+**Reading against the criteria fixed before the run.** In-body cases: 2 of 3 with no
+sibling change beyond paste-back (rain, teacher's desk); 1 fails (near-left desk). Axe:
+keeps visibly more of the object than paste-back. By the letter that is the "works" row,
+but the substance does not support adopting it as the method:
+- On in-body edits it only matches paste-back, which was already right; there is
+  nothing for it to win there.
+- Its premise, that spillover does not depend on who is referred to, fails when the leak
+  spreads *from* the referent: klein recolours the referent's neighbourhood, so moving
+  the referent moves the leak (near-left desk, 34% of pixels differ between the two runs).
+- On the one attachment case it faithfully keeps what the generator drew outside the
+  mask, and what the generator drew is a third arm.
+
+**Decision (with the user, 2026-11-19): attribution is not the method.** It stays an
+optional arm-T column, not a contribution. The smoke runs together say region choice is
+exhausted: paste-back already handles in-body edits, and for additions every region
+rule (mask, box, attribution) can only keep or cut what the generator produced. The
+remaining failure is in generation itself: limbs that should not exist and objects bound
+to the wrong hand.
