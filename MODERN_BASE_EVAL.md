@@ -1290,3 +1290,25 @@ mentions the red mark (`POSE_SUFFIX`); the grip is stated in the instruction onl
 python bench/fresh_cases.py --edit --seeds 8 --only smoke-axe-pose \
   --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_pose2
 ```
+
+### Skeleton reference — consistent re-run result (2026-11-19, `runs/fresh/smoke_pose2`)
+
+User's label: **fail on every seed, both sheets.** I viewed all 16 back-row crops and
+agree; 0 correct of 8 with the drawing and 0 of 8 without. By the rule (within 1): **klein
+does not use the stick figure for this edit; the reference-image route is closed.** No
+lines leak. (The drawing file `yamanosusume_pose2.png` was not in the push; the run's
+inputs therefore cannot be re-checked from the repo.)
+
+What the failures have in common, plain and with drawing alike: the girl in blue keeps
+**both** of her original gloves at her chest, and the raised arm holding the axe is a
+**new** limb, grown from her shoulder, from behind her, or from the girl in pink's sleeve
+(pink arm in plain seed 5, pose seeds 0–2). In 16 tries klein never moves an existing
+arm: it adds one, or gives the job to a neighbour. The edit is drawn as pixels added on
+top of an image it otherwise preserves, not as a body part changing position. For a
+raised hand that already exists (the back-left girl, void run), the same instruction is
+easy.
+
+Consequence: the failure is not missing pose information (the drawing supplied it and
+changed nothing) but that this editor cannot *re-pose* a part; it can only add. That is
+the user's skeleton point in its sharpest form: a creator moves the arm, the editor
+grows a new one.
