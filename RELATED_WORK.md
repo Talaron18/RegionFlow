@@ -158,3 +158,38 @@ among several similar people (the right owner, no extra limb, siblings untouched
 existing image. MIRAGE handles the "which instance" part with boxes but cuts or leaks at
 the box edge; MPIE measures anatomy in composition, not editing; HOI-Edit evaluates
 person–object pairs but with a single person and existing objects.
+
+## Sketch-then-detail and move-then-attach — prior-art check (2026-11-19)
+
+Search-level, by a research subagent (abstracts, HTML pages, READMEs; not full reads).
+
+**Structure-first editing (the user's sketch-then-detail idea).** Nearest found:
+**SGEdit** (2410.11815, SIGGRAPH Asia 2024: LLM parses the image into a scene graph with
+masks, edits region-wise), **SAGE** (2509.21928: VLM plans scene-graph states, then
+inpainting/composition), **Spatial Chain-of-Thought** (2602.11980: MLLM writes a
+coordinate layout before rendering, also evaluated on editing), **PoseLLaVA** (AAAI 2025:
+language-driven 3D pose adjustment fed to PIDM for pose editing), **PointT2I**
+(2506.01370: LLM predicts human keypoints, then generation; text-to-image only),
+**SkeleGuide** (2603.01579: editable skeleton, places one person into a scene). SVG/code
+planning exists (Reason-SVG 2505.24499, IntroSVG 2603.09312, Chat2SVG not opened) but
+outputs vectors, not edits of a raster photo. **Not found: editing an existing image
+through an instance + skeleton intermediate with checkable body rules.** A second pass on
+"pose-conditioned instruction editing" is owed before any novelty claim.
+
+**Pose control for the renderer.** No official klein ControlNet; DiffSynth-Studio has a
+structural-control template for klein-base-4B (pose coverage not verified); FLUX.2-dev
+Fun ControlNet Union includes pose (for FLUX.2-dev, not klein). HumanSD (ICCV 2023) is a
+skeleton-conditioned SD fine-tune.
+
+**Drag editing (moving parts).** DragDiffusion (SD-based, per-image LoRA, README ~14 GB,
+github.com/Yujun-Shi/DragDiffusion) is the only tool found with released code and a
+stated footprint under 24 GB. LightningDrag (SD1.5, ~1 s/edit, repo archived), DragFlow
+(FLUX, README says two 24 GB GPUs), LazyDrag (ICLR 2026, MM-DiT, code status unknown;
+project page unreachable from here), ContextDrag (FLUX Kontext, code announced),
+FreeDrag, DragonDiffusion, DragGAN (GAN). None states how it handles a large rotation
+about a joint.
+
+**Decomposition and the add-vs-move failure.** "Image Editing As Programs" (2506.04158)
+decomposes edits into atomic operations and reports action/spatial changes as the weak
+point (snippet only). No paper found that does re-pose-then-attach or that counts added
+versus moved limbs.

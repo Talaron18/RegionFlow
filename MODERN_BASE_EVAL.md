@@ -1420,3 +1420,46 @@ attribution) can only keep or cut what klein draws; more seeds give 0 of 8; a st
 reference changes nothing (0 of 8 vs 0 of 8); clearing the old hand changes nothing. What
 klein draws for "raise her hand and hold X" is a new arm whose origin does not depend on
 the body that is there. Whether that holds beyond one poster is what arm T measures.
+
+## Move then attach — smallest test of sketch-then-detail (rule written before any run, 2026-11-19)
+
+**Why.** Every route that asks klein to change a pose has failed on the axe case, but when
+a raised hand already exists the same attachment is easy (void pose run: the back-left
+girl). The user's idea separates structure from appearance: a sketch decides the new
+pose, a detail model renders it. Its smallest training-free form: **move** the existing arm
+with a tool built to move parts (drag editing), then let klein **attach** the axe to the
+now-raised hand.
+
+**Step 1 — move (DragDiffusion, separate environment).** Released code, README states
+~14 GB, SD-based, LoRA per image (github.com/Yujun-Shi/DragDiffusion). Run it in its own
+venv, not in the klein container, and not at the same time as klein. In its Gradio UI, on
+`yamanosusume.jpg`:
+- editable mask: the girl in blue's left arm, glove and the space above her right
+  shoulder (her own side only; not the pink girl);
+- handle point: her navy glove at her chest, about (361, 217) in 452×640 pixels;
+- target point: beside and above her head, about (395, 110);
+- an anime SD1.5 checkpoint may suit the poster better than base SD1.5; record which.
+Save the result as `runs/fresh/smoke_move/moved.png`.
+
+Label step 1 once: **moved** (the glove is gone from her chest, one arm is raised from her
+own shoulder, no extra limb, nobody else changed), **not moved** (little or no motion), or
+**broken** (smeared arm, extra limb, face or neighbour damaged). Up to 3 attempts with
+different point placements or checkpoints are allowed; report all of them, use the best.
+
+**Step 2 — attach (klein, seeds 0–7).** Case `smoke-axe-moved`: "make the girl in the back
+row in blue hold an ice axe in her raised hand" on `moved.png`. Labels as in the seed
+sweep plus the limb label. Control: the same girl, no move step: 0 of 8 in the seed
+sweep, the pose runs and the erase runs.
+
+| result | reading |
+|---|---|
+| no attempt reaches `moved` | Drag tools cannot make this articulated move here; move-then-attach is closed at step 1, and sketch-then-detail needs a trained renderer that obeys a skeleton. |
+| `moved`, and step 2 correct ≥ 3 of 8 | Moving first is enough: the smallest form of sketch-then-detail works. Next: automate it on photos (pose detector → planned keypoint → drag → attach) as an arm-T column. |
+| `moved`, step 2 correct ≤ 1 of 8 | Even with the pose already right, klein fails to attach: the problem is not only re-posing. |
+| anything else | report, decide with the user. |
+
+```bash
+# after step 1 (check moved.png's size; set image_wh in the case, rescale boxes if not 452x640)
+python bench/fresh_cases.py --edit --seeds 8 --only smoke-axe-moved \
+  --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_move
+```

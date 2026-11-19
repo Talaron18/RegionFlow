@@ -439,5 +439,45 @@
    ]
   ],
   "note": "erase-then-redraw; optional pre_mask (white = may change, 452x640) confines step 1 to her"
+ },
+ {
+  "id": "smoke-axe-moved",
+  "arm": "S",
+  "expr_type": "attribute",
+  "image": "runs/fresh/smoke_move/moved.png",
+  "instruction": "make the girl in the back row in blue hold an ice axe in her raised hand",
+  "target": [
+   262,
+   85,
+   445,
+   355
+  ],
+  "siblings": [
+   [
+    0,
+    0,
+    165,
+    315
+   ],
+   [
+    135,
+    105,
+    278,
+    300
+   ],
+   [
+    0,
+    250,
+    240,
+    640
+   ],
+   [
+    190,
+    250,
+    452,
+    640
+   ]
+  ],
+  "note": "step 2 of move-then-attach: the image is the drag-edited poster (her left hand dragged from her chest to above her head). Boxes are in 452x640 poster pixels; set image_wh to the drag output's size and rescale the boxes if it differs"
  }
 ]
