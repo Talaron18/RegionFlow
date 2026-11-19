@@ -1208,19 +1208,15 @@ had not sent labels. They stand unless the user disagrees on a specific seed.
 | 4 | axe raised behind the middle girl's head, in a hand that is not the target's | wrong_owner |
 | 5 | axe held between the back-left and middle girls | wrong_owner |
 | 6 | **the target holds an ice-axe pick in her own left hand**; her right red mitten stays raised, two hands. Her left glove turned from navy to brown. **The back-left girl's open raised mitten became a fist** | off_target |
-| 7 | **the target holds a large axe in her own right (red-mitten) hand**, in front of her face; her left navy glove stays raised; the other girls unchanged | correct |
+| 7 | a large axe held in front of the target's face by the **red mitten**; her navy glove stays raised | **anatomy** (user's label, adopted: the red mitten is the pink girl's, not the target's, whose gloves are navy; the hand is drawn as if it belonged to both, i.e. a hand shared between two bodies). My first label, `correct`, was wrong |
 
-**Reading by the rule: 1 of 8 correct, the "marginal" row.** Run seeds 8–15 once; 3 or
-more correct of 16 reads as "within reach". Seed 6 has the attachment right, and its one
-fault (another girl's hand) is outside the target's mask, which paste-back removes by
-construction. It is still `off_target` here, because the rule counts the raw output; the
-combination "pick a seed, then paste back" is the method this sweep is asking about, and
-it is noted so the follow-up can be read both ways, with the raw count deciding.
+**Reading by the rule, with the user's label for seed 7: 0 of 8 correct, the "out of
+reach" row.** No further seeds (the 8–15 run was only allowed under the marginal row).
+Rejection sampling does not survive the smoke on this case; the line moves to giving
+klein the skeleton. Caveat kept on record, not used to change the reading: seed 6 has the
+attachment right (her own hand, with its glove recoloured navy → brown) and its one fault
+is another girl's hand outside the target's mask, which paste-back would remove.
 
-Also seen: in 6 of 8 seeds the axe exists, and in 4 of those 6 it is in another girl's
-hand or in none. The object almost always appears; whose hand it goes to is the failure.
-
-```bash
-python bench/fresh_cases.py --edit --seeds 8 --seed-start 8 --only smoke-axe \
-  --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_seeds
-```
+What the 8 seeds show: the axe appears in 6 of 8, and **none** is held by a hand that is
+unambiguously the target's own and unchanged. The failure is ownership: whose hand, and
+hands that belong to two bodies at once (seed 7) or to no body (seed 0).
