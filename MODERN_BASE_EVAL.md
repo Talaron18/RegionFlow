@@ -1220,3 +1220,40 @@ is another girl's hand outside the target's mask, which paste-back would remove.
 What the 8 seeds show: the axe appears in 6 of 8, and **none** is held by a hand that is
 unambiguously the target's own and unchanged. The failure is ownership: whose hand, and
 hands that belong to two bodies at once (seed 7) or to no body (seed 0).
+
+## Skeleton reference — does klein follow a stick figure? (rule written before any run, 2026-11-19)
+
+**Why.** The seed sweep put the axe case in the "out of reach" row: klein does not
+produce a correct owner/anatomy often enough to select. Next step by that rule: give
+klein the skeleton. Cheapest form, no training: FLUX.2 klein takes several reference
+images (each gets its own position offset in `Flux2KleinPipeline`), so the second
+reference is a stick-figure drawing of everyone's pose, with a red mark where the object
+is held. The prompt gets a fixed suffix (`POSE_SUFFIX` in `fresh_cases.py`) asking it to
+keep each body as drawn and not to draw the lines.
+
+**Case.** `smoke-axe-raised`, on the user's own drawing (same 452×640 canvas as the
+poster): "make the girl in the back row with her arm raised hold an ice axe in her raised
+hand"; the red mark sits on the back-left girl's raised arm. This target is the back-left
+girl, not the earlier back-right one; a raised hand in open sky is probably an easier
+attachment, which is why the same seeds also run **without** the drawing as the control.
+
+**Run.** Seeds k = 0…7, each seed twice: plain (`<id>_seed<k>.png`) and with the drawing
+(`<id>_pose_seed<k>.png`), same seed, same instruction (the pose run adds only the suffix).
+
+**Labels, first that applies:** `sketch_leak` (blue or red lines of the drawing visible)
+> `no_object` > `wrong_owner` > `anatomy` (any extra, missing, shared or malformed limb or
+hand, anyone's) > `off_target` (axe right, another girl changed) > `correct`. Labelled by
+the user; plain and pose sheets judged in the same sitting.
+
+| result | reading |
+|---|---|
+| pose correct ≥ 3 of 8 **and** ≥ plain correct + 2 | klein uses a stick figure zero-shot. Next: the photo attachment cases with detected skeletons. |
+| pose and plain within 1 | klein ignores the drawing; the reference-image route is closed, the line moves to a trained pose adapter. |
+| sketch_leak in ≥ 4 of 8, or pose correct ≤ plain correct − 2 | the drawing hurts; same consequence as "ignores". |
+| anything else | report, decide with the user. |
+
+```bash
+# save the drawing as runs/fresh/smoke_images/yamanosusume_pose.png (452x640)
+python bench/fresh_cases.py --edit --seeds 8 --only smoke-axe-raised \
+  --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_pose
+```

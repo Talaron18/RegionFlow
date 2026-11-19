@@ -297,6 +297,25 @@ def seed_sheet(paths, out_path, cols=4, width=320):
     sheet.save(out_path)
 
 
+POSE_SUFFIX = (" Keep every person's body exactly as drawn in the second image: each person "
+               "has only the arms and legs drawn there, and the object is held where the red "
+               "mark is. Do not draw the lines of the second image.")
+
+
+def pose_edit(model, img, pose, prompt, seed):
+    """klein with TWO references: the source and a stick-figure pose drawing (same
+    size as the source). Same steps / guidance / generator as model.__call__."""
+    from flux2_klein_model import snap_size  # noqa: PLC0415
+    from PIL import Image  # noqa: PLC0415
+    w, h = snap_size(*img.size)
+    if (w, h) != img.size:
+        img = img.resize((w, h))
+    pose = pose.convert("RGB").resize((w, h), Image.BICUBIC)
+    return model.pipe(prompt=prompt + POSE_SUFFIX, image=[img, pose], height=h, width=w,
+                      num_inference_steps=model.steps, guidance_scale=model.g,
+                      generator=model._generator(seed)).images[0]
+
+
 def seed_sweep(args):
     """Plain klein only, N seeds per case: <id>_seed<k>.png and <id>_seeds_sheet.png.
     Seed k is case_seed(id, k); k = 0 is the seed every other arm used, so seed0
@@ -332,6 +351,18 @@ def seed_sweep(args):
             print(f"  {c['id']} seed{k} ({seed}) -> {p}")
         name = "seeds_sheet" if start == 0 else f"seeds{start}-{start + args.seeds - 1}_sheet"
         seed_sheet(paths, out / f"{c['id']}_{name}.png")
+        if c.get("pose_ref"):
+            pose = Image.open(c["pose_ref"])
+            if pose.size != Image.open(c["image"]).size:
+                raise SystemExit(f"{c['id']}: pose_ref is {pose.size}, image is "
+                                 f"{Image.open(c['image']).size}; draw it on the same canvas")
+            ppaths = []
+            for k in range(start, start + args.seeds):
+                p = out / f"{c['id']}_pose_seed{k}.png"
+                pose_edit(plain, img, pose, c["instruction"], case_seed(c["id"], k)).save(p)
+                ppaths.append(p)
+                print(f"  {c['id']} pose seed{k} -> {p}")
+            seed_sheet(ppaths, out / f"{c['id']}_pose_{name}.png")
 
 
 def edit(args):
