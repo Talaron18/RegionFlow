@@ -1394,3 +1394,29 @@ prompt wording.
 python bench/fresh_cases.py --edit --seeds 8 --only smoke-axe-erase \
   --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_erase_mask
 ```
+
+### Erase then redraw, masked re-run — result (2026-11-19, `runs/fresh/smoke_erase_mask`)
+
+The user's mask (white over the target's navy glove, in front of her chest) was used:
+outside it, step 1 changed 0.0000 of pixels in every seed. Inside it, step 1 replaced the
+hand with a patch of fog or haze in 6 of 8 seeds (0, 2, 3, 4, 6, 7), a sky-coloured patch
+in seed 1, and left the hand in seed 5. User's verdict: not working; I agree.
+
+**The decisive check: step 2 does not depend on step 1.** Same seeds, final image vs the
+plain control (the instruction applied directly to the untouched source):
+
+| seed | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| pixels differing **outside** the mask | 1.1% | 0.2% | 1.1% | 1.2% | 4.2% | 0.3% | 0.5% | 3.7% |
+
+Apart from the masked patch itself, klein draws the same raised arm and axe, from the same
+place, whether or not her hand is still there. Removing the obstacle does not change what
+it draws, so a cleaner step 1 (the inpainting pipeline) would not change step 2 either.
+**Option A (erase then redraw) is closed** without the inpainting follow-up: its premise,
+that the added limb is caused by the old one being in the way, is contradicted.
+
+Summary of the axe line, all on one illustrated case: region rules (paste, crop-box,
+attribution) can only keep or cut what klein draws; more seeds give 0 of 8; a stick-figure
+reference changes nothing (0 of 8 vs 0 of 8); clearing the old hand changes nothing. What
+klein draws for "raise her hand and hold X" is a new arm whose origin does not depend on
+the body that is there. Whether that holds beyond one poster is what arm T measures.
