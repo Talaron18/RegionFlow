@@ -349,5 +349,50 @@
    ]
   ],
   "note": "user's stick figure (452x640, same canvas as the poster): the red mark on the back-left girl's raised arm is the grip"
+ },
+ {
+  "id": "smoke-axe-pose",
+  "arm": "S",
+  "expr_type": "attribute",
+  "image": "runs/fresh/smoke_images/yamanosusume.jpg",
+  "image_wh": [
+   452,
+   640
+  ],
+  "pose_ref": "runs/fresh/smoke_images/yamanosusume_pose2.png",
+  "instruction": "make the girl in the back row in blue raise her right hand and hold an ice axe in it",
+  "target": [
+   262,
+   85,
+   445,
+   355
+  ],
+  "siblings": [
+   [
+    0,
+    0,
+    165,
+    315
+   ],
+   [
+    135,
+    105,
+    278,
+    300
+   ],
+   [
+    0,
+    250,
+    240,
+    640
+   ],
+   [
+    190,
+    250,
+    452,
+    640
+   ]
+  ],
+  "note": "the original hard target; user's second drawing (back-right girl's arm raised, joints marked red)"
  }
 ]

@@ -1257,3 +1257,36 @@ the user; plain and pose sheets judged in the same sitting.
 python bench/fresh_cases.py --edit --seeds 8 --only smoke-axe-raised \
   --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_pose
 ```
+
+### Skeleton reference — first run void (2026-11-19, `runs/fresh/smoke_pose`; all 16 viewed)
+
+**Mis-specified, my error; not read against the rule.** The user redrew the stick figure
+with the **back-right** girl's arm raised and every joint marked red. The case still said
+"the girl in the back row **with her arm raised**" (the back-left girl, who raises her
+arm in the source), and the prompt suffix said "held where the red mark is", which now
+pointed at every joint. Instruction and drawing named different girls.
+
+What the images show anyway:
+- **Plain (no drawing):** the back-left girl holds an axe in her raised hand in nearly
+  every seed. Raised hand in open sky is an easy attachment; it needs no help.
+- **With the drawing:** in pose seeds 1 and 2 the **back-right** girl raises her right
+  arm and holds the axe, with her other glove still at her chest: the drawing's pose, which
+  no plain seed shows. Seeds 0, 4, 5 follow the instruction (back-left girl); seeds 3, 6
+  put the axe behind someone with no clear owner; seed 7 gives it to the middle girl and
+  shifts the whole image's style. No drawn lines leak into any image.
+
+So klein does take something from a stick figure, and it fights the instruction when they
+disagree. That is a reason to run the test properly, not a result.
+
+**Re-run, specified consistently (rule unchanged from the section above).** Case
+`smoke-axe-pose`: the original hard target (back-right girl in blue), instruction "make
+the girl in the back row in blue raise her right hand and hold an ice axe in it", the
+user's second drawing as `yamanosusume_pose2.png`. Both arms (plain and with drawing) get
+the same instruction, so the drawing is the only difference. The suffix no longer
+mentions the red mark (`POSE_SUFFIX`); the grip is stated in the instruction only.
+
+```bash
+# save the second drawing (452x640) as runs/fresh/smoke_images/yamanosusume_pose2.png
+python bench/fresh_cases.py --edit --seeds 8 --only smoke-axe-pose \
+  --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_pose2
+```

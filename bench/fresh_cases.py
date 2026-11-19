@@ -297,9 +297,12 @@ def seed_sheet(paths, out_path, cols=4, width=320):
     sheet.save(out_path)
 
 
+# The first version also said "the object is held where the red mark is"; the user's
+# drawing marks every joint red, so that line pointed everywhere. Where the object goes
+# is now said only in the instruction.
 POSE_SUFFIX = (" Keep every person's body exactly as drawn in the second image: each person "
-               "has only the arms and legs drawn there, and the object is held where the red "
-               "mark is. Do not draw the lines of the second image.")
+               "has only the arms and legs drawn there, in the positions drawn. Do not draw "
+               "the lines of the second image.")
 
 
 def pose_edit(model, img, pose, prompt, seed):
