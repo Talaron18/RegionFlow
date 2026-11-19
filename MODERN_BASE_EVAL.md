@@ -1362,3 +1362,35 @@ original stays), `shared` (one limb drawn on two bodies), `removed`, `other`.
 `attach_audit.py --score` refuses unknown labels, warns on missing ones, and prints a
 limb table per set, edit kind and arm. The claim it is for: editors **add** instead of
 **move** when an edit needs a pose change.
+
+### Erase then redraw — result (2026-11-19, `runs/fresh/smoke_erase`; every image viewed)
+
+**Step 1 failed: `not cleared` in 7 of 8 (my labels).** Asked to remove the hand in front
+of her chest, klein removed far more:
+- seeds 0, 1: the girl in blue is deleted entirely, replaced by mountains;
+- seeds 2, 3, 4, 7: her body below the head dissolves into fog or cloud;
+- seed 5: she is intact and her hands are still at her chest (nothing removed);
+- seed 6: her hands are gone and her body is intact, though darker: the only `cleared`.
+
+**Reading by the rule: step 2 was not tested.** With the target missing or dissolved,
+step 2 mostly gave the axe to the girl in pink (final seeds 0, 1, 2, 4, 5), which says
+nothing about redrawing. One re-run is allowed: same sentences, a user-drawn `pre_mask`.
+
+Observation, not a reading: "remove" works on **whole instances**, not parts. Told to take
+away a hand, the editor takes away the person, or her body. It is the same pattern as
+add-instead-of-move: the editor's unit is the object, not the limb.
+
+Risk of the re-run, stated now: the mask only limits *where* step 1 is pasted. If klein
+still deletes the whole girl, the paste puts mountain or fog on her chest inside the
+mask. If that happens in ≥ 6 of 8, the next step 1 is the inpainting pipeline
+(`Flux2KleinInpaintPipeline`, the region filled with "her dark navy jacket"), not more
+prompt wording.
+
+```bash
+# draw the mask on the 452x640 poster canvas: white over her navy glove and the area in
+# front of her chest where the hand is, black elsewhere; save as
+# runs/fresh/smoke_images/yamanosusume_erase_mask.png, then add to the case
+#   "pre_mask": "runs/fresh/smoke_images/yamanosusume_erase_mask.png"
+python bench/fresh_cases.py --edit --seeds 8 --only smoke-axe-erase \
+  --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_erase_mask
+```
