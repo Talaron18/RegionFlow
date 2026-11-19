@@ -1463,3 +1463,26 @@ sweep, the pose runs and the erase runs.
 python bench/fresh_cases.py --edit --seeds 8 --only smoke-axe-moved \
   --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_move
 ```
+
+### Move then attach — skipped (2026-11-19, user's decision)
+
+DragDiffusion could not be made to run in the user's environment (a dependency chain
+pinned to 2023 packages, then UI errors). The test is dropped, not failed.
+
+**What it was for:** to separate "klein cannot re-pose an arm" from "klein cannot attach
+an object to the right hand". Existing runs already bear on that, without a drag tool:
+- **free hand, no crowding** (back-left girl, raised hand in open sky, void pose run):
+  klein attaches the axe correctly in nearly every seed;
+- **hand in a crowd, no move strictly needed** (seed sweep: "hold an ice axe in her
+  hand", the target's hand at her chest between her body and the pink girl's mitten):
+  0 of 8, mostly another girl's or nobody's hand.
+So the variable that looks decisive is whether the hand sits in open space or among other
+people's hands and bodies, not only whether the arm must move. One poster, so this is a
+hypothesis for arm T, not a result.
+
+**Arm T addition (before any arm-T case is run):** attach cases carry an optional
+`hand` tag, `free` (the hand that should hold it is in open space), `crowded`
+(overlapping or touching someone else) or `hidden` (not visible in the source).
+`attach_audit.py --score` prints edit-right by tag beside the reading; it is descriptive
+and does not change the pre-registered bands. The hiking-photo umbrella case is tagged
+`crowded` (his hand on the pole sits beside the olive-jacket man).
