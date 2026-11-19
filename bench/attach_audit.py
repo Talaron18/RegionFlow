@@ -27,6 +27,15 @@ RUBRIC: pick the FIRST verdict that applies, in this order.
   off_target   the edit is right, but another person or object also changed
   degraded     other visible damage (seams, smears, wrong scale)
   clean        none of the above
+
+LIMB, a second field filled on EVERY panel, independent of the verdict: what happened to
+the bodies, anyone's (added 2026-11-19 after the axe smoke runs, before any arm-T case):
+  unchanged    no limb or hand changed position, appeared or disappeared
+  moved        an existing limb changed position and nothing was added (the creator's way)
+  added        a new limb or hand appears while the original stays (the axe failure)
+  shared       a limb or hand drawn as belonging to two bodies at once
+  removed      a limb or hand disappears without being moved
+  other        anything else (malformed, fused); say what in notes
 """
 
 from __future__ import annotations
@@ -37,6 +46,7 @@ import random
 from collections import Counter, defaultdict
 from pathlib import Path
 
+LIMBS = ("unchanged", "moved", "added", "shared", "removed", "other")
 VERDICTS = ("no_object", "wrong_owner", "anatomy", "identity", "off_target",
             "degraded", "clean")
 ATTACH_FAIL = ("wrong_owner", "anatomy")
@@ -175,7 +185,7 @@ def build(args) -> None:
         pid = f"panel_{n:04d}"
         panel(it["src"], Image.open(it["edit_path"]), it["box"],
               it["instruction"]).save(out / f"{pid}.png")
-        ledger.append({"panel": pid, "verdict": None, "notes": "",
+        ledger.append({"panel": pid, "verdict": None, "limb": None, "notes": "",
                        "instruction": it["instruction"]})
         key.append({"panel": pid, **{k: it[k] for k in
                     ("set", "id", "arm", "edit_kind", "attach_kind", "domain", "pair")}})
@@ -193,9 +203,15 @@ def score(out_dir: Path, aiming_path: str | None) -> dict:
     bad = {e["verdict"] for e in led.values() if e["verdict"]} - set(VERDICTS)
     if bad:
         raise SystemExit(f"unknown verdicts {sorted(bad)}; use {VERDICTS}")
+    badl = {e.get("limb") for e in led.values() if e.get("limb")} - set(LIMBS)
+    if badl:
+        raise SystemExit(f"unknown limb labels {sorted(badl)}; use {LIMBS}")
     todo = [k["panel"] for k in key if not led[k["panel"]]["verdict"]]
     if todo:
         print(f"NOT COMPLETE: {len(todo)} panels unjudged")
+    nolimb = [k["panel"] for k in key if not led[k["panel"]].get("limb")]
+    if nolimb:
+        print(f"NOT COMPLETE: {len(nolimb)} panels have no limb label")
     aimed = None
     if aiming_path:
         rows = [json.loads(l) for l in Path(aiming_path).read_text().splitlines() if l.strip()]
@@ -208,6 +224,15 @@ def score(out_dir: Path, aiming_path: str | None) -> dict:
         ok = k["set"] == "refedit" or aimed is None or k["id"] in aimed
         tag = "aimed" if ok else "mis-aimed"
         groups[(k["set"], k["edit_kind"], k["arm"], tag)][v] += 1
+    limbs = defaultdict(Counter)
+    for k in key:
+        lb = led[k["panel"]].get("limb")
+        if lb:
+            limbs[(k["set"], k["edit_kind"], k["arm"])][lb] += 1
+    print("\n  limb labels  set      kind    arm      " + " ".join(f"{x:>9}" for x in LIMBS))
+    for g in sorted(limbs):
+        print(f"               {g[0]:<8} {g[1]:<7} {g[2]:<8} "
+              + " ".join(f"{limbs[g][x]:>9}" for x in LIMBS))
     print("\n  set      kind    arm      aiming     n  " + " ".join(f"{v[:9]:>9}" for v in VERDICTS))
     for g in sorted(groups):
         c = groups[g]
@@ -254,8 +279,8 @@ def score(out_dir: Path, aiming_path: str | None) -> dict:
               f"degraded {cnt['degraded']}); of failures, owner+anatomy F = {f:.0%}, no_object Z = {z:.0%}"
               f" (plain drew the object in {len(drew)}/{len(nob)} of those)")
         if pairs:
-            print(f"  paired with in-body controls: {len(pairs)} pairs, control clean minus "
-                  f"attach clean = {gap:+.0%}; attach-only failures {b}, control-only {c_}")
+            print(f"  paired with in-body controls: {len(pairs)} pairs, control edit-right minus "
+                  f"attach edit-right = {gap:+.0%}; attach-only failures {b}, control-only {c_}")
         print(f"  reading: {res['reading']}")
         if aimed is None:
             print("  WARNING: no --aiming file; mis-aimed cases are counted as aimed")
@@ -303,6 +328,7 @@ def self_test() -> None:
             k = kk[e["panel"]]
             e["verdict"] = ("clean" if k["edit_kind"] == "inbody" or k["id"] == "t0"
                             else "anatomy")
+            e["limb"] = "unchanged" if e["verdict"] == "clean" else "added"
         (td / "blind" / "ledger.json").write_text(json.dumps(led))
         (td / "aim.jsonl").write_text("\n".join(json.dumps({"id": f"t{k}", "cls": "target"})
                                                 for k in range(4)))

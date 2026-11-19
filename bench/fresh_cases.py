@@ -319,6 +319,41 @@ def pose_edit(model, img, pose, prompt, seed):
                       generator=model._generator(seed)).images[0]
 
 
+def erase_then_redraw(model, img, c, out, start, n, name):
+    """The painter's order: step 1 clears what is in the way (`pre_instruction`, e.g.
+    remove the hands in front of her chest), step 2 runs the case's own instruction
+    on step 1's output. Same seed for both steps and for the plain control
+    (<id>_seed<k>.png, written by seed_sweep). With `pre_mask` (white = may change,
+    drawn on the source canvas), step 1 is pasted into the source through that mask
+    only, so it cannot touch anyone else. Writes <id>_step1_seed<k>.png and
+    <id>_erase_seed<k>.png plus a sheet for each."""
+    from PIL import Image  # noqa: PLC0415
+
+    from flux2_klein_model import composite  # noqa: PLC0415
+    from run_gate_c import case_seed  # noqa: PLC0415
+    pm = None
+    if c.get("pre_mask"):
+        pm = Image.open(c["pre_mask"]).convert("L")
+        if pm.size != Image.open(c["image"]).size:
+            raise SystemExit(f"{c['id']}: pre_mask is {pm.size}; draw it on the source canvas")
+        pm = pm.resize(img.size, Image.NEAREST)
+    s1p, s2p = [], []
+    for k in range(start, start + n):
+        seed = case_seed(c["id"], k)
+        s1 = model(img, c["pre_instruction"], seed)
+        if pm is not None:
+            s1 = composite(img, s1, pm, model.feather)
+        s1 = s1.convert("RGB").resize(img.size)
+        p1, p2 = out / f"{c['id']}_step1_seed{k}.png", out / f"{c['id']}_erase_seed{k}.png"
+        s1.save(p1)
+        model(s1, c["instruction"], seed).save(p2)
+        s1p.append(p1)
+        s2p.append(p2)
+        print(f"  {c['id']} erase seed{k}: {p1.name} -> {p2.name}")
+    seed_sheet(s1p, out / f"{c['id']}_step1_{name}.png")
+    seed_sheet(s2p, out / f"{c['id']}_erase_{name}.png")
+
+
 def seed_sweep(args):
     """Plain klein only, N seeds per case: <id>_seed<k>.png and <id>_seeds_sheet.png.
     Seed k is case_seed(id, k); k = 0 is the seed every other arm used, so seed0
@@ -354,6 +389,8 @@ def seed_sweep(args):
             print(f"  {c['id']} seed{k} ({seed}) -> {p}")
         name = "seeds_sheet" if start == 0 else f"seeds{start}-{start + args.seeds - 1}_sheet"
         seed_sheet(paths, out / f"{c['id']}_{name}.png")
+        if c.get("pre_instruction"):
+            erase_then_redraw(plain, img, c, out, start, args.seeds, name)
         if c.get("pose_ref"):
             pose = Image.open(c["pose_ref"])
             if pose.size != Image.open(c["image"]).size:

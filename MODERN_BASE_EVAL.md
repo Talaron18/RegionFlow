@@ -1312,3 +1312,53 @@ Consequence: the failure is not missing pose information (the drawing supplied i
 changed nothing) but that this editor cannot *re-pose* a part; it can only add. That is
 the user's skeleton point in its sharpest form: a creator moves the arm, the editor
 grows a new one.
+
+**Pose seed 6, user's note (2026-11-19).** The user judged it the closest: the girl in
+blue raises a navy-sleeved arm holding the axe and keeps her navy glove at her chest. In
+the source only one of her hands is visible (the red mitten in front of her belongs to
+the girl in pink), so a raised right arm need not be an added limb. But the raised arm
+starts too far toward the pink girl, the upper arm is too long, the drawing style
+differs, and it covers where the pink girl's red mitten was. Proportion and covering the
+original arm, not ownership, are what fail here. Still `fail` by the user's label.
+
+## Erase then redraw — the painter's order (rule written before any run, 2026-11-19)
+
+**Idea.** Klein adds a limb rather than moving one. A painter would first erase what is in
+the way, then draw the new pose. Two plain klein steps, same seed: step 1
+`pre_instruction` removes the hand in front of the target's chest; step 2 runs the case's
+instruction on step 1's output. Optional `pre_mask` (user-drawn, white = may change,
+452×640) pastes step 1 into the source only there. The plain control (instruction on the
+source, no step 1) runs on the same seeds in the same call.
+
+**Case.** `smoke-axe-erase`: target the girl in blue; step 1 "Remove the gloved hand held
+up in front of the chest of the girl in the back row in blue, so both of her arms hang
+down at her sides out of view"; step 2 "make the girl in the back row in blue raise her
+right hand and hold an ice axe in it" (the pose2 instruction).
+
+**Labels.** Final images: as in the seed sweep (`no_object` > `wrong_owner` > `anatomy` >
+`off_target` > `correct`), plus the limb label (`unchanged / moved / added / shared /
+removed / other`). Step-1 images: `cleared` (her hand gone, nothing else broken) or
+`not cleared`.
+
+| result | reading |
+|---|---|
+| step 1 `not cleared` in ≥ 6 of 8 | Step 2 was not tested. One re-run with a user-drawn `pre_mask`; no other change. |
+| erase correct ≥ 2 of 8 **and** ≥ plain correct + 2 | Erase-then-redraw gets round add-only on this case: it becomes a column in arm T (needs a step-1 sentence per attach case). |
+| erase within 1 of plain | Clearing the way does not make klein draw a correct arm; the line goes to B (a trained re-posing adapter), justified by arm T. |
+| anything else | report, decide with the user. |
+
+```bash
+python bench/fresh_cases.py --edit --seeds 8 --only smoke-axe-erase \
+  --cases bench/smoke_cases_example.json --edit-dir runs/fresh/smoke_erase
+```
+Sheets: `smoke-axe-erase_seeds_sheet.png` (plain control), `_step1_seeds_sheet.png`,
+`_erase_seeds_sheet.png`.
+
+## Arm T rubric addition (2026-11-19, before any arm-T case)
+
+Every arm-T panel also gets a **limb** label, independent of the verdict: `unchanged`,
+`moved` (an existing limb changed position, nothing added), `added` (a new limb while the
+original stays), `shared` (one limb drawn on two bodies), `removed`, `other`.
+`attach_audit.py --score` refuses unknown labels, warns on missing ones, and prints a
+limb table per set, edit kind and arm. The claim it is for: editors **add** instead of
+**move** when an edit needs a pose change.
