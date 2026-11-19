@@ -1,0 +1,131 @@
+[
+ {
+  "arm": "T",
+  "domain": "photo",
+  "expr_type": "spatial",
+  "image": "runs/fresh/attach_images/tsurugi_group.jpg",
+  "image_wh": [
+   1440,
+   1080
+  ],
+  "target": [
+   995,
+   170,
+   1165,
+   715
+  ],
+  "siblings": [
+   [
+    665,
+    250,
+    792,
+    600
+   ],
+   [
+    905,
+    190,
+    1045,
+    670
+   ],
+   [
+    45,
+    495,
+    335,
+    930
+   ],
+   [
+    325,
+    505,
+    505,
+    915
+   ],
+   [
+    490,
+    465,
+    668,
+    900
+   ],
+   [
+    785,
+    460,
+    975,
+    860
+   ],
+   [
+    650,
+    550,
+    930,
+    1080
+   ]
+  ],
+  "id": "T-tsurugi-umbrella",
+  "edit_kind": "attach",
+  "attach_kind": "hold",
+  "instruction": "Make the man in the bright blue jacket standing at the back hold an open red umbrella over his head",
+  "note": "needs an arm raised: his right hand holds a trekking pole low, his left is at the backpack strap. Near distractor: the crouching man in the blue-and-grey jacket"
+ },
+ {
+  "arm": "T",
+  "domain": "photo",
+  "expr_type": "spatial",
+  "image": "runs/fresh/attach_images/tsurugi_group.jpg",
+  "image_wh": [
+   1440,
+   1080
+  ],
+  "target": [
+   995,
+   170,
+   1165,
+   715
+  ],
+  "siblings": [
+   [
+    665,
+    250,
+    792,
+    600
+   ],
+   [
+    905,
+    190,
+    1045,
+    670
+   ],
+   [
+    45,
+    495,
+    335,
+    930
+   ],
+   [
+    325,
+    505,
+    505,
+    915
+   ],
+   [
+    490,
+    465,
+    668,
+    900
+   ],
+   [
+    785,
+    460,
+    975,
+    860
+   ],
+   [
+    650,
+    550,
+    930,
+    1080
+   ]
+  ],
+  "id": "T-tsurugi-jacket",
+  "edit_kind": "inbody",
+  "instruction": "Change the jacket of the man in the bright blue jacket standing at the back to red",
+  "note": "in-body control for T-tsurugi-umbrella: same person, same box"
+ }
+]
