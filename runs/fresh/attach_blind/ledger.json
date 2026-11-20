@@ -65,9 +65,10 @@
  {
   "panel": "panel_0009",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Make the player with number 42 on the right hold a helmet in his left hand"
+  "instruction": "Make the player with number 42 on the right hold a helmet in his left hand",
+  "limb_note": ""
  },
  {
   "panel": "panel_0010",
@@ -79,9 +80,10 @@
  {
   "panel": "panel_0011",
   "verdict": "wrong_owner",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a red scarf around the neck of the bare-headed prisoner with yellow hair in the center"
+  "instruction": "Put a red scarf around the neck of the bare-headed prisoner with yellow hair in the center",
+  "limb_note": "mis-aimed; scarf on neighbour"
  },
  {
   "panel": "panel_0012",
@@ -114,9 +116,10 @@
  {
   "panel": "panel_0016",
   "verdict": "identity",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a red headband on the player in the white number 34 jersey who is shooting"
+  "instruction": "Put a red headband on the player in the white number 34 jersey who is shooting",
+  "limb_note": ""
  },
  {
   "panel": "panel_0017",
@@ -170,23 +173,26 @@
  {
   "panel": "panel_0024",
   "verdict": "degraded",
-  "limb": null,
+  "limb": "moved",
   "notes": "it seems that the umbrella goes through the woman's body",
-  "instruction": "Make the woman with curly hair in the black vest and red sleeves on the far right hold a red umbrella"
+  "instruction": "Make the woman with curly hair in the black vest and red sleeves on the far right hold a red umbrella",
+  "limb_note": "uncertain: hand appears at chest holding shaft; that arm was hidden before"
  },
  {
   "panel": "panel_0025",
   "verdict": "clean",
-  "limb": null,
+  "limb": "moved",
   "notes": "",
-  "instruction": "Make the player wearing number 81 on the left hold a football"
+  "instruction": "Make the player wearing number 81 on the left hold a football",
+  "limb_note": "hanging arm bent to cradle the ball"
  },
  {
   "panel": "panel_0026",
   "verdict": "off_target",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a small hawk on the shoulder of the player with number 52"
+  "instruction": "Put a small hawk on the shoulder of the player with number 52",
+  "limb_note": ""
  },
  {
   "panel": "panel_0027",
@@ -212,16 +218,18 @@
  {
   "panel": "panel_0030",
   "verdict": "wrong_owner",
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the girl with long black hair, second from the left, hold a cup of tea"
+  "limb": "other",
+  "notes": "one of the left 2 girls have 3 arms, but I can't tell which. both might",
+  "instruction": "Make the girl with long black hair, second from the left, hold a cup of tea",
+  "limb_note": "neighbour redrawn to resemble the target holds the cup; target's lap hand unchanged"
  },
  {
   "panel": "panel_0031",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Make the bearded man in the black jacket hold a bouquet of flowers"
+  "instruction": "Make the bearded man in the black jacket hold a bouquet of flowers",
+  "limb_note": ""
  },
  {
   "panel": "panel_0032",
@@ -247,9 +255,10 @@
  {
   "panel": "panel_0035",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put sunglasses on the soldier marching on the far left in the front"
+  "instruction": "Put sunglasses on the soldier marching on the far left in the front",
+  "limb_note": ""
  },
  {
   "panel": "panel_0036",
@@ -296,9 +305,10 @@
  {
   "panel": "panel_0042",
   "verdict": "wrong_owner",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Make the tall cadet saluting at center right hold a folded American flag in her left hand"
+  "instruction": "Make the tall cadet saluting at center right hold a folded American flag in her left hand",
+  "limb_note": "flag in the hand already hanging at her side"
  },
  {
   "panel": "panel_0043",
@@ -352,16 +362,18 @@
  {
   "panel": "panel_0050",
   "verdict": "clean",
-  "limb": null,
+  "limb": "moved",
   "notes": "",
-  "instruction": "Make the girl in the brown shirt hold a bouquet of flowers"
+  "instruction": "Make the girl in the brown shirt hold a bouquet of flowers",
+  "limb_note": "hip hand moved to hold bouquet at waist"
  },
  {
   "panel": "panel_0051",
   "verdict": "wrong_owner",
-  "limb": null,
+  "limb": "moved",
   "notes": "",
-  "instruction": "Make the soldier marching in front in the center hold a small American flag in his right hand"
+  "instruction": "Make the soldier marching in front in the center hold a small American flag in his right hand",
+  "limb_note": "hanging arm raised to hold flag at shoulder"
  },
  {
   "panel": "panel_0052",
@@ -373,9 +385,10 @@
  {
   "panel": "panel_0053",
   "verdict": "wrong_owner",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a puppy on the knee of the woman in the pink jacket sitting in front"
+  "instruction": "Put a puppy on the knee of the woman in the pink jacket sitting in front",
+  "limb_note": ""
  },
  {
   "panel": "panel_0054",
@@ -415,9 +428,10 @@
  {
   "panel": "panel_0059",
   "verdict": "no_object",
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the captain in black with the red sash in the center hold a lantern in his raised left hand"
+  "limb": "moved",
+  "notes": "moved right arm and added the lantern to it, which is wrong",
+  "instruction": "Make the captain in black with the red sash in the center hold a lantern in his raised left hand",
+  "limb_note": "raised lantern arm from the captain's right shoulder, gesturing hand kept; could be added"
  },
  {
   "panel": "panel_0060",
@@ -464,9 +478,10 @@
  {
   "panel": "panel_0066",
   "verdict": "wrong_owner",
-  "limb": null,
+  "limb": "other",
   "notes": "",
-  "instruction": "Make the girl in the green top in the middle hold a red balloon in her raised hand"
+  "instruction": "Make the girl in the green top in the middle hold a red balloon in her raised hand",
+  "limb_note": "three raised hands become one plus a string hand near her shoulder; ownership unclear"
  },
  {
   "panel": "panel_0067",
@@ -478,9 +493,10 @@
  {
   "panel": "panel_0068",
   "verdict": "anatomy",
-  "limb": null,
+  "limb": "removed",
   "notes": "",
-  "instruction": "Make the girl in the yellow jacket on the right hold a small flag in her raised hand"
+  "instruction": "Make the girl in the yellow jacket on the right hold a small flag in her raised hand",
+  "limb_note": "V-sign hand gone; hip arm raised to hold the flag (also moved)"
  },
  {
   "panel": "panel_0069",
@@ -499,9 +515,10 @@
  {
   "panel": "panel_0071",
   "verdict": "clean",
-  "limb": null,
+  "limb": "moved",
   "notes": "",
-  "instruction": "Make the tall man on the far right hold a microphone"
+  "instruction": "Make the tall man on the far right hold a microphone",
+  "limb_note": "clapping hands become one hand holding the mic"
  },
  {
   "panel": "panel_0072",
@@ -513,9 +530,10 @@
  {
   "panel": "panel_0073",
   "verdict": "wrong_owner",
-  "limb": null,
+  "limb": "other",
   "notes": "",
-  "instruction": "Make the officer in the white uniform on the far left hold a red flag"
+  "instruction": "Make the officer in the white uniform on the far left hold a red flag",
+  "limb_note": "new figure at frame edge holds the flag; target unchanged"
  },
  {
   "panel": "panel_0074",
@@ -527,9 +545,10 @@
  {
   "panel": "panel_0075",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put sunglasses on the Marilyn with pink hair on the green background in the center"
+  "instruction": "Put sunglasses on the Marilyn with pink hair on the green background in the center",
+  "limb_note": ""
  },
  {
   "panel": "panel_0076",
@@ -569,9 +588,10 @@
  {
   "panel": "panel_0081",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a black spiked helmet on the man in the white uniform in the center"
+  "instruction": "Put a black spiked helmet on the man in the white uniform in the center",
+  "limb_note": ""
  },
  {
   "panel": "panel_0082",
@@ -583,9 +603,10 @@
  {
   "panel": "panel_0083",
   "verdict": "clean",
-  "limb": null,
+  "limb": "added",
   "notes": "",
-  "instruction": "Make the man in the front row wearing a purple stole hold a rolled diploma above his head"
+  "instruction": "Make the man in the front row wearing a purple stole hold a rolled diploma above his head",
+  "limb_note": "linked/crossed arms stay and a raised arm with the diploma appears"
  },
  {
   "panel": "panel_0084",
@@ -751,16 +772,18 @@
  {
   "panel": "panel_0107",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a small white dog on the lap of the woman in the olive T-shirt on the far left"
+  "instruction": "Put a small white dog on the lap of the woman in the olive T-shirt on the far left",
+  "limb_note": ""
  },
  {
   "panel": "panel_0108",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a small cat on the shoulder of the girl in the yellow jacket in front"
+  "instruction": "Put a small cat on the shoulder of the girl in the yellow jacket in front",
+  "limb_note": ""
  },
  {
   "panel": "panel_0109",
@@ -786,9 +809,10 @@
  {
   "panel": "panel_0112",
   "verdict": "clean",
-  "limb": null,
+  "limb": "moved",
   "notes": "",
-  "instruction": "Make the small child in the straw hat hold a red balloon"
+  "instruction": "Make the small child in the straw hat hold a red balloon",
+  "limb_note": "side arm raised to hold the balloon string"
  },
  {
   "panel": "panel_0113",
@@ -807,9 +831,10 @@
  {
   "panel": "panel_0115",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a small bird on the head of the girl with long black hair on the right"
+  "instruction": "Put a small bird on the head of the girl with long black hair on the right",
+  "limb_note": ""
  },
  {
   "panel": "panel_0116",
@@ -870,16 +895,18 @@
  {
   "panel": "panel_0124",
   "verdict": "no_object",
-  "limb": null,
+  "limb": "other",
   "notes": "",
-  "instruction": "Make the kneeling man in the white robe on the right, who is offering a cup, hold a lit candle in his other hand"
+  "instruction": "Make the kneeling man in the white robe on the right, who is offering a cup, hold a lit candle in his other hand",
+  "limb_note": "kneeling figure replaced by a redrawn man holding the candle"
  },
  {
   "panel": "panel_0125",
   "verdict": "identity",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a red baseball cap on the woman in the blue UCLA T-shirt in the middle"
+  "instruction": "Put a red baseball cap on the woman in the blue UCLA T-shirt in the middle",
+  "limb_note": "mis-aimed"
  },
  {
   "panel": "panel_0126",
@@ -905,9 +932,10 @@
  {
   "panel": "panel_0129",
   "verdict": "wrong_owner",
-  "limb": null,
+  "limb": "other",
   "notes": "",
-  "instruction": "Put a red cape on the yellow robot at the top right"
+  "instruction": "Put a red cape on the yellow robot at the top right",
+  "limb_note": "new caped robot drawn; target unchanged"
  },
  {
   "panel": "panel_0130",
@@ -926,9 +954,10 @@
  {
   "panel": "panel_0132",
   "verdict": "clean",
-  "limb": null,
+  "limb": "moved",
   "notes": "",
-  "instruction": "Make the player with number 9 on the right hold a football under his arm"
+  "instruction": "Make the player with number 9 on the right hold a football under his arm",
+  "limb_note": "hanging arm bent to hold the ball"
  },
  {
   "panel": "panel_0133",
@@ -940,16 +969,18 @@
  {
   "panel": "panel_0134",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a red cap on the man on the far left"
+  "instruction": "Put a red cap on the man on the far left",
+  "limb_note": "mis-aimed"
  },
  {
   "panel": "panel_0135",
   "verdict": "degraded",
-  "limb": null,
+  "limb": "moved",
   "notes": "the book doesn't look right",
-  "instruction": "Make the man in the wide black hat on the right hold a book in his raised left hand"
+  "instruction": "Make the man in the wide black hat on the right hold a book in his raised left hand",
+  "limb_note": "forceps hand gone, other arm raised with the book; still two hands"
  },
  {
   "panel": "panel_0136",
@@ -996,9 +1027,10 @@
  {
   "panel": "panel_0142",
   "verdict": "clean",
-  "limb": null,
+  "limb": "moved",
   "notes": "",
-  "instruction": "Make the man in the bright blue jacket standing at the back hold an open red umbrella over his head"
+  "instruction": "Make the man in the bright blue jacket standing at the back hold an open red umbrella over his head",
+  "limb_note": "uncertain: hand at chest holds the umbrella; that arm was hidden behind the backpack"
  },
  {
   "panel": "panel_0143",
@@ -1045,9 +1077,10 @@
  {
   "panel": "panel_0149",
   "verdict": "identity",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a red hat on the old man standing on the far left"
+  "instruction": "Put a red hat on the old man standing on the far left",
+  "limb_note": ""
  },
  {
   "panel": "panel_0150",
@@ -1087,9 +1120,10 @@
  {
   "panel": "panel_0155",
   "verdict": "clean",
-  "limb": null,
+  "limb": "moved",
   "notes": "",
-  "instruction": "Make the player with number 9 in the center of the front row hold a trophy"
+  "instruction": "Make the player with number 9 in the center of the front row hold a trophy",
+  "limb_note": "arms brought forward to hold the trophy"
  },
  {
   "panel": "panel_0156",
@@ -1122,16 +1156,18 @@
  {
   "panel": "panel_0160",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a small bird on the head of the girl in the pink jacket on the right"
+  "instruction": "Put a small bird on the head of the girl in the pink jacket on the right",
+  "limb_note": ""
  },
  {
   "panel": "panel_0161",
   "verdict": "wrong_owner",
-  "limb": null,
+  "limb": "other",
   "notes": "",
-  "instruction": "Make the man in the black patterned T-shirt on the far right hold a red flag"
+  "instruction": "Make the man in the black patterned T-shirt on the far right hold a red flag",
+  "limb_note": "new person drawn holding the flag; target unchanged"
  },
  {
   "panel": "panel_0162",
@@ -1171,9 +1207,10 @@
  {
   "panel": "panel_0167",
   "verdict": "degraded",
-  "limb": null,
+  "limb": "moved",
   "notes": "",
-  "instruction": "Make the man in the bright green jacket on the right hold a red flag"
+  "instruction": "Make the man in the bright green jacket on the right hold a red flag",
+  "limb_note": "thumbs-up hand now grips the flag pole"
  },
  {
   "panel": "panel_0168",
@@ -1199,9 +1236,10 @@
  {
   "panel": "panel_0171",
   "verdict": "off_target",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a red flower lei around the neck of the man wearing glasses in the front row, second from the right"
+  "instruction": "Put a red flower lei around the neck of the man wearing glasses in the front row, second from the right",
+  "limb_note": ""
  },
  {
   "panel": "panel_0172",
@@ -1241,23 +1279,26 @@
  {
   "panel": "panel_0177",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a gold medal around the neck of the player with number 3 on the left"
+  "instruction": "Put a gold medal around the neck of the player with number 3 on the left",
+  "limb_note": "medal at the hand already on the chest"
  },
  {
   "panel": "panel_0178",
   "verdict": "clean",
-  "limb": null,
+  "limb": "moved",
   "notes": "",
-  "instruction": "Make the girl with short brown hair in the center hold a cherry blossom branch in her right hand"
+  "instruction": "Make the girl with short brown hair in the center hold a cherry blossom branch in her right hand",
+  "limb_note": "one hand leaves the face to hold the branch"
  },
  {
   "panel": "panel_0179",
   "verdict": "clean",
-  "limb": null,
+  "limb": "moved",
   "notes": "",
-  "instruction": "Make the woman in the grey USC T-shirt at the front right hold a glass of red wine"
+  "instruction": "Make the woman in the grey USC T-shirt at the front right hold a glass of red wine",
+  "limb_note": "clasped hands; one raised to hold the glass"
  },
  {
   "panel": "panel_0180",
@@ -1269,9 +1310,10 @@
  {
   "panel": "panel_0181",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Make the girl in the front center, with her face turned up and one arm raised, hold a rolled diploma in her raised hand"
+  "instruction": "Make the girl in the front center, with her face turned up and one arm raised, hold a rolled diploma in her raised hand",
+  "limb_note": "raised hand now holds the diploma"
  },
  {
   "panel": "panel_0182",
@@ -1283,9 +1325,10 @@
  {
   "panel": "panel_0183",
   "verdict": "identity",
-  "limb": null,
+  "limb": "moved",
   "notes": "mild, but noticeable",
-  "instruction": "Make the girl crouching in front with the camera hold an ice cream cone in her left hand"
+  "instruction": "Make the girl crouching in front with the camera hold an ice cream cone in her left hand",
+  "limb_note": "camera hands; one holds the cone, the other at the hair"
  },
  {
   "panel": "panel_0184",
@@ -1339,9 +1382,10 @@
  {
   "panel": "panel_0191",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Make the girl in the orange jacket and pink striped shirt hold a camera in her raised hand"
+  "instruction": "Make the girl in the orange jacket and pink striped shirt hold a camera in her raised hand",
+  "limb_note": "raised hand now holds the camera"
  },
  {
   "panel": "panel_0192",
@@ -1430,9 +1474,10 @@
  {
   "panel": "panel_0204",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Make the woman in the flowered white dress on the right hold a basket of fruit"
+  "instruction": "Make the woman in the flowered white dress on the right hold a basket of fruit",
+  "limb_note": "cloak hand now holds the basket"
  },
  {
   "panel": "panel_0205",
@@ -1451,9 +1496,10 @@
  {
   "panel": "panel_0207",
   "verdict": "wrong_owner",
-  "limb": null,
+  "limb": "other",
   "notes": "",
-  "instruction": "Make the prisoner in a cap at the front left, walking with his back to us, hold a broom"
+  "instruction": "Make the prisoner in a cap at the front left, walking with his back to us, hold a broom",
+  "limb_note": "mis-aimed; neighbour replaced by a redrawn figure"
  },
  {
   "panel": "panel_0208",
@@ -1486,9 +1532,10 @@
  {
   "panel": "panel_0212",
   "verdict": "clean",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a black hat on the blonde girl on the far left"
+  "instruction": "Put a black hat on the blonde girl on the far left",
+  "limb_note": "mis-aimed"
  },
  {
   "panel": "panel_0213",
@@ -1514,9 +1561,10 @@
  {
   "panel": "panel_0216",
   "verdict": "anatomy",
-  "limb": null,
+  "limb": "moved",
   "notes": "",
-  "instruction": "Make the girl in the pink hoodie on the right hold a steaming mug in her hands"
+  "instruction": "Make the girl in the pink hoodie on the right hold a steaming mug in her hands",
+  "limb_note": "uncertain: knee-hugging hand moved to the mug"
  },
  {
   "panel": "panel_0217",
@@ -1556,9 +1604,10 @@
  {
   "panel": "panel_0222",
   "verdict": "degraded",
-  "limb": null,
+  "limb": "unchanged",
   "notes": "",
-  "instruction": "Put a sun hat on the girl in the purple striped shirt on the right"
+  "instruction": "Put a sun hat on the girl in the purple striped shirt on the right",
+  "limb_note": ""
  },
  {
   "panel": "panel_0223",
@@ -1605,9 +1654,10 @@
  {
   "panel": "panel_0229",
   "verdict": "anatomy",
-  "limb": null,
+  "limb": "moved",
   "notes": "identity change as well",
-  "instruction": "Make the girl with short grey hair on the far left hold an umbrella"
+  "instruction": "Make the girl with short grey hair on the far left hold an umbrella",
+  "limb_note": "pointing hand now holds the umbrella"
  },
  {
   "panel": "panel_0230",
