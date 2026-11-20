@@ -2,61 +2,61 @@
  {
   "panel": "h00",
   "instruction": "Make the officer in the white uniform on the far left hold a red flag",
-  "holder": null,
-  "notes": ""
+  "holder": "target",
+  "notes": "correct person, face changed"
  },
  {
   "panel": "h01",
   "instruction": "Make the girl in the green top in the middle hold a red balloon in her raised hand",
-  "holder": null,
-  "notes": ""
+  "holder": "target",
+  "notes": "but the girl nearby lost her right arm.  it used to cross with the target's left arm"
  },
  {
   "panel": "h02",
   "instruction": "Make the man in the black patterned T-shirt on the far right hold a red flag",
-  "holder": null,
-  "notes": ""
+  "holder": "no_one,
+  "notes": "flag coming out behind his back"
  },
  {
   "panel": "h03",
   "instruction": "Make the girl with long black hair, second from the left, hold a cup of tea",
-  "holder": null,
-  "notes": ""
+  "holder": "new",
+  "notes": "target's left hand lost, neighbor holding cup but neighbor's hair color and style changed too"
  },
  {
   "panel": "h04",
   "instruction": "Make the man in the black patterned T-shirt on the far right hold a red flag",
-  "holder": null,
+  "holder": "none",
   "notes": ""
  },
  {
   "panel": "h05",
   "instruction": "Make the officer in the white uniform on the far left hold a red flag",
-  "holder": null,
-  "notes": ""
+  "holder": "none,
+  "notes": "turned a person's clothes red instead"
  },
  {
   "panel": "h06",
   "instruction": "Make the kneeling man in the white robe on the right, who is offering a cup, hold a lit candle in his other hand",
-  "holder": null,
-  "notes": ""
+  "holder": "target",
+  "notes": "person right, but hand wrong. face changed. unmentioned edit"
  },
  {
   "panel": "h07",
   "instruction": "Make the girl in the green top in the middle hold a red balloon in her raised hand",
-  "holder": null,
-  "notes": ""
+  "holder": "target",
+  "notes": "but the girl nearby lost her right arm.  it used to cross with the target's left arm"
  },
  {
   "panel": "h08",
   "instruction": "Make the kneeling man in the white robe on the right, who is offering a cup, hold a lit candle in his other hand",
-  "holder": null,
+  "holder": "none",
   "notes": ""
  },
  {
   "panel": "h09",
   "instruction": "Make the girl with long black hair, second from the left, hold a cup of tea",
-  "holder": null,
+  "holder": "none",
   "notes": ""
  }
 ]
