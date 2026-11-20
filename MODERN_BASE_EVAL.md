@@ -1516,3 +1516,40 @@ test with no hands (wear and in-body only).
 **Arm T total: 70 cases, 51 attach + 19 controls**; attach domains photo 27 / painting 13
 / illustration 11; kinds hold 32 / wear 13 / on-body 6. `--check` passes. Not frozen yet:
 the user reviews the instructions, then the sha256 is recorded here before any run.
+
+## Arm T — first result, primary arm complete (2026-11-20, user's blind sitting)
+
+Case file unchanged since commit 5ce3b81: sha256 `2bfd2810cfb553aa3c9dabb97dcf4226b5e5ae5b8b624d0fcdab9289263036fa`
+(recorded as the freeze; the run used this file). 240 panels built; 104 judged. The judged
+set is complete for the **primary arm (crop-box): 51 attach + 19 controls**; plain and
+paste-back were sampled (11 attach each) and are descriptive only. Limb labels: 1 of 104
+filled. Sa2VA aiming file not pushed, so every case counts as aimed (scorer warns).
+
+**Pre-registered statistics (crop-box, `attach_audit.py --score`):**
+- A (edit right on attach) = **31/51 = 61%**
+- of the 20 failures: wrong_owner 10, anatomy 4, identity 4, no_object 2; F (owner +
+  anatomy) = **70%**, Z (no_object) = 10%
+- paired with the 19 in-body controls on the same people: controls edit-right 19/19,
+  gap **+53 points**; discordant pairs **10 attach-only failures vs 0 control-only**
+  (sign test p ≈ 0.002)
+- **Reading by the table: "mixed".** Every condition of the "specific residual" row holds
+  (F ≥ 50%, gap ≥ 25) except A ≤ 50%: A is 61%.
+- Without the airforce pair (user: "the instruction itself is wrong; the female cadet is
+  front right"; my instruction error, excluded with that reason, not re-run): A 31/50 = 62%,
+  F 68%, gap +50, discordant 9 vs 0. Same reading.
+
+**What it says, without overriding the band:** on the same people, changing clothes never
+failed (19/19) while attaching an object failed 20 times in 51, and the failures are mostly
+the object going to someone else. Attachment is reliably harder than in-body editing; it
+is not frequent enough on this set to clear the 50% bar fixed beforehand. By hand (descriptive):
+crowded 7/15 edit-right, free 11/17, wear/on-body 13/19.
+
+**User's qualitative notes (all arms):** lighting and style of the added object often do
+not match the painting or photo; left/right sometimes confused; crop-box recolours
+siblings inside the box; when part of an arm is occluded the edit stops at the visible
+part; people or figures appear from nowhere, and colours change without being asked
+(the umbrella case).
+
+**Owed before this is final:** (1) the Sa2VA aiming file (`runs/fresh/attach_sa2va.jsonl`),
+so left/right failures can be split into "the segmenter picked the wrong person" vs "klein
+attached to the wrong person"; (2) limb labels on the 51 crop-box attach panels.
