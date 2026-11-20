@@ -1692,3 +1692,43 @@ excluded with that reason and not re-run. Aimed, without the airforce pair: **A 
 items are now covered: the aiming file is used above, and limb labels are proposed
 (pending the user's recheck). Its copy of the user's qualitative notes duplicates the
 judge's impressions above and is not repeated.
+
+**Limb labels confirmed by the user (2026-11-20):** the 51 crop-box attach labels in
+`ledger.json` are now the user's (rechecked), not proposals.
+
+### Arm T — the judge's account after rechecking (2026-11-20; qualitative, post hoc)
+
+The user's ranking, from easiest to hardest edit:
+1. **Colour changes:** best. Letters on the object (printed text on a shirt) often change too.
+2. **Garment-style changes** (pants → shorts, hoodie → jacket): occasional mistakes.
+3. **Attachment, by how much the object must interact with the body:**
+   - placed objects with no interaction (dog on lap, bird on head, glasses, hats): best;
+   - single-hand objects (flag, balloon, helmet, wine glass): worse (exception: the K-On
+     cherry-blossom branch);
+   - two-hand held objects (camera, mug): worse (exception: the trophy, but the original
+     hands were behind the body);
+   - objects that engage hands *and* body (umbrella: hand and shoulder; guitar: both hands,
+     maybe lap): worst.
+
+The crop-box verdicts grouped this way (my grouping by object word; post hoc, small n):
+placed 11/15, single-hand 10/18, two-hand 6/9, umbrella/guitar 2/4. Placed objects are
+clearly easiest. Single-hand vs two-hand does not order as ranked here: flags drive the
+single-hand failures (1 of 6 flags edit-right). The trend "more interaction, more failure"
+is a hypothesis for the next case set, not a result.
+
+Three mechanisms the user proposes:
+1. **Left/right hand confusion:** occurs, not often.
+2. **Occluded limbs are ignored.** When part of an arm is hidden behind another person
+   (alps6: arms over the friends' shoulders; upper arm visible, hand visible again behind
+   the neighbour's neck), klein does not connect the visible pieces into one arm. It
+   treats the hand as absent and draws new hands: the three-arm guitar panel.
+3. **Low contrast between a hand and what is behind it.** Echoing the attention probe (more
+   attention to bright regions): in K-On tea, white hands in front of dark coats, and the
+   left two girls' arms are not told apart; in the poster smoke run, the navy glove sits on
+   a navy jacket. The hand "blends into" the clothes for the model (user's reading).
+
+All three say the same thing at different levels: the editor has no **amodal, part-level
+model of each person**, i.e. which arm, hidden or not, ends in which hand, and which hand
+belongs to whom. That is the user's stick-figure point, now with arm-T evidence: the
+failures are not mostly extra limbs (2/51) but objects bound to the wrong body or to a
+newly drawn one, and hands lost behind occluders or into same-coloured clothes.
