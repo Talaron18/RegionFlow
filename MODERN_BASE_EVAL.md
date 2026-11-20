@@ -1792,3 +1792,25 @@ Post hoc, from the per-case table (not a finding; for the next question only):
 - Several notes say "both hands visible, arms unclear" (rambrandt2-book) or describe a
   neighbour's arm crossing the target's (hsm1, yama5): arm-to-hand continuity, not
   hand visibility, which these two tags do not measure.
+
+## Invented-holder check (rule written before judging, 2026-11-20)
+
+**Question.** The 5 crop-box cases where a new or redrawn figure holds the object (alps4
+flag, hsm1 balloon, kon1 tea, davinci1 candle, nemzeti flag): does klein invent the holder
+when it sees the whole image (plain), or only inside the crop-box crop?
+
+**Panels.** Their plain and paste-back panels from the existing sitting (10), copied to
+`runs/fresh/holder_check/h00–h09.png` in a new shuffled order; arm hidden, key in
+`key.json`. Paste-back is the plain output pasted through the target mask, so it shows
+the same holder or cuts it; **plain decides**, paste is reported beside.
+
+**One label per panel, `holder`:** `target` (the referred person holds it), `existing`
+(another person already in the source holds it), `new` (a person or figure who is not in
+the source holds it, or the group is redrawn), `no_one` (object floats or lies), `none`
+(no object).
+
+| plain panels, of 5 | reading |
+|---|---|
+| `new` in ≥ 3 | klein invents holders from the full image too: an editor behaviour, not a crop artefact |
+| `target` in ≥ 4 | inventing is caused by the crop: crop-box removes the context klein needs |
+| otherwise | mixed: report the cases |
