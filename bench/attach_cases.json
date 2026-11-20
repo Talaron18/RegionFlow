@@ -62,7 +62,8 @@
   "edit_kind": "attach",
   "attach_kind": "hold",
   "instruction": "Make the man in the bright blue jacket standing at the back hold an open red umbrella over his head",
-  "note": "needs an arm raised: his right hand holds a trekking pole low, his left is at the backpack strap. Near distractor: the crouching man in the blue-and-grey jacket"
+  "note": "needs an arm raised: his right hand holds a trekking pole low, his left is at the backpack strap. Near distractor: the crouching man in the blue-and-grey jacket",
+  "hand": "crowded"
  },
  {
   "arm": "T",

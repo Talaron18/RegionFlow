@@ -125,6 +125,7 @@ def fresh_items(cases_path: Path, edit_dir: Path) -> list[dict]:
             if p.exists():
                 items.append({"set": "fresh", "id": c["id"], "arm": arm,
                               "pair": f"{c['image']}|{list(c['target'])}",
+                              "hand": c.get("hand", ""),
                               "edit_kind": c["edit_kind"],
                               "attach_kind": c.get("attach_kind", ""),
                               "domain": c["domain"], "instruction": c["instruction"],
@@ -159,7 +160,7 @@ def refedit_items(ids_path: Path, arms: list[str], args) -> list[dict]:
                 print(f"  {cid}: no {name} image at {p}")
                 continue
             items.append({"set": "refedit", "id": cid, "arm": name, "edit_kind": "attach",
-                          "pair": "",
+                          "pair": "", "hand": "",
                           "attach_kind": "", "domain": "photo",
                           "instruction": row["editing_instruction"],
                           "src": src, "edit_path": p,
@@ -188,7 +189,7 @@ def build(args) -> None:
         ledger.append({"panel": pid, "verdict": None, "limb": None, "notes": "",
                        "instruction": it["instruction"]})
         key.append({"panel": pid, **{k: it[k] for k in
-                    ("set", "id", "arm", "edit_kind", "attach_kind", "domain", "pair")}})
+                    ("set", "id", "arm", "edit_kind", "attach_kind", "domain", "pair", "hand")}})
     (out / "ledger.json").write_text(json.dumps(ledger, indent=1))
     (out / "key.json").write_text(json.dumps(key, indent=1))
     print(f"{len(items)} panels -> {out}  (fill 'verdict' in ledger.json; do not open key.json)")
@@ -282,6 +283,14 @@ def score(out_dir: Path, aiming_path: str | None) -> dict:
             print(f"  paired with in-body controls: {len(pairs)} pairs, control edit-right minus "
                   f"attach edit-right = {gap:+.0%}; attach-only failures {b}, control-only {c_}")
         print(f"  reading: {res['reading']}")
+        # descriptive split, not part of the reading: is the hand that should hold the
+        # object free (open space), crowded (overlapping someone), or hidden in the source?
+        hk = {k["id"]: k.get("hand", "") for k in key}
+        by = defaultdict(Counter)
+        for i in att:
+            by[hk.get(i) or "untagged"]["ok" if prim[i] in EDIT_OK else "fail"] += 1
+        print("  by hand (attach, primary arm): " + "  ".join(
+            f"{h} {c['ok']}/{c['ok'] + c['fail']}" for h, c in sorted(by.items())))
         if aimed is None:
             print("  WARNING: no --aiming file; mis-aimed cases are counted as aimed")
     return res
