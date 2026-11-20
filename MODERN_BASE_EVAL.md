@@ -1506,3 +1506,13 @@ previews; every box checked on an overlay before committing.
 - Max 2 counted cases per image; no arm-T image may be used in arm A.
 - Not yet frozen: the sha256 is recorded once the painting cases are added and `--check`
   passes.
+
+**Paintings added (2026-11-20).** 9 paintings, 17 cases (13 attach, 4 in-body controls):
+Botticelli, Leonardo's Adoration, van Gogh's Prisoners' Round, two Monets, Werner's
+Proclamation, Warhol's Marilyns, The Night Watch, The Anatomy Lesson. Targets avoid the
+nude Venus and the cadaver. The Warhol grid is nine copies of one face: a pure sibling
+test with no hands (wear and in-body only).
+
+**Arm T total: 70 cases, 51 attach + 19 controls**; attach domains photo 27 / painting 13
+/ illustration 11; kinds hold 32 / wear 13 / on-body 6. `--check` passes. Not frozen yet:
+the user reviews the instructions, then the sha256 is recorded here before any run.
