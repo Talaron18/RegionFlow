@@ -1732,3 +1732,40 @@ model of each person**, i.e. which arm, hidden or not, ends in which hand, and w
 belongs to whom. That is the user's stick-figure point, now with arm-T evidence: the
 failures are not mostly extra limbs (2/51) but objects bound to the wrong body or to a
 newly drawn one, and hands lost behind occluders or into same-coloured clothes.
+
+## Hand-visibility test (reading rule written before any tag, 2026-11-20)
+
+**Question.** Do crop-box attach failures concentrate where the hand that must hold the
+object is hidden or hard to tell apart in the source? If yes, part-level, amodal body
+structure (which hand, hidden or not, belongs to whom) is the method target. If no, the
+user's occlusion and contrast observations are anecdotes and the target must be found
+elsewhere.
+
+**Cases.** The 30 hold cases Sa2VA aimed (31 minus airforce, excluded for its instruction
+error). Wear and on-body cases have no holding hand and are not tagged.
+
+**Tags** (user, from `runs/fresh/hand_tags/sheet_*.png`: source crop with the target box,
+no edits, no verdicts), two booleans per case in `runs/fresh/hand_tags/hand_tags.json`:
+- `occluded`: the hand or forearm the edit needs is partly or wholly hidden (behind a
+  person or object, or cut by the frame edge);
+- `low_contrast`: that hand or forearm is hard to separate from what is behind or beside
+  it (same colour as the clothes, or touching another person's hand or arm).
+
+**Statistic.** "Hard" = occluded OR low_contrast. Crop-box edit-right rate (clean +
+off_target + degraded, the user's verdicts) in easy vs hard cases; one-sided Fisher exact
+test that failures are more frequent in hard cases.
+
+| result | reading |
+|---|---|
+| easy − hard ≥ 30 points **and** p ≤ 0.05 | Supported: part-level amodal body structure is the method target. |
+| easy − hard ≤ 10 points (or hard better) | Not supported: hand visibility does not explain the failures. |
+| either group under 5 cases, or anything else | Inconclusive: report the cases. |
+
+Each flag alone is reported, descriptive only. **Known bias, stated now:** the tagger has
+already judged these panels and knows which failed. Tags are from the source only, but
+memory of the outcome can leak in. A second tagger who has not seen the edits would
+remove this; if one is available, their tags are scored as well and reported beside.
+
+```bash
+python bench/hand_tags.py --score runs/fresh/hand_tags/hand_tags.json
+```
