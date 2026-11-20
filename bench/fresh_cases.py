@@ -405,6 +405,17 @@ def seed_sweep(args):
             seed_sheet(ppaths, out / f"{c['id']}_pose_{name}.png")
 
 
+def make_editor(args):
+    """klein (default) or Qwen-Image-Edit behind the same call contract. With qwen the
+    generator is a CPU one (offload moves modules between devices)."""
+    from flux2_klein_model import Flux2KleinModel  # noqa: PLC0415
+    if getattr(args, "editor", "klein") == "qwen":
+        from qwen_edit_model import load_qwen  # noqa: PLC0415
+        adapter = load_qwen(args.qwen_repo, args.qwen_mode, args.device)
+        return Flux2KleinModel(pipe=adapter, device=args.device, offload=True)
+    return Flux2KleinModel(device=args.device, offload=args.offload)
+
+
 def edit(args):
     """klein 4B on each case whose Sa2VA mask exists: plain edit, paste-back
     through the mask (dilated 8 px at 512, scaled), and crop-and-paste-the-box.
@@ -419,9 +430,10 @@ def edit(args):
     cases = json.loads(Path(args.cases).read_text())
     out = Path(args.edit_dir)
     out.mkdir(parents=True, exist_ok=True)
-    plain = Flux2KleinModel(device=args.device, offload=args.offload)
-    crop = Flux2KleinModel(pipe=plain.pipe, device=args.device, offload=args.offload,
-                           crop=True, crop_paste="box")
+    plain = make_editor(args)
+    crop = Flux2KleinModel(pipe=plain.pipe, device=args.device,
+                           offload=plain.offload, crop=True, crop_paste="box")
+    crop.steps, crop.g = plain.steps, plain.g
     for c in cases:
         mpath = Path(args.out_dir) / f"{c['id']}.png"
         if not mpath.exists():
@@ -692,6 +704,10 @@ def main():
     p.add_argument("--seed-start", type=int, default=0,
                    help="with --seeds: first seed index k (seeds k .. k+N-1)")
     p.add_argument("--offload", action="store_true")
+    p.add_argument("--editor", choices=("klein", "qwen"), default="klein")
+    p.add_argument("--qwen-repo", default="Qwen/Qwen-Image-Edit-2511",
+                   help="HF id or local path of the downloaded checkpoint")
+    p.add_argument("--qwen-mode", choices=("nf4", "sequential", "full"), default="nf4")
     p.add_argument("--report", metavar="JSONL")
     p.add_argument("--overrides", metavar="JSON")
     p.add_argument("--self-test", action="store_true")

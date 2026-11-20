@@ -108,7 +108,7 @@ def scaled_box(box, orig_wh, new_wh):
     return [box[0] * sx, box[1] * sy, box[2] * sx, box[3] * sy]
 
 
-def fresh_items(cases_path: Path, edit_dir: Path) -> list[dict]:
+def fresh_items(cases_path: Path, edit_dir: Path, arms=FRESH_ARMS) -> list[dict]:
     from PIL import Image  # noqa: PLC0415
     items = []
     for c in json.loads(cases_path.read_text()):
@@ -120,7 +120,7 @@ def fresh_items(cases_path: Path, edit_dir: Path) -> list[dict]:
             continue
         src = Image.open(src_p)
         box = scaled_box(c["target"], Image.open(c["image"]).size, src.size)
-        for arm in FRESH_ARMS:
+        for arm in arms:
             p = edit_dir / f"{c['id']}_{arm}.png"
             if p.exists():
                 items.append({"set": "fresh", "id": c["id"], "arm": arm,
@@ -173,7 +173,8 @@ def build(args) -> None:
     from PIL import Image  # noqa: PLC0415
     items = []
     if args.fresh_cases:
-        items += fresh_items(Path(args.fresh_cases), Path(args.fresh_edits))
+        arms = tuple(getattr(args, "arms", "").split(",")) if getattr(args, "arms", "") else FRESH_ARMS
+        items += fresh_items(Path(args.fresh_cases), Path(args.fresh_edits), arms)
     if args.refedit_arm:
         items += refedit_items(Path(args.refedit_ids), args.refedit_arm, args)
     if not items:
@@ -360,6 +361,7 @@ def main():
     p.add_argument("--build", action="store_true")
     p.add_argument("--fresh-cases")
     p.add_argument("--fresh-edits", default="runs/fresh/attach_edits")
+    p.add_argument("--arms", default="", help="comma list of fresh arms to panel (default all)")
     p.add_argument("--refedit-arm", action="append", default=[], metavar="NAME:IMGDIR")
     p.add_argument("--refedit-ids", default="bench/attach_ids_refedit.json")
     p.add_argument("--cases", default="bench/cases_refedit_final.json")

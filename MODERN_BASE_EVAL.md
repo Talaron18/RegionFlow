@@ -1836,3 +1836,41 @@ right in plain still costs something on the body: a neighbour's crossing arm is 
 (hsm1), the wrong hand is used (davinci1), faces are redrawn (davinci1, nemzeti). Paste-back
 shows no object in 4 of 5: the object lies outside the target's mask and is cut (its
 known failure).
+
+## Arm T on a second editor: Qwen-Image-Edit (rule written before any run, 2026-11-20)
+
+**Question.** Is the arm-T pattern klein's, or editors' in general? Same 70 frozen cases
+(sha256 `2bfd2810…036fa`), same Sa2VA masks (`runs/fresh/attach_masks`), same arms, same
+seeds, same rubric; only the editor changes.
+
+**Editor.** `Qwen/Qwen-Image-Edit-2511` through `QwenImageEditPlusPipeline`, model-card
+settings (true_cfg_scale 4.0, negative prompt " ", 40 steps, guidance 1.0), wrapped in
+`bench/qwen_edit_model.py` behind klein's call contract. On 24 GB: `--qwen-mode nf4`
+(transformer and text encoder in 4-bit, model CPU offload); the 4-bit quantisation is
+part of the reported setup. The crop-box arm runs the crop at ~0.26 MP as for klein
+(identical geometry; below Qwen's native 1 MP, noted). Tested here with a fake pipe only.
+
+**Judging.** Crop-box panels only (70: 51 attach, 19 controls), the arm the klein
+reading used; verdict and limb label per panel, same rubric.
+
+**Reading** (crop-box, Sa2VA-aimed cases, airforce excluded as for klein):
+- The arm-T table, applied unchanged to Qwen.
+- **"The pattern holds on a second editor"** if the paired control-minus-attach gap is
+  ≥ 25 points with attach-only failures ≥ 3× control-only, **and** owner + anatomy
+  ≥ 50% of attach failures. If the gap is < 10 points, the pattern is klein-specific.
+  Otherwise mixed.
+- Descriptive: invented holders (limb `other`), by-hand split, and the per-domain rates,
+  each beside klein's.
+
+```bash
+# Qwen venv: recent diffusers (QwenImageEditPlusPipeline), transformers, bitsandbytes, accelerate
+python bench/fresh_cases.py --edit --editor qwen --qwen-mode nf4 \
+  --qwen-repo /path/to/Qwen-Image-Edit-2511 \
+  --cases bench/attach_cases.json --out-dir runs/fresh/attach_masks \
+  --edit-dir runs/fresh/attach_edits_qwen
+python bench/attach_audit.py --build --arms cropbox \
+  --fresh-cases bench/attach_cases.json --fresh-edits runs/fresh/attach_edits_qwen \
+  --out-dir runs/fresh/attach_blind_qwen
+python bench/attach_audit.py --score runs/fresh/attach_blind_qwen \
+  --aiming runs/fresh/attach_sa2va.jsonl
+```
