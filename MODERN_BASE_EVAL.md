@@ -1676,3 +1676,19 @@ here: 2 of 51 panels. When an arm has to change, klein mostly moves it (17), and
 gets that right (12/17). The failure that shows up is different: klein **draws a new
 or redrawn figure to hold the object** (`other`, 6 aimed, all failures, 5 of them
 `wrong_owner`). This is post hoc and rests on one labeller's reading.
+
+### Arm T — reconciliation with the parallel write-up (commit e0f200f)
+
+Another session scored the same ledger without `runs/fresh/attach_sa2va.jsonl`, so it
+counted all 51 attach cases as aimed: **A 31/51 = 61%, F 70%, Z 10%, gap +53 over 19
+pairs, discordant 10 vs 0 (p ≈ 0.002); reading mixed.** The frozen rule counts only
+Sa2VA class `target`, so the aimed figures above (A 29/46 = 63%) are the
+pre-registered ones. Both readings agree.
+
+That session also recorded an instruction error, from the user: in the airforce
+image "the instruction itself is wrong; the female cadet is front right". The pair is
+excluded with that reason and not re-run. Aimed, without the airforce pair: **A 29/45 =
+64%, F 69%, gap +44 over 16 pairs, discordant 7 vs 0.** Same reading. Its two "owed"
+items are now covered: the aiming file is used above, and limb labels are proposed
+(pending the user's recheck). Its copy of the user's qualitative notes duplicates the
+judge's impressions above and is not repeated.
