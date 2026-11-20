@@ -3,7 +3,7 @@
   "arm": "T",
   "domain": "photo",
   "expr_type": "spatial",
-  "image": "runs/fresh/attach_images/tsurugi_group.jpg",
+  "image": "runs/fresh/arm-t/tsurugi_group.jpg",
   "image_wh": [
    1440,
    1080
@@ -69,7 +69,7 @@
   "arm": "T",
   "domain": "photo",
   "expr_type": "spatial",
-  "image": "runs/fresh/attach_images/tsurugi_group.jpg",
+  "image": "runs/fresh/arm-t/tsurugi_group.jpg",
   "image_wh": [
    1440,
    1080
@@ -128,5 +128,2780 @@
   "edit_kind": "inbody",
   "instruction": "Change the jacket of the man in the bright blue jacket standing at the back to red",
   "note": "in-body control for T-tsurugi-umbrella: same person, same box"
+ },
+ {
+  "id": "T-airforce-flag",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/airforce.jpg",
+  "image_wh": [
+   1000,
+   667
+  ],
+  "instruction": "Make the tall cadet saluting at center right hold a folded American flag in her left hand",
+  "target": [
+   628,
+   33,
+   872,
+   644
+  ],
+  "siblings": [
+   [
+    828,
+    117,
+    967,
+    617
+   ],
+   [
+    278,
+    61,
+    456,
+    611
+   ],
+   [
+    450,
+    144,
+    583,
+    589
+   ],
+   [
+    583,
+    211,
+    706,
+    578
+   ],
+   [
+    167,
+    128,
+    278,
+    561
+   ],
+   [
+    56,
+    178,
+    156,
+    544
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "crowded"
+ },
+ {
+  "id": "T-airforce-shirt",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "inbody",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/airforce.jpg",
+  "image_wh": [
+   1000,
+   667
+  ],
+  "instruction": "Change the shirt of the tall cadet saluting at center right to white",
+  "target": [
+   628,
+   33,
+   872,
+   644
+  ],
+  "siblings": [
+   [
+    828,
+    117,
+    967,
+    617
+   ],
+   [
+    278,
+    61,
+    456,
+    611
+   ],
+   [
+    450,
+    144,
+    583,
+    589
+   ],
+   [
+    583,
+    211,
+    706,
+    578
+   ],
+   [
+    167,
+    128,
+    278,
+    561
+   ],
+   [
+    56,
+    178,
+    156,
+    544
+   ]
+  ]
+ },
+ {
+  "id": "T-alps2-cap",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/alps2.jpg",
+  "image_wh": [
+   2560,
+   1707
+  ],
+  "instruction": "Put a red baseball cap on the woman in the blue UCLA T-shirt in the middle",
+  "target": [
+   1138,
+   796,
+   1337,
+   1579
+  ],
+  "siblings": [
+   [
+    284,
+    683,
+    754,
+    1636
+   ],
+   [
+    725,
+    768,
+    981,
+    1579
+   ],
+   [
+    953,
+    825,
+    1152,
+    1579
+   ],
+   [
+    1323,
+    825,
+    1522,
+    1579
+   ],
+   [
+    1493,
+    811,
+    1735,
+    1593
+   ],
+   [
+    1664,
+    654,
+    2162,
+    1692
+   ]
+  ],
+  "attach_kind": "wear"
+ },
+ {
+  "id": "T-alps2-shirt",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "inbody",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/alps2.jpg",
+  "image_wh": [
+   2560,
+   1707
+  ],
+  "instruction": "Change the T-shirt of the woman in the blue UCLA T-shirt in the middle to green",
+  "target": [
+   1138,
+   796,
+   1337,
+   1579
+  ],
+  "siblings": [
+   [
+    284,
+    683,
+    754,
+    1636
+   ],
+   [
+    725,
+    768,
+    981,
+    1579
+   ],
+   [
+    953,
+    825,
+    1152,
+    1579
+   ],
+   [
+    1323,
+    825,
+    1522,
+    1579
+   ],
+   [
+    1493,
+    811,
+    1735,
+    1593
+   ],
+   [
+    1664,
+    654,
+    2162,
+    1692
+   ]
+  ]
+ },
+ {
+  "id": "T-alps3-wine",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/alps3.jpg",
+  "image_wh": [
+   1620,
+   1080
+  ],
+  "instruction": "Make the woman in the grey USC T-shirt at the front right hold a glass of red wine",
+  "target": [
+   1152,
+   486,
+   1503,
+   1080
+  ],
+  "siblings": [
+   [
+    1098,
+    414,
+    1305,
+    846
+   ],
+   [
+    1071,
+    333,
+    1260,
+    756
+   ],
+   [
+    153,
+    405,
+    450,
+    1080
+   ],
+   [
+    396,
+    396,
+    549,
+    792
+   ],
+   [
+    747,
+    252,
+    900,
+    468
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-alps3-dog",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/alps3.jpg",
+  "image_wh": [
+   1620,
+   1080
+  ],
+  "instruction": "Put a small white dog on the lap of the woman in the olive T-shirt on the far left",
+  "target": [
+   153,
+   405,
+   450,
+   1080
+  ],
+  "siblings": [
+   [
+    1152,
+    486,
+    1503,
+    1080
+   ],
+   [
+    1098,
+    414,
+    1305,
+    846
+   ],
+   [
+    1071,
+    333,
+    1260,
+    756
+   ],
+   [
+    396,
+    396,
+    549,
+    792
+   ],
+   [
+    747,
+    252,
+    900,
+    468
+   ]
+  ],
+  "attach_kind": "onbody"
+ },
+ {
+  "id": "T-alps4-flag",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/alps4.jpg",
+  "image_wh": [
+   1620,
+   1080
+  ],
+  "instruction": "Make the man in the black patterned T-shirt on the far right hold a red flag",
+  "target": [
+   1125,
+   612,
+   1260,
+   990
+  ],
+  "siblings": [
+   [
+    1053,
+    621,
+    1152,
+    963
+   ],
+   [
+    981,
+    630,
+    1062,
+    945
+   ],
+   [
+    774,
+    657,
+    864,
+    900
+   ],
+   [
+    621,
+    684,
+    702,
+    945
+   ],
+   [
+    513,
+    711,
+    603,
+    972
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-alps4-shirt",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "inbody",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/alps4.jpg",
+  "image_wh": [
+   1620,
+   1080
+  ],
+  "instruction": "Change the black patterned T-shirt of the man on the far right to white",
+  "target": [
+   1125,
+   612,
+   1260,
+   990
+  ],
+  "siblings": [
+   [
+    1053,
+    621,
+    1152,
+    963
+   ],
+   [
+    981,
+    630,
+    1062,
+    945
+   ],
+   [
+    774,
+    657,
+    864,
+    900
+   ],
+   [
+    621,
+    684,
+    702,
+    945
+   ],
+   [
+    513,
+    711,
+    603,
+    972
+   ]
+  ]
+ },
+ {
+  "id": "T-alps5-mug",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/alps5.jpg",
+  "image_wh": [
+   1620,
+   1080
+  ],
+  "instruction": "Make the girl in the pink hoodie on the right hold a steaming mug in her hands",
+  "target": [
+   1179,
+   594,
+   1476,
+   900
+  ],
+  "siblings": [
+   [
+    882,
+    558,
+    1170,
+    954
+   ],
+   [
+    882,
+    441,
+    1026,
+    594
+   ],
+   [
+    162,
+    612,
+    558,
+    1044
+   ],
+   [
+    495,
+    666,
+    792,
+    1080
+   ],
+   [
+    1152,
+    513,
+    1350,
+    702
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-alps5-hoodie",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "inbody",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/alps5.jpg",
+  "image_wh": [
+   1620,
+   1080
+  ],
+  "instruction": "Change the pink hoodie of the girl on the right to yellow",
+  "target": [
+   1179,
+   594,
+   1476,
+   900
+  ],
+  "siblings": [
+   [
+    882,
+    558,
+    1170,
+    954
+   ],
+   [
+    882,
+    441,
+    1026,
+    594
+   ],
+   [
+    162,
+    612,
+    558,
+    1044
+   ],
+   [
+    495,
+    666,
+    792,
+    1080
+   ],
+   [
+    1152,
+    513,
+    1350,
+    702
+   ]
+  ]
+ },
+ {
+  "id": "T-alps6-guitar",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "relation",
+  "image": "runs/fresh/arm-t/alps6.jpg",
+  "image_wh": [
+   2048,
+   1365
+  ],
+  "instruction": "Make the boy in the blue jacket in the middle, with his arms around his friends, hold a guitar",
+  "target": [
+   717,
+   296,
+   1013,
+   944
+  ],
+  "siblings": [
+   [
+    91,
+    284,
+    523,
+    1274
+   ],
+   [
+    421,
+    296,
+    785,
+    1138
+   ],
+   [
+    978,
+    398,
+    1229,
+    956
+   ],
+   [
+    1172,
+    421,
+    1365,
+    865
+   ],
+   [
+    1331,
+    432,
+    1570,
+    910
+   ],
+   [
+    1456,
+    432,
+    1707,
+    956
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "crowded"
+ },
+ {
+  "id": "T-alps6-jacket",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "inbody",
+  "expr_type": "relation",
+  "image": "runs/fresh/arm-t/alps6.jpg",
+  "image_wh": [
+   2048,
+   1365
+  ],
+  "instruction": "Change the jacket of the boy in the blue jacket in the middle, with his arms around his friends, to orange",
+  "target": [
+   717,
+   296,
+   1013,
+   944
+  ],
+  "siblings": [
+   [
+    91,
+    284,
+    523,
+    1274
+   ],
+   [
+    421,
+    296,
+    785,
+    1138
+   ],
+   [
+    978,
+    398,
+    1229,
+    956
+   ],
+   [
+    1172,
+    421,
+    1365,
+    865
+   ],
+   [
+    1331,
+    432,
+    1570,
+    910
+   ],
+   [
+    1456,
+    432,
+    1707,
+    956
+   ]
+  ]
+ },
+ {
+  "id": "T-apls1-umbrella",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/apls1.jpg",
+  "image_wh": [
+   1500,
+   1125
+  ],
+  "instruction": "Make the woman with curly hair in the black vest and red sleeves on the far right hold a red umbrella",
+  "target": [
+   1067,
+   425,
+   1250,
+   983
+  ],
+  "siblings": [
+   [
+    992,
+    492,
+    1108,
+    867
+   ],
+   [
+    867,
+    492,
+    983,
+    783
+   ],
+   [
+    783,
+    475,
+    875,
+    700
+   ],
+   [
+    317,
+    700,
+    575,
+    1067
+   ],
+   [
+    550,
+    708,
+    683,
+    983
+   ],
+   [
+    700,
+    675,
+    867,
+    983
+   ],
+   [
+    908,
+    675,
+    1133,
+    1050
+   ],
+   [
+    242,
+    592,
+    658,
+    967
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-apls1-vest",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "inbody",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/apls1.jpg",
+  "image_wh": [
+   1500,
+   1125
+  ],
+  "instruction": "Change the black vest of the woman with curly hair on the far right to white",
+  "target": [
+   1067,
+   425,
+   1250,
+   983
+  ],
+  "siblings": [
+   [
+    992,
+    492,
+    1108,
+    867
+   ],
+   [
+    867,
+    492,
+    983,
+    783
+   ],
+   [
+    783,
+    475,
+    875,
+    700
+   ],
+   [
+    317,
+    700,
+    575,
+    1067
+   ],
+   [
+    550,
+    708,
+    683,
+    983
+   ],
+   [
+    700,
+    675,
+    867,
+    983
+   ],
+   [
+    908,
+    675,
+    1133,
+    1050
+   ],
+   [
+    242,
+    592,
+    658,
+    967
+   ]
+  ]
+ },
+ {
+  "id": "T-army-flag",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/army.jpg",
+  "image_wh": [
+   1920,
+   1280
+  ],
+  "instruction": "Make the soldier marching in front in the center hold a small American flag in his right hand",
+  "target": [
+   832,
+   192,
+   1291,
+   1280
+  ],
+  "siblings": [
+   [
+    96,
+    160,
+    555,
+    1280
+   ],
+   [
+    544,
+    181,
+    896,
+    1280
+   ],
+   [
+    1248,
+    277,
+    1515,
+    1237
+   ],
+   [
+    1472,
+    203,
+    1803,
+    1173
+   ],
+   [
+    885,
+    235,
+    1013,
+    533
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "crowded"
+ },
+ {
+  "id": "T-army-sunglasses",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/army.jpg",
+  "image_wh": [
+   1920,
+   1280
+  ],
+  "instruction": "Put sunglasses on the soldier marching on the far left in the front",
+  "target": [
+   96,
+   160,
+   555,
+   1280
+  ],
+  "siblings": [
+   [
+    832,
+    192,
+    1291,
+    1280
+   ],
+   [
+    544,
+    181,
+    896,
+    1280
+   ],
+   [
+    1248,
+    277,
+    1515,
+    1237
+   ],
+   [
+    1472,
+    203,
+    1803,
+    1173
+   ],
+   [
+    885,
+    235,
+    1013,
+    533
+   ]
+  ],
+  "attach_kind": "wear"
+ },
+ {
+  "id": "T-byern-trophy",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/byern.jpeg",
+  "image_wh": [
+   547,
+   365
+  ],
+  "instruction": "Make the player with number 9 in the center of the front row hold a trophy",
+  "target": [
+   231,
+   100,
+   316,
+   334
+  ],
+  "siblings": [
+   [
+    143,
+    115,
+    228,
+    334
+   ],
+   [
+    316,
+    100,
+    401,
+    334
+   ],
+   [
+    61,
+    112,
+    134,
+    337
+   ],
+   [
+    18,
+    70,
+    88,
+    334
+   ],
+   [
+    85,
+    61,
+    170,
+    316
+   ],
+   [
+    182,
+    76,
+    267,
+    182
+   ],
+   [
+    286,
+    64,
+    346,
+    152
+   ],
+   [
+    365,
+    76,
+    432,
+    182
+   ],
+   [
+    438,
+    70,
+    529,
+    331
+   ],
+   [
+    395,
+    131,
+    486,
+    334
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "crowded"
+ },
+ {
+  "id": "T-byern-shirt",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "inbody",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/byern.jpeg",
+  "image_wh": [
+   547,
+   365
+  ],
+  "instruction": "Change the shirt of the player with number 9 in the center of the front row to white",
+  "target": [
+   231,
+   100,
+   316,
+   334
+  ],
+  "siblings": [
+   [
+    143,
+    115,
+    228,
+    334
+   ],
+   [
+    316,
+    100,
+    401,
+    334
+   ],
+   [
+    61,
+    112,
+    134,
+    337
+   ],
+   [
+    18,
+    70,
+    88,
+    334
+   ],
+   [
+    85,
+    61,
+    170,
+    316
+   ],
+   [
+    182,
+    76,
+    267,
+    182
+   ],
+   [
+    286,
+    64,
+    346,
+    152
+   ],
+   [
+    365,
+    76,
+    432,
+    182
+   ],
+   [
+    438,
+    70,
+    529,
+    331
+   ],
+   [
+    395,
+    131,
+    486,
+    334
+   ]
+  ]
+ },
+ {
+  "id": "T-byern1-ball",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/byern1.jpeg",
+  "image_wh": [
+   515,
+   388
+  ],
+  "instruction": "Make the player with number 9 on the right hold a football under his arm",
+  "target": [
+   355,
+   34,
+   478,
+   388
+  ],
+  "siblings": [
+   [
+    34,
+    40,
+    172,
+    388
+   ],
+   [
+    137,
+    80,
+    212,
+    388
+   ],
+   [
+    200,
+    43,
+    343,
+    388
+   ],
+   [
+    298,
+    49,
+    395,
+    388
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-byern1-medal",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/byern1.jpeg",
+  "image_wh": [
+   515,
+   388
+  ],
+  "instruction": "Put a gold medal around the neck of the player with number 3 on the left",
+  "target": [
+   34,
+   40,
+   172,
+   388
+  ],
+  "siblings": [
+   [
+    355,
+    34,
+    478,
+    388
+   ],
+   [
+    137,
+    80,
+    212,
+    388
+   ],
+   [
+    200,
+    43,
+    343,
+    388
+   ],
+   [
+    298,
+    49,
+    395,
+    388
+   ]
+  ],
+  "attach_kind": "wear"
+ },
+ {
+  "id": "T-grad1-diploma",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "relation",
+  "image": "runs/fresh/arm-t/grad1.jpg",
+  "image_wh": [
+   1140,
+   855
+  ],
+  "instruction": "Make the girl in the front center, with her face turned up and one arm raised, hold a rolled diploma in her raised hand",
+  "target": [
+   500,
+   519,
+   735,
+   855
+  ],
+  "siblings": [
+   [
+    405,
+    595,
+    507,
+    855
+   ],
+   [
+    526,
+    595,
+    633,
+    760
+   ],
+   [
+    165,
+    564,
+    304,
+    855
+   ],
+   [
+    887,
+    519,
+    1051,
+    855
+   ],
+   [
+    709,
+    564,
+    836,
+    760
+   ],
+   [
+    0,
+    545,
+    114,
+    855
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "crowded"
+ },
+ {
+  "id": "T-grad3-lei",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/grad3.jpg",
+  "image_wh": [
+   1600,
+   1050
+  ],
+  "instruction": "Put a red flower lei around the neck of the man wearing glasses in the front row, second from the right",
+  "target": [
+   1102,
+   356,
+   1422,
+   1049
+  ],
+  "siblings": [
+   [
+    924,
+    302,
+    1227,
+    1049
+   ],
+   [
+    0,
+    400,
+    409,
+    1049
+   ],
+   [
+    231,
+    302,
+    604,
+    1049
+   ],
+   [
+    533,
+    427,
+    889,
+    1049
+   ],
+   [
+    738,
+    382,
+    1093,
+    1049
+   ],
+   [
+    1404,
+    347,
+    1600,
+    1049
+   ]
+  ],
+  "attach_kind": "wear"
+ },
+ {
+  "id": "T-grad3-diploma",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/grad3.jpg",
+  "image_wh": [
+   1600,
+   1050
+  ],
+  "instruction": "Make the man in the front row wearing a purple stole hold a rolled diploma above his head",
+  "target": [
+   924,
+   302,
+   1227,
+   1049
+  ],
+  "siblings": [
+   [
+    1102,
+    356,
+    1422,
+    1049
+   ],
+   [
+    0,
+    400,
+    409,
+    1049
+   ],
+   [
+    231,
+    302,
+    604,
+    1049
+   ],
+   [
+    533,
+    427,
+    889,
+    1049
+   ],
+   [
+    738,
+    382,
+    1093,
+    1049
+   ],
+   [
+    1404,
+    347,
+    1600,
+    1049
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "crowded"
+ },
+ {
+  "id": "T-hsm1-balloon",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/hsm1.jpeg",
+  "image_wh": [
+   739,
+   415
+  ],
+  "instruction": "Make the girl in the green top in the middle hold a red balloon in her raised hand",
+  "target": [
+   353,
+   33,
+   484,
+   382
+  ],
+  "siblings": [
+   [
+    33,
+    74,
+    172,
+    361
+   ],
+   [
+    131,
+    33,
+    263,
+    370
+   ],
+   [
+    213,
+    74,
+    378,
+    394
+   ],
+   [
+    452,
+    115,
+    591,
+    402
+   ],
+   [
+    517,
+    33,
+    739,
+    353
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-hsm1-top",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "inbody",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/hsm1.jpeg",
+  "image_wh": [
+   739,
+   415
+  ],
+  "instruction": "Change the green top of the girl in the middle to purple",
+  "target": [
+   353,
+   33,
+   484,
+   382
+  ],
+  "siblings": [
+   [
+    33,
+    74,
+    172,
+    361
+   ],
+   [
+    131,
+    33,
+    263,
+    370
+   ],
+   [
+    213,
+    74,
+    378,
+    394
+   ],
+   [
+    452,
+    115,
+    591,
+    402
+   ],
+   [
+    517,
+    33,
+    739,
+    353
+   ]
+  ]
+ },
+ {
+  "id": "T-hsm2-bouquet",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/hsm2.jpeg",
+  "image_wh": [
+   655,
+   468
+  ],
+  "instruction": "Make the girl in the brown shirt hold a bouquet of flowers",
+  "target": [
+   313,
+   102,
+   458,
+   468
+  ],
+  "siblings": [
+   [
+    40,
+    95,
+    193,
+    468
+   ],
+   [
+    142,
+    29,
+    251,
+    468
+   ],
+   [
+    240,
+    47,
+    364,
+    468
+   ],
+   [
+    429,
+    40,
+    524,
+    468
+   ],
+   [
+    495,
+    95,
+    615,
+    468
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "crowded"
+ },
+ {
+  "id": "T-hsm2-hat",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/hsm2.jpeg",
+  "image_wh": [
+   655,
+   468
+  ],
+  "instruction": "Put a black hat on the blonde girl on the far left",
+  "target": [
+   40,
+   95,
+   193,
+   468
+  ],
+  "siblings": [
+   [
+    313,
+    102,
+    458,
+    468
+   ],
+   [
+    142,
+    29,
+    251,
+    468
+   ],
+   [
+    240,
+    47,
+    364,
+    468
+   ],
+   [
+    429,
+    40,
+    524,
+    468
+   ],
+   [
+    495,
+    95,
+    615,
+    468
+   ]
+  ],
+  "attach_kind": "wear"
+ },
+ {
+  "id": "T-nasdaq-mic",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/nasdaq.jpg",
+  "image_wh": [
+   1100,
+   734
+  ],
+  "instruction": "Make the tall man on the far right hold a microphone",
+  "target": [
+   911,
+   128,
+   1057,
+   703
+  ],
+  "siblings": [
+   [
+    12,
+    220,
+    147,
+    648
+   ],
+   [
+    134,
+    202,
+    263,
+    648
+   ],
+   [
+    232,
+    214,
+    373,
+    648
+   ],
+   [
+    434,
+    238,
+    532,
+    391
+   ],
+   [
+    507,
+    208,
+    629,
+    391
+   ],
+   [
+    684,
+    208,
+    794,
+    672
+   ],
+   [
+    788,
+    189,
+    917,
+    672
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-nasdaq-suit",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "inbody",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/nasdaq.jpg",
+  "image_wh": [
+   1100,
+   734
+  ],
+  "instruction": "Change the suit of the tall man on the far right to light grey",
+  "target": [
+   911,
+   128,
+   1057,
+   703
+  ],
+  "siblings": [
+   [
+    12,
+    220,
+    147,
+    648
+   ],
+   [
+    134,
+    202,
+    263,
+    648
+   ],
+   [
+    232,
+    214,
+    373,
+    648
+   ],
+   [
+    434,
+    238,
+    532,
+    391
+   ],
+   [
+    507,
+    208,
+    629,
+    391
+   ],
+   [
+    684,
+    208,
+    794,
+    672
+   ],
+   [
+    788,
+    189,
+    917,
+    672
+   ]
+  ]
+ },
+ {
+  "id": "T-nba-headband",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/nba.jpeg",
+  "image_wh": [
+   599,
+   399
+  ],
+  "instruction": "Put a red headband on the player in the white number 34 jersey who is shooting",
+  "target": [
+   226,
+   40,
+   319,
+   398
+  ],
+  "siblings": [
+   [
+    353,
+    40,
+    572,
+    373
+   ],
+   [
+    363,
+    176,
+    443,
+    383
+   ],
+   [
+    100,
+    176,
+    166,
+    398
+   ]
+  ],
+  "attach_kind": "wear"
+ },
+ {
+  "id": "T-spb1-helmet",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/spb1.jpg",
+  "image_wh": [
+   3840,
+   2160
+  ],
+  "instruction": "Make the player with number 42 on the right hold a helmet in his left hand",
+  "target": [
+   2837,
+   192,
+   3648,
+   1963
+  ],
+  "siblings": [
+   [
+    683,
+    512,
+    1408,
+    1941
+   ],
+   [
+    427,
+    597,
+    811,
+    1963
+   ],
+   [
+    1493,
+    811,
+    2005,
+    1984
+   ],
+   [
+    1621,
+    512,
+    2261,
+    1749
+   ],
+   [
+    2133,
+    363,
+    2731,
+    1899
+   ],
+   [
+    2560,
+    128,
+    3029,
+    1835
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-spb1-bird",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/spb1.jpg",
+  "image_wh": [
+   3840,
+   2160
+  ],
+  "instruction": "Put a small hawk on the shoulder of the player with number 52",
+  "target": [
+   683,
+   512,
+   1408,
+   1941
+  ],
+  "siblings": [
+   [
+    2837,
+    192,
+    3648,
+    1963
+   ],
+   [
+    427,
+    597,
+    811,
+    1963
+   ],
+   [
+    1493,
+    811,
+    2005,
+    1984
+   ],
+   [
+    1621,
+    512,
+    2261,
+    1749
+   ],
+   [
+    2133,
+    363,
+    2731,
+    1899
+   ],
+   [
+    2560,
+    128,
+    3029,
+    1835
+   ]
+  ],
+  "attach_kind": "onbody"
+ },
+ {
+  "id": "T-spb3-football",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/spb3.jpg",
+  "image_wh": [
+   976,
+   548
+  ],
+  "instruction": "Make the player wearing number 81 on the left hold a football",
+  "target": [
+   11,
+   168,
+   249,
+   548
+  ],
+  "siblings": [
+   [
+    233,
+    146,
+    466,
+    548
+   ],
+   [
+    455,
+    163,
+    705,
+    548
+   ],
+   [
+    651,
+    249,
+    857,
+    548
+   ],
+   [
+    846,
+    233,
+    976,
+    548
+   ],
+   [
+    249,
+    136,
+    347,
+    271
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "crowded"
+ },
+ {
+  "id": "T-spb3-jersey",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "inbody",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/spb3.jpg",
+  "image_wh": [
+   976,
+   548
+  ],
+  "instruction": "Change the jersey of the player wearing number 81 on the left to white",
+  "target": [
+   11,
+   168,
+   249,
+   548
+  ],
+  "siblings": [
+   [
+    233,
+    146,
+    466,
+    548
+   ],
+   [
+    455,
+    163,
+    705,
+    548
+   ],
+   [
+    651,
+    249,
+    857,
+    548
+   ],
+   [
+    846,
+    233,
+    976,
+    548
+   ],
+   [
+    249,
+    136,
+    347,
+    271
+   ]
+  ]
+ },
+ {
+  "id": "T-tsurugidake-flag",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/tsurugidake.jpg",
+  "image_wh": [
+   1100,
+   733
+  ],
+  "instruction": "Make the man in the bright green jacket on the right hold a red flag",
+  "target": [
+   721,
+   171,
+   868,
+   599
+  ],
+  "siblings": [
+   [
+    434,
+    373,
+    636,
+    660
+   ],
+   [
+    244,
+    336,
+    428,
+    642
+   ],
+   [
+    244,
+    214,
+    367,
+    489
+   ],
+   [
+    440,
+    196,
+    550,
+    342
+   ],
+   [
+    617,
+    238,
+    733,
+    526
+   ],
+   [
+    562,
+    134,
+    733,
+    318
+   ],
+   [
+    550,
+    214,
+    636,
+    367
+   ],
+   [
+    446,
+    275,
+    574,
+    428
+   ],
+   [
+    116,
+    452,
+    232,
+    544
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-tsurugidake-puppy",
+  "arm": "T",
+  "domain": "photo",
+  "edit_kind": "attach",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/tsurugidake.jpg",
+  "image_wh": [
+   1100,
+   733
+  ],
+  "instruction": "Put a puppy on the knee of the woman in the pink jacket sitting in front",
+  "target": [
+   434,
+   373,
+   636,
+   660
+  ],
+  "siblings": [
+   [
+    721,
+    171,
+    868,
+    599
+   ],
+   [
+    244,
+    336,
+    428,
+    642
+   ],
+   [
+    244,
+    214,
+    367,
+    489
+   ],
+   [
+    440,
+    196,
+    550,
+    342
+   ],
+   [
+    617,
+    238,
+    733,
+    526
+   ],
+   [
+    562,
+    134,
+    733,
+    318
+   ],
+   [
+    550,
+    214,
+    636,
+    367
+   ],
+   [
+    446,
+    275,
+    574,
+    428
+   ],
+   [
+    116,
+    452,
+    232,
+    544
+   ]
+  ],
+  "attach_kind": "onbody"
+ },
+ {
+  "id": "T-kon1-tea",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "attach",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/kon1.jpg",
+  "image_wh": [
+   1080,
+   675
+  ],
+  "instruction": "Make the girl with long black hair, second from the left, hold a cup of tea",
+  "target": [
+   300,
+   114,
+   444,
+   672
+  ],
+  "siblings": [
+   [
+    36,
+    168,
+    300,
+    674
+   ],
+   [
+    414,
+    174,
+    600,
+    672
+   ],
+   [
+    600,
+    120,
+    768,
+    672
+   ],
+   [
+    744,
+    114,
+    1008,
+    672
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "crowded"
+ },
+ {
+  "id": "T-kon1-blazer",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "inbody",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/kon1.jpg",
+  "image_wh": [
+   1080,
+   675
+  ],
+  "instruction": "Change the blazer of the girl with long black hair, second from the left, to white",
+  "target": [
+   300,
+   114,
+   444,
+   672
+  ],
+  "siblings": [
+   [
+    36,
+    168,
+    300,
+    674
+   ],
+   [
+    414,
+    174,
+    600,
+    672
+   ],
+   [
+    600,
+    120,
+    768,
+    672
+   ],
+   [
+    744,
+    114,
+    1008,
+    672
+   ]
+  ]
+ },
+ {
+  "id": "T-kon2-branch",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/kon2.jpg",
+  "image_wh": [
+   1920,
+   1320
+  ],
+  "instruction": "Make the girl with short brown hair in the center hold a cherry blossom branch in her right hand",
+  "target": [
+   789,
+   352,
+   1536,
+   1318
+  ],
+  "siblings": [
+   [
+    0,
+    533,
+    811,
+    1318
+   ],
+   [
+    213,
+    0,
+    853,
+    597
+   ],
+   [
+    1109,
+    0,
+    1920,
+    512
+   ],
+   [
+    1429,
+    619,
+    1920,
+    1318
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-kon2-bird",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "attach",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/kon2.jpg",
+  "image_wh": [
+   1920,
+   1320
+  ],
+  "instruction": "Put a small bird on the head of the girl with long black hair on the right",
+  "target": [
+   1429,
+   619,
+   1920,
+   1318
+  ],
+  "siblings": [
+   [
+    789,
+    352,
+    1536,
+    1318
+   ],
+   [
+    0,
+    533,
+    811,
+    1318
+   ],
+   [
+    213,
+    0,
+    853,
+    597
+   ],
+   [
+    1109,
+    0,
+    1920,
+    512
+   ]
+  ],
+  "attach_kind": "onbody"
+ },
+ {
+  "id": "T-optimus-cape",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/optimus.jpg",
+  "image_wh": [
+   736,
+   1879
+  ],
+  "instruction": "Put a red cape on the yellow robot at the top right",
+  "target": [
+   564,
+   376,
+   720,
+   605
+  ],
+  "siblings": [
+   [
+    397,
+    230,
+    522,
+    365
+   ],
+   [
+    0,
+    407,
+    167,
+    689
+   ],
+   [
+    84,
+    146,
+    365,
+    407
+   ],
+   [
+    251,
+    877,
+    585,
+    1294
+   ],
+   [
+    543,
+    626,
+    735,
+    898
+   ]
+  ],
+  "attach_kind": "wear"
+ },
+ {
+  "id": "T-yama1-umbrella",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "attach",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/yama1.jpeg",
+  "image_wh": [
+   465,
+   659
+  ],
+  "instruction": "Make the girl with short grey hair on the far left hold an umbrella",
+  "target": [
+   37,
+   157,
+   132,
+   586
+  ],
+  "siblings": [
+   [
+    117,
+    198,
+    227,
+    597
+   ],
+   [
+    220,
+    234,
+    351,
+    593
+   ],
+   [
+    330,
+    220,
+    439,
+    586
+   ],
+   [
+    264,
+    157,
+    410,
+    410
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-yama1-uniform",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "inbody",
+  "expr_type": "spatial",
+  "image": "runs/fresh/arm-t/yama1.jpeg",
+  "image_wh": [
+   465,
+   659
+  ],
+  "instruction": "Change the uniform of the girl with short grey hair on the far left to red",
+  "target": [
+   37,
+   157,
+   132,
+   586
+  ],
+  "siblings": [
+   [
+    117,
+    198,
+    227,
+    597
+   ],
+   [
+    220,
+    234,
+    351,
+    593
+   ],
+   [
+    330,
+    220,
+    439,
+    586
+   ],
+   [
+    264,
+    157,
+    410,
+    410
+   ]
+  ]
+ },
+ {
+  "id": "T-yama2-cat",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/yama2.jpg",
+  "image_wh": [
+   568,
+   800
+  ],
+  "instruction": "Put a small cat on the shoulder of the girl in the yellow jacket in front",
+  "target": [
+   124,
+   307,
+   284,
+   791
+  ],
+  "siblings": [
+   [
+    53,
+    147,
+    178,
+    569
+   ],
+   [
+    222,
+    200,
+    302,
+    498
+   ],
+   [
+    284,
+    227,
+    418,
+    782
+   ],
+   [
+    400,
+    191,
+    520,
+    640
+   ]
+  ],
+  "attach_kind": "onbody"
+ },
+ {
+  "id": "T-yama2-jacket",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "inbody",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/yama2.jpg",
+  "image_wh": [
+   568,
+   800
+  ],
+  "instruction": "Change the yellow jacket of the girl in front to red",
+  "target": [
+   124,
+   307,
+   284,
+   791
+  ],
+  "siblings": [
+   [
+    53,
+    147,
+    178,
+    569
+   ],
+   [
+    222,
+    200,
+    302,
+    498
+   ],
+   [
+    284,
+    227,
+    418,
+    782
+   ],
+   [
+    400,
+    191,
+    520,
+    640
+   ]
+  ]
+ },
+ {
+  "id": "T-yama3-icecream",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "attach",
+  "expr_type": "relation",
+  "image": "runs/fresh/arm-t/yama3.jpg",
+  "image_wh": [
+   784,
+   1108
+  ],
+  "instruction": "Make the girl crouching in front with the camera hold an ice cream cone in her left hand",
+  "target": [
+   302,
+   517,
+   474,
+   960
+  ],
+  "siblings": [
+   [
+    49,
+    215,
+    332,
+    1059
+   ],
+   [
+    234,
+    345,
+    406,
+    886
+   ],
+   [
+    382,
+    246,
+    603,
+    640
+   ],
+   [
+    462,
+    517,
+    763,
+    997
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "crowded"
+ },
+ {
+  "id": "T-yama3-sunhat",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/yama3.jpg",
+  "image_wh": [
+   784,
+   1108
+  ],
+  "instruction": "Put a sun hat on the girl in the purple striped shirt on the right",
+  "target": [
+   462,
+   517,
+   763,
+   997
+  ],
+  "siblings": [
+   [
+    302,
+    517,
+    474,
+    960
+   ],
+   [
+    49,
+    215,
+    332,
+    1059
+   ],
+   [
+    234,
+    345,
+    406,
+    886
+   ],
+   [
+    382,
+    246,
+    603,
+    640
+   ]
+  ],
+  "attach_kind": "wear"
+ },
+ {
+  "id": "T-yama4-flag",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/yama4.jpeg",
+  "image_wh": [
+   466,
+   659
+  ],
+  "instruction": "Make the girl in the yellow jacket on the right hold a small flag in her raised hand",
+  "target": [
+   297,
+   146,
+   461,
+   425
+  ],
+  "siblings": [
+   [
+    7,
+    143,
+    124,
+    498
+   ],
+   [
+    88,
+    103,
+    242,
+    410
+   ],
+   [
+    44,
+    373,
+    242,
+    652
+   ],
+   [
+    278,
+    351,
+    461,
+    644
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-yama4-jacket",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "inbody",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/yama4.jpeg",
+  "image_wh": [
+   466,
+   659
+  ],
+  "instruction": "Change the yellow jacket of the girl on the right to blue",
+  "target": [
+   297,
+   146,
+   461,
+   425
+  ],
+  "siblings": [
+   [
+    7,
+    143,
+    124,
+    498
+   ],
+   [
+    88,
+    103,
+    242,
+    410
+   ],
+   [
+    44,
+    373,
+    242,
+    652
+   ],
+   [
+    278,
+    351,
+    461,
+    644
+   ]
+  ]
+ },
+ {
+  "id": "T-yama5-camera",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/yama5.jpeg",
+  "image_wh": [
+   365,
+   547
+  ],
+  "instruction": "Make the girl in the orange jacket and pink striped shirt hold a camera in her raised hand",
+  "target": [
+   97,
+   73,
+   207,
+   498
+  ],
+  "siblings": [
+   [
+    0,
+    49,
+    122,
+    511
+   ],
+   [
+    143,
+    131,
+    316,
+    517
+   ],
+   [
+    249,
+    210,
+    365,
+    498
+   ]
+  ],
+  "attach_kind": "hold",
+  "hand": "free"
+ },
+ {
+  "id": "T-yama5-bird",
+  "arm": "T",
+  "domain": "illustration",
+  "edit_kind": "attach",
+  "expr_type": "attribute",
+  "image": "runs/fresh/arm-t/yama5.jpeg",
+  "image_wh": [
+   365,
+   547
+  ],
+  "instruction": "Put a small bird on the head of the girl in the pink jacket on the right",
+  "target": [
+   249,
+   210,
+   365,
+   498
+  ],
+  "siblings": [
+   [
+    97,
+    73,
+    207,
+    498
+   ],
+   [
+    0,
+    49,
+    122,
+    511
+   ],
+   [
+    143,
+    131,
+    316,
+    517
+   ]
+  ],
+  "attach_kind": "onbody"
  }
 ]

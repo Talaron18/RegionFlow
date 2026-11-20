@@ -1486,3 +1486,23 @@ hypothesis for arm T, not a result.
 `attach_audit.py --score` prints edit-right by tag beside the reading; it is descriptive
 and does not change the pre-registered bands. The hiking-photo umbrella case is tagged
 `crowded` (his hand on the pole sits beside the olive-jacket man).
+
+## Arm T — cases written (2026-11-20, `bench/attach_cases.json`)
+
+From the user's images in `runs/fresh/arm-t/` (28 used; `apls1.webp` and `grad1.png` are
+duplicates of the `.jpg` files). Instructions and boxes written by me from gridded
+previews; every box checked on an overlay before committing.
+
+- **53 cases: 38 attach + 15 in-body controls**, each control on the same image and target
+  as one attach case. Attach kinds: hold 24, wear 8, on-body 6. Hand tags on hold cases:
+  free 13, crowded 11.
+- Domains of attach cases: photo 27, illustration 11, **painting 0**: the one rule still
+  failing. `--check` / `--run` refuse until at least 8 painting attach cases exist (the
+  domain rule was set for "photos, paintings and illustrations").
+- `apec.jpg` is **not used**: making identifiable heads of state hold or wear things is
+  political-manipulation territory and could not be shown in a paper. Other images of real
+  people (athletes, actors, the Nasdaq photo) are used for internal testing; check
+  publication rights before any edited image appears in a paper.
+- Max 2 counted cases per image; no arm-T image may be used in arm A.
+- Not yet frozen: the sha256 is recorded once the painting cases are added and `--check`
+  passes.
