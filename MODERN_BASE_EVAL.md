@@ -1516,3 +1516,163 @@ test with no hands (wear and in-body only).
 **Arm T total: 70 cases, 51 attach + 19 controls**; attach domains photo 27 / painting 13
 / illustration 11; kinds hold 32 / wear 13 / on-body 6. `--check` passes. Not frozen yet:
 the user reviews the instructions, then the sha256 is recorded here before any run.
+
+**Frozen (2026-11-20).** `sha256 bench/attach_cases.json = 2bfd2810cfb553aa3c9dabb97dcf4226b5e5ae5b8b624d0fcdab9289263036fa`
+(the user's hash, matched here). Two images the cases use, `nasdaq.jpg` and `tsurugi_group.jpg`,
+had been deleted from `runs/fresh/arm-t/` in commit 8254d1c along with the intended removals;
+restored from its parent, sizes match `image_wh`.
+
+### Arm T step 1 — Sa2VA aiming (2026-11-20, user's run; all 70 overlays viewed)
+
+One mask per case, raw answers `Sure, [SEG].` / `Sure, it is [SEG].`, revision
+`4cd6709…` as before. **Aimed (`target`): 64 of 70, attach 46 of 51, controls 18 of 19.**
+By domain, attach: photo 25 of 27, illustration 11 of 11, painting 10 of 13.
+
+The six not aimed, each checked on the overlay:
+- T-goph1-scarf, T-goph1-broom (van Gogh): the mask is on the prisoner beside the target.
+- T-rambrandt2-cap ("the man on the far left"): the target is cut by the frame edge; the
+  mask takes the leftmost whole figure instead.
+- T-alps2-cap: scattered patches, mostly on the girl to the left of the target.
+- T-hsm2-hat: a few dots on the target's head (0.02% of the image), class `empty`.
+- **T-kon1-blazer is a scorer artifact:** the mask is on the right girl, but her box
+  overlaps a sibling's, so `in_S` = 0.21 and the class is `both`. Excluded anyway, per
+  the frozen rule (statistics use class `target`).
+
+Paired gap therefore uses 17 of 19 pairs (alps2 and kon1 drop out). Several aimed
+masks cover only a garment or a small part (controls naturally; among attach cases,
+T-grad3-lei, -yama2-cat, -yama3-sunhat, -nemzeti-helmet, -spb1-bird cover under 60% of
+the target box). Crop-box crops around the mask, so for these its box is small; that is
+part of what the arm measures, not a reason to change anything now.
+
+### Arm T judging — reduced to the primary arm (2026-11-20, decided after 30 panels, before scoring)
+
+The full sitting is 240 panels. The reading uses only the fresh crop-box arm (plus the
+plain arm's verdict on crop-box `no_object` cases), so after the user judged panels
+0000–0029 (8 of them crop-box) the rest of the sitting is cut to the 62 remaining
+fresh crop-box panels (`runs/fresh/attach_blind/todo_round2.txt`), then the plain panels
+of the cases crop-box judges `no_object`. Paste-back and the RefEdit panels stay
+unjudged beyond the first 30 and are not reported. Cost to blinding: the user now knows
+the listed panels share one arm, though not which. The verdicts already given stand;
+`limb` was missing on 29 of the 30 and is filled in afterwards.
+
+### Arm T — result (2026-11-20, `attach_audit.py --score runs/fresh/attach_blind --aiming runs/fresh/attach_sa2va.jsonl`)
+
+All 70 fresh crop-box panels judged. **Pre-registered reading: mixed: report the cases.**
+
+| statistic (crop-box, Sa2VA-aimed) | value | band line |
+|---|---|---|
+| A, attach edit-right (clean+off_target+degraded) | 29/46 = 63% (clean 23, off_target 2, degraded 4) | ≥70% not a residual; ≤50% residual |
+| F, owner+anatomy share of the 17 failures | 12/17 = 71% (wrong_owner 8, anatomy 4) | ≥50% |
+| Z, no_object share of failures | 2/17 = 12% | ≥50% |
+| paired gap, in-body control minus attach (17 pairs) | +47% | ≥25 |
+
+A sits between the two lines, so neither "not a residual" nor "attachment-specific"
+applies; F and the gap clear their bars but the rule does not let them override A.
+Remaining failures: identity 3.
+
+- **Robustness of the band:** 4 failures re-judged as passes would reach 70%; 6 passes
+  re-judged as failures would reach 50%. The 95% Wilson interval on 29/46 is 49–75%, so
+  it covers both lines; the band is the pre-registered answer, not a tight estimate.
+- **Paired result (descriptive, not pre-registered):** over 17 pairs, 8 attach-only
+  failures and 0 control-only failures (exact two-sided sign test p = 0.008). All 18
+  aimed in-body controls are edit-right. On the same person in the same image, klein's
+  crop-box edit changes clothing reliably and fails to attach an object about half the
+  time. This is the strongest thing in the data; it sits beside the band, not over it.
+- **Hand split (planned, descriptive):** crowded 7/14, free 11/17, untagged 11/15.
+- **Post hoc, not planned:** hold 18/31, wear 6/9, on-body 5/6; photo 17/25,
+  illustration 6/11, painting 6/10. Flags fail in 5 of 6 cases (four `wrong_owner`, one
+  `anatomy`). These are observations for discussion, not findings.
+- **Plain arm on the `no_object` cases:** panels 0101 and 0128 were not judged. The
+  scorer's "plain drew the object in 0/2" is its default for missing verdicts, not a
+  result. It cannot change the reading: plain_drew matters only when Z ≥ 50%.
+- **`limb` was not collected.** Only panel 0028 has a label (`added`; the user wrote
+  "3 arms" in the limb field, moved to `notes` by me with the user's sense kept; backup
+  at `runs/fresh/attach_blind/ledger.before_0028fix.json`). I had proposed counting
+  blanks as `unchanged` and writing that rule down before scoring; I scored first, and
+  the rule is dropped: three `anatomy` panels (0068, 0216, 0229) would have been
+  recorded as unchanged limbs. No outcome depends on limb.
+- Not reported, per the reduced plan: the paste, plain and RefEdit rows the scorer
+  prints (a partial, non-random sample from the first 30 panels).
+
+**The 17 failures, viewed (descriptions only; verdicts are the user's):**
+
+| panel | case | verdict | what the panel shows |
+|---|---|---|---|
+| 0042 | airforce-flag | wrong_owner | Flag hangs low between the target and the cadet to her right; unclear whose hand holds it. Not folded. |
+| 0051 | army-flag | wrong_owner | Small flag raised beside the target's shoulder; holding hand ambiguous. Visible paste seam on the road below the box. |
+| 0161 | alps4-flag | wrong_owner | A **new person** appears right of the target holding a large red flag; the target holds nothing. |
+| 0073 | nemzeti-flag | wrong_owner | Red flag held by a white figure at the frame edge, left of the box; the boxed officer is unchanged. |
+| 0129 | optimus-cape | wrong_owner | A **new caped robot** is drawn above the target; the yellow robot has no cape. |
+| 0030 | kon1-tea | wrong_owner | The row is redrawn: a long-black-haired girl appears in position 1 holding the tea; the target's own pose changes. |
+| 0066 | hsm1-balloon | wrong_owner | Balloon string held by a hand between the target and the blonde girl to her right; not in the target's raised hands. |
+| 0053 | tsurugidake-puppy | wrong_owner | Dog sits on the rocks beside the woman's knee, not on it. |
+| 0028 | alps6-guitar | anatomy | Target plays the guitar while still hugging both friends: three arms. |
+| 0068 | yama4-flag | anatomy | Flag in a raised right hand; the original V-sign arm is gone. |
+| 0216 | alps5-mug | anatomy | Steaming mug held; the target's arms are redrawn. |
+| 0229 | yama1-umbrella | anatomy | Umbrella held; the hair changes from grey to a silver bob (user notes identity too). |
+| 0016 | nba-headband | identity | Headband present; the black Bucks #34 becomes a white #34 jersey (the instruction's "white" is ambiguous). |
+| 0149 | davinci1-hat | identity | Red hat on the man; his face and beard are redrawn in a different style. |
+| 0183 | yama3-icecream | identity | Cone held; the camera is gone and the face changes (user: "mild, but noticeable"). |
+| 0059 | rambrandt1-lantern | no_object | **A lit lantern is visible**, raised in a black-sleeved arm just left of the captain's head. |
+| 0124 | davinci1-candle | no_object | **A lit candle is visible**, held by a re-drawn kneeling old man who replaces the original figure. |
+
+Two observations from viewing, not re-judgments:
+1. The two `no_object` panels both show the object. I've asked the user to recheck them.
+   Neither recheck can move the band: even if both became passes, A = 31/46 = 67%,
+   still mixed. Any failing verdict leaves A at 63%. Z would fall from 12% toward 0.
+2. Three of the eight `wrong_owner` cases put the object on a **newly drawn figure**:
+   0161, 0129 and probably 0073. In 0030 the group is redrawn. The new holder appears
+   inside the crop-box's padded crop, not on a sibling who was already there. So part of
+   `wrong_owner` here is klein inventing a holder, which is partly a crop-box mechanism.
+   Five wrong_owner cases are unpaired (0030, 0051, 0053, 0073, 0129), so the paired
+   design does not control for this in them.
+
+What attachment means for the method is a TRAINING_DESIGN question for the user. No
+follow-up run is proposed here.
+
+**Judge's impressions (the user, given after scoring; qualitative, not counted):**
+1. Quality: no big problems, but sometimes the light and style of the edit don't blend
+   with the original. Seen in viewing: a paste seam on the road in 0051; faces and
+   figures redrawn in a different style in the paintings (0124, 0149).
+2. Spatial: sometimes left and right are confused. The rubric doesn't score which hand
+   holds the object. 7 attach instructions name a hand (0009, 0042, 0051, 0059, 0135,
+   0178, 0183). Of the 4 I viewed, 3 put the object in the other hand, from the
+   person's point of view: 0051, 0059 and 0183. 0042 is correct. The other 3 weren't
+   checked for side.
+3. Boundary: the crop box recolours siblings inside it (by construction; this is why
+   off_target counts as edit-right). Separately, when part of an arm is covered by
+   something, the model seems to ignore the hidden rest and modify only the visible
+   stem.
+4. Invention: the edit creates figures or people from nowhere (0161, 0129, probably 0073
+   above), and changes colours without being told to. Panel 0006, plain arm, umbrella
+   instruction: another person was recoloured.
+
+None of these change the reading. Items 2 and 4 are failure modes the 7-label rubric
+folds into `wrong_owner`/`identity`/`clean`. Any future rubric should score hand side
+and invented figures separately.
+
+### Arm T — limb labels (2026-11-20, proposed by Claude, **pending the user's recheck**)
+
+At the user's request I labelled `limb` on the 51 fresh crop-box attach panels; 0028
+(`added`) is the user's. Method: zoomed source/edit crops around the target box, not
+blind to verdicts (I had seen the 17 failures). In `ledger.json` each of mine carries
+`"limb_by": "claude"` and a `limb_note`. Four are marked uncertain in the note: 0024,
+0059, 0142, 0216. Backup before writing: `ledger.before_limb.json`. Limb is descriptive and
+outside the pre-registered reading, which is unchanged.
+
+All 51: unchanged 24, moved 17, other 7, added 2, removed 1. Against the user's
+verdicts, aimed cases only (46):
+
+| limb | edit-right | failures |
+|---|---|---|
+| unchanged | 16/20 | identity 2, wrong_owner 2 |
+| moved | 12/17 | anatomy 2, wrong_owner 1, no_object 1, identity 1 |
+| other (new or redrawn figure) | 0/6 | wrong_owner 5, no_object 1 |
+| added | 1/2 | anatomy 1 (0028); 0083 judged clean |
+| removed | 0/1 | anatomy 1 (0068) |
+
+If the recheck holds, the expected "adds a limb instead of moving one" pattern is rare
+here: 2 of 51 panels. When an arm has to change, klein mostly moves it (17), and usually
+gets that right (12/17). The failure that shows up is different: klein **draws a new
+or redrawn figure to hold the object** (`other`, 6 aimed, all failures, 5 of them
+`wrong_owner`). This is post hoc and rests on one labeller's reading.
