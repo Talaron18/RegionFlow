@@ -1769,3 +1769,26 @@ remove this; if one is available, their tags are scored as well and reported bes
 ```bash
 python bench/hand_tags.py --score runs/fresh/hand_tags/hand_tags.json
 ```
+
+### Hand-visibility test — result (2026-11-20, user's tags, `hand_tags.py --score`)
+
+| group | edit-right (crop-box) |
+|---|---|
+| hard (occluded or low-contrast) | 9/15 |
+| easy | 9/15 |
+
+One-sided Fisher p = 0.65. **Reading by the rule: NOT SUPPORTED.** Whether the holding
+hand is hidden or hard to separate in the source does not explain which attachments fail.
+Descriptive: occluded 7/12 vs not 11/18; low-contrast 3/6 vs not 15/24.
+
+Post hoc, from the per-case table (not a finding; for the next question only):
+- The clearest pattern is the limb label: all 5 `other` cases (a new or redrawn figure
+  holds the object: alps4-flag, hsm1-balloon, kon1-tea, davinci1-candle, nemzeti-flag)
+  fail, and they are spread across easy and hard tags (3 easy, 2 hard).
+- User's note on alps6-guitar: the hand is visible in the full image but not inside the
+  crop-box crop. The crop can *create* occlusion, so tags on the full source may not
+  describe what the editor saw. This test cannot separate that, since only crop-box was
+  judged in full.
+- Several notes say "both hands visible, arms unclear" (rambrandt2-book) or describe a
+  neighbour's arm crossing the target's (hsm1, yama5): arm-to-hand continuity, not
+  hand visibility, which these two tags do not measure.
