@@ -1814,3 +1814,25 @@ the source holds it, or the group is redrawn), `no_one` (object floats or lies),
 | `new` in ≥ 3 | klein invents holders from the full image too: an editor behaviour, not a crop artefact |
 | `target` in ≥ 4 | inventing is caused by the crop: crop-box removes the context klein needs |
 | otherwise | mixed: report the cases |
+
+### Invented-holder check — result (2026-11-20, user's labels; two missing quotes in the
+ledger's `holder` values fixed, h02 and h05, nothing else changed)
+
+| case | crop-box (earlier) | plain | paste-back |
+|---|---|---|---|
+| alps4 flag | new figure | no_one (flag comes out from behind his back) | none |
+| hsm1 balloon | new figure | **target** (neighbour loses the arm that crossed the target's) | target (same) |
+| kon1 tea | redrawn group | new (target's left hand lost; neighbour holds the cup, her hair changed) | none |
+| davinci1 candle | redrawn figure | **target** (wrong hand, face changed, an unrequested edit) | none |
+| nemzeti flag | new figure | **target** (face changed) | none (another man's clothes turned red) |
+
+**Plain: target 3, new 1, no_one 1. Reading by the rule: mixed** (needed `new` ≥ 3 for
+"editor behaviour" or `target` ≥ 4 for "crop artefact").
+
+What it shows anyway: with the whole image, klein gives the object to the right person
+in 3 of the 5 cases where crop-box invented a holder in all 5. The crop is part of the
+cause, not all of it: kon1 invents a holder even with the full image. Getting the owner
+right in plain still costs something on the body: a neighbour's crossing arm is deleted
+(hsm1), the wrong hand is used (davinci1), faces are redrawn (davinci1, nemzeti). Paste-back
+shows no object in 4 of 5: the object lies outside the target's mask and is cut (its
+known failure).

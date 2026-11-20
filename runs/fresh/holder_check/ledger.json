@@ -14,7 +14,7 @@
  {
   "panel": "h02",
   "instruction": "Make the man in the black patterned T-shirt on the far right hold a red flag",
-  "holder": "no_one,
+  "holder": "no_one",
   "notes": "flag coming out behind his back"
  },
  {
@@ -32,7 +32,7 @@
  {
   "panel": "h05",
   "instruction": "Make the officer in the white uniform on the far left hold a red flag",
-  "holder": "none,
+  "holder": "none",
   "notes": "turned a person's clothes red instead"
  },
  {
