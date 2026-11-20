@@ -140,13 +140,15 @@ echo "      confirmed. If it is absent, PIE-Bench alone is enough for Stage 0"
 echo "      — it has more cases and better annotations. Email the authors."
 
 say "RefEdit-Bench (Gate C: 151 hard RefEdit-Bench x COCO cases)"
-# HF repo is bpathir1/RefEdit, not RefEdit-Bench -- that name is only the
-# LOCAL directory bench/run_gate_c.py's --bench default expects
-# (.../RefEdit-Bench/data/test-00000-of-00001.parquet). Confirmed against
-# github.com/bimsarapathiraja/refedit's own README, since huggingface.co
-# itself is not fetchable from every environment this script runs in.
+# The benchmark is the dataset repo bpathir1/RefEdit-Bench (one 9 MB file,
+# data/test-00000-of-00001.parquet). It is GATED: accept its terms on the
+# dataset page and `hf auth login` first. bpathir1/RefEdit is a different
+# repo -- the 105-shard TRAINING set, with no test split -- and an earlier
+# version of this script downloaded that by mistake. Both checked against
+# the Hugging Face API file listings on 2026-11-14.
 if ! have "$DATA/datasets/RefEdit-Bench/data/test-00000-of-00001.parquet"; then
-  $HF_CLI download bpathir1/RefEdit --repo-type dataset \
+  $HF_CLI download bpathir1/RefEdit-Bench --repo-type dataset \
+    --include "data/test-*" \
     --local-dir "$DATA/datasets/RefEdit-Bench"
 fi
 

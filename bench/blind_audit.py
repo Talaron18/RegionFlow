@@ -66,17 +66,44 @@ from refedit_siblings import bench_image
 from run_gate_c import outcome_class
 
 
-def read_arm(spec: str):
+def read_arm(spec: str, prompt_kind: str):
     name, results, edits = spec.split(":")
     recs = [json.loads(l) for l in Path(results).read_text().splitlines()
             if l.strip()]
+    # An `--ablation` run writes BOTH prompt kinds for every id. Keyed by id
+    # alone the last line wins, so the key would carry one prompt's outcome and
+    # the panel the other prompt's image. Keep only the kind being audited.
+    recs = [r for r in recs if r["prompt_kind"] == prompt_kind]
+    if not recs:
+        raise SystemExit(f"arm {name!r}: no {prompt_kind!r} records in {results}")
+    ids = [r["id"] for r in recs]
+    if len(ids) != len(set(ids)):
+        dup = [i for i, n in collections.Counter(ids).items() if n > 1]
+        raise SystemExit(f"arm {name!r}: {len(dup)} ids appear more than once "
+                         f"for prompt kind {prompt_kind!r} ({dup[:5]}) -- "
+                         f"was the run appended to an old file?")
     for r in recs:
         r.setdefault("outcome", outcome_class(r))
     return name, {r["id"]: r for r in recs}, Path(edits)
 
 
+def read_ledger(path: str):
+    """The ledger is edited by hand; say where it broke instead of a traceback."""
+    text = Path(path).read_text()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        lines = text.splitlines()
+        shown = lines[e.lineno - 1] if 0 < e.lineno <= len(lines) else ""
+        raise SystemExit(
+            f"{path} is not valid JSON at line {e.lineno}, column {e.colno}: "
+            f"{e.msg}\n    {shown}\n"
+            f'a verdict is a quoted word, e.g.  "verdict": "clean",  '
+            f"(unjudged = null); one of: {' | '.join(VERDICTS)}") from None
+
+
 def build(args) -> None:
-    arms = [read_arm(s) for s in args.arm]
+    arms = [read_arm(s, args.prompt_kind) for s in args.arm]
     names = [a[0] for a in arms]
     if args.reference not in names:
         raise SystemExit(f"--reference {args.reference!r} not among {names}")
@@ -183,7 +210,7 @@ def build(args) -> None:
 
 
 def score(args) -> None:
-    led = {e["panel"]: e for e in json.loads(Path(args.score).read_text())}
+    led = {e["panel"]: e for e in read_ledger(args.score)}
     key = json.loads(Path(args.key).read_text())
     done = [k | led[k["panel"]] for k in key
             if led.get(k["panel"], {}).get("verdict")]

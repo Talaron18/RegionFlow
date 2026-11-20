@@ -1,0 +1,3 @@
+{"note": "RefEdit-Bench cases whose edit attaches an object to the referred person (hold / wear / put on / sit on). Chosen by reading all 151 instructions on 2026-11-18, before any panel of this audit; most 'holding/wearing' words elsewhere are in the referring expression, not the edit.",
+ "ids": ["refedit-27", "refedit-29", "refedit-36", "refedit-71", "refedit-73",
+         "refedit-85", "refedit-88", "refedit-141", "refedit-162", "refedit-184"]}

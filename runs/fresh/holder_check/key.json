@@ -1,0 +1,62 @@
+[
+ {
+  "panel": "h00",
+  "orig_panel": "panel_0055",
+  "id": "T-nemzeti-flag",
+  "arm": "plain"
+ },
+ {
+  "panel": "h01",
+  "orig_panel": "panel_0014",
+  "id": "T-hsm1-balloon",
+  "arm": "paste"
+ },
+ {
+  "panel": "h02",
+  "orig_panel": "panel_0067",
+  "id": "T-alps4-flag",
+  "arm": "plain"
+ },
+ {
+  "panel": "h03",
+  "orig_panel": "panel_0202",
+  "id": "T-kon1-tea",
+  "arm": "plain"
+ },
+ {
+  "panel": "h04",
+  "orig_panel": "panel_0169",
+  "id": "T-alps4-flag",
+  "arm": "paste"
+ },
+ {
+  "panel": "h05",
+  "orig_panel": "panel_0015",
+  "id": "T-nemzeti-flag",
+  "arm": "paste"
+ },
+ {
+  "panel": "h06",
+  "orig_panel": "panel_0101",
+  "id": "T-davinci1-candle",
+  "arm": "plain"
+ },
+ {
+  "panel": "h07",
+  "orig_panel": "panel_0010",
+  "id": "T-hsm1-balloon",
+  "arm": "plain"
+ },
+ {
+  "panel": "h08",
+  "orig_panel": "panel_0104",
+  "id": "T-davinci1-candle",
+  "arm": "paste"
+ },
+ {
+  "panel": "h09",
+  "orig_panel": "panel_0004",
+  "id": "T-kon1-tea",
+  "arm": "paste"
+ }
+]
