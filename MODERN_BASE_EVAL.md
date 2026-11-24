@@ -1996,3 +1996,15 @@ wrong-owner cases are K-On second-from-left (teacup and blazer both went to the 
 the referring expression, not the attachment, failed), the lei, the dog, the Rembrandt hat, the
 NBA headband copied onto a second player; the guitar case is three arms again; text on objects
 gets garbled (podium, poster titles).
+
+**User's check (2026-11-24): 5 of my `clean` verdicts changed, all toward failure.**
+0006 puppy → identity (face changed a little); 0008 balloon → anatomy (the pink-T-shirt
+neighbour lost her hand); 0011 cap → identity (face; that case is mis-aimed, so it does not
+enter A); 0013 camera → identity (the orange- and green-jacket girls change position);
+0014 green-top control → identity (her necklace is gone). The other 65 verdicts stand as
+checked. I missed small face and accessory changes; the user's eye is stricter on identity.
+
+Rescored, airforce excluded: **A = 22/45 = 49%**, identity 15/45, owner + anatomy 35% of
+failures, paired gap +38 with **6 vs 0**. Reading by the arm-T table: still mixed (A ≤ 50 and
+gap ≥ 25, but F < 50, so neither "attachment-specific" nor "general quality"). The
+"pattern holds on Qwen" test is still not met for the same reason (F < 50).
