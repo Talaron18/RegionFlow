@@ -17,7 +17,7 @@ Two sets, judged in ONE shuffled blind sitting (set and arm hidden):
         --out-dir runs/fresh/attach_blind
     # fill "verdict" in runs/fresh/attach_blind/ledger.json, then
     python bench/attach_audit.py --score runs/fresh/attach_blind \
-        --aiming runs/fresh/attach_sa2va.jsonl
+        --aiming runs/fresh/attach_sa2va.jsonl [--primary-arm plain]
 
 RUBRIC: pick the FIRST verdict that applies, in this order.
   no_object    the requested object/garment is absent, or cut off past recognition
@@ -199,7 +199,7 @@ def build(args) -> None:
 
 # ------------------------------------------------------------------ score ---
 
-def score(out_dir: Path, aiming_path: str | None) -> dict:
+def score(out_dir: Path, aiming_path: str | None, primary_arm: str = PRIMARY_ARM) -> dict:
     led = {e["panel"]: e for e in json.loads((out_dir / "ledger.json").read_text())}
     key = json.loads((out_dir / "key.json").read_text())
     bad = {e["verdict"] for e in led.values() if e["verdict"]} - set(VERDICTS)
@@ -247,10 +247,10 @@ def score(out_dir: Path, aiming_path: str | None) -> dict:
         e = led[k["panel"]]["verdict"]
         if e and k["set"] == "fresh" and (aimed is None or k["id"] in aimed):
             v[(k["id"], k["arm"])] = (e, k["edit_kind"], k["pair"])
-    att = [i for (i, a), (e, kind, _p) in v.items() if a == PRIMARY_ARM and kind == "attach"]
+    att = [i for (i, a), (e, kind, _p) in v.items() if a == primary_arm and kind == "attach"]
     res = {}
     if att:
-        prim = {i: v[(i, PRIMARY_ARM)][0] for i in att}
+        prim = {i: v[(i, primary_arm)][0] for i in att}
         cnt = Counter(prim.values())
         ok = sum(cnt[x] for x in EDIT_OK)
         na, fails = len(att), len(att) - ok
@@ -260,26 +260,32 @@ def score(out_dir: Path, aiming_path: str | None) -> dict:
         nob = [i for i in att if prim[i] == "no_object"]
         drew = [i for i in nob if v.get((i, "plain"), ("no_object",))[0] != "no_object"]
         pd = len(drew) / len(nob) if nob else 0.0
+        if primary_arm == "plain":
+            pd = 0.0    # plain-drew is not applicable when plain is the primary arm
         # paired: attach case and its in-body control, same image + target, both aimed
         ctrl = {p: i for (i, a), (e, kind, p) in v.items()
-                if a == PRIMARY_ARM and kind == "inbody"}
-        pairs = [(i, ctrl[v[(i, PRIMARY_ARM)][2]]) for i in att
-                 if v[(i, PRIMARY_ARM)][2] in ctrl]
+                if a == primary_arm and kind == "inbody"}
+        pairs = [(i, ctrl[v[(i, primary_arm)][2]]) for i in att
+                 if v[(i, primary_arm)][2] in ctrl]
         gap = b = c_ = None
         if pairs:
             good = lambda x: x in EDIT_OK  # noqa: E731
             ca = sum(good(prim[i]) for i, _ in pairs) / len(pairs)
-            cc = sum(good(v[(j, PRIMARY_ARM)][0]) for _, j in pairs) / len(pairs)
+            cc = sum(good(v[(j, primary_arm)][0]) for _, j in pairs) / len(pairs)
             gap = cc - ca
-            b = sum(not good(prim[i]) and good(v[(j, PRIMARY_ARM)][0]) for i, j in pairs)
-            c_ = sum(good(prim[i]) and not good(v[(j, PRIMARY_ARM)][0]) for i, j in pairs)
-        res = {"A": a, "F": f, "Z": z, "plain_drew": pd, "gap": gap, "n_attach": na,
+            b = sum(not good(prim[i]) and good(v[(j, primary_arm)][0]) for i, j in pairs)
+            c_ = sum(good(prim[i]) and not good(v[(j, primary_arm)][0]) for i, j in pairs)
+        res = {"A": a, "F": f, "Z": z, "plain_drew": None if primary_arm == "plain" else pd,
+               "gap": gap, "n_attach": na, "identity": cnt["identity"],
                "n_pairs": len(pairs), "attach_only_fails": b, "control_only_fails": c_,
                "reading": reading(a, f, z, gap, pd)}
-        print(f"\n  primary arm {PRIMARY_ARM}, aimed fresh attach cases: edit right "
-              f"{ok}/{na} (A = {a:.0%}; clean {cnt['clean']}, off_target {cnt['off_target']}, "
+        ident = f"; identity {cnt['identity']}/{na}" if primary_arm != "cropbox" else ""
+        drew_txt = ("plain is the primary arm: plain-drew n/a" if primary_arm == "plain"
+                    else f"plain drew the object in {len(drew)}/{len(nob)} of those")
+        print(f"\n  primary arm {primary_arm}, aimed fresh attach cases: edit right "
+              f"{ok}/{na} (A = {a:.0%}{ident}; clean {cnt['clean']}, off_target {cnt['off_target']}, "
               f"degraded {cnt['degraded']}); of failures, owner+anatomy F = {f:.0%}, no_object Z = {z:.0%}"
-              f" (plain drew the object in {len(drew)}/{len(nob)} of those)")
+              f" ({drew_txt})")
         if pairs:
             print(f"  paired with in-body controls: {len(pairs)} pairs, control edit-right minus "
                   f"attach edit-right = {gap:+.0%}; attach-only failures {b}, control-only {c_}")
@@ -352,6 +358,9 @@ def self_test() -> None:
                                       "sibling" if k == 1 else "target"}) for k in range(4)))
         r = score(td / "blind", str(td / "aim.jsonl"))
         assert (r["A"], r["n_attach"]) == (1.0, 1), r
+        # plain as primary arm: runs, plain-drew is n/a
+        r = score(td / "blind", str(td / "aim.jsonl"), primary_arm="plain")
+        assert r["plain_drew"] is None and r["identity"] == 0, r
     print("SELF-TEST OK")
 
 
@@ -373,6 +382,8 @@ def main():
     p.add_argument("--shuffle-seed", type=int, default=4242)
     p.add_argument("--score", metavar="OUT_DIR")
     p.add_argument("--aiming", metavar="JSONL", help="fresh_cases.py --run output")
+    p.add_argument("--primary-arm", default=PRIMARY_ARM, choices=FRESH_ARMS,
+                   help="arm scored as primary (default cropbox)")
     p.add_argument("--self-test", action="store_true")
     a = p.parse_args()
     if a.self_test:
@@ -380,7 +391,7 @@ def main():
     elif a.build:
         build(a)
     elif a.score:
-        score(Path(a.score), a.aiming)
+        score(Path(a.score), a.aiming, a.primary_arm)
     else:
         p.print_help()
 

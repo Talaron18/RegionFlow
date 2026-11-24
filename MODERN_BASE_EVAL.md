@@ -1865,7 +1865,7 @@ reading used; verdict and limb label per panel, same rubric.
 ```bash
 # Qwen venv: recent diffusers (QwenImageEditPlusPipeline), transformers, bitsandbytes, accelerate
 python bench/fresh_cases.py --edit --editor qwen --qwen-mode nf4 \
-  --qwen-repo /path/to/Qwen-Image-Edit-2511 \
+  --qwen-repo /mnt/f/regionflow-data/hf/hub/models--Qwen--Qwen-Image-Edit-2511/snapshots/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9 \
   --cases bench/attach_cases.json --out-dir runs/fresh/attach_masks \
   --edit-dir runs/fresh/attach_edits_qwen
 python bench/attach_audit.py --build --arms cropbox \
@@ -1874,3 +1874,94 @@ python bench/attach_audit.py --build --arms cropbox \
 python bench/attach_audit.py --score runs/fresh/attach_blind_qwen \
   --aiming runs/fresh/attach_sa2va.jsonl
 ```
+
+### Qwen run — setup as actually run, and what was seen before judging (2026-11-22/23)
+
+**Setup changes from the rule above** (made for memory and image quality, before any judging):
+- Download: `Qwen-Image-Edit-2511` snapshot `6f3ccc0b…`, 54 GB, in `F:\regionflow-data\hf`.
+- Loading both models in 4-bit in one process took the WSL VM down twice (host RAM;
+  `.wslconfig` was `memory=60GB` on a 61.6 GB machine, now `memory=44GB`, `swap=32GB`).
+  Each model is now quantised once in its own process and saved
+  (`qwen_edit_model.py --quantize`), and runs load the saved weights (`--qwen-nf4-dir`).
+- The first full-NF4 transformer gave grainy, mosaic-like noise over the whole image (known
+  Qwen-Image NF4 issue). Those outputs are set aside in `runs/fresh/attach_edits_qwen_nf4_grainy`
+  and are not used. Re-quantised with `--skip block0`: 7 Linear layers kept in bf16
+  (`time_text_embed` ×2, `img_in`, `txt_in`, `transformer_blocks.0.img_mod.1`,
+  `norm_out.linear`, `proj_out`; 0.097B params), 839 in NF4; saved transformer 10.84 GB,
+  peak 10.95 GB while quantising. Grain gone on the smoke case. Peak GPU during a run ≈17.7 GB.
+- So the editor judged is **Qwen-Image-Edit-2511, transformer NF4 (block0 layers bf16) +
+  text encoder NF4**, not the bf16 release.
+
+**Seen before judging (the user's look at the outputs, unblinded; and my look at one case):**
+- Qwen redraws the whole frame slightly zoomed and shifted relative to the source.
+  Paste-back and crop-box both paste into source geometry, so both show seams and
+  misalignment that come from the drift, not from the attachment. The crop also runs at
+  ~0.26 MP, below Qwen's native ~1 MP.
+- User: plain targets the right instance more often than klein did, and hand–object
+  contact looks better; but plain sometimes changes identities and postures. Crop-box and
+  paste look worse than plain because of the drift.
+- Umbrella smoke case: plain correct target, natural grip; crop-box correct target but
+  the man redrawn larger, backpack gone, the green-jacket neighbour inside the box mostly
+  erased, visible box seam.
+
+These are impressions, not counts. They bear on which arm is a fair test of Qwen; see the
+decision recorded below once made.
+
+### Qwen — arms judged and the plain-arm reading (decided 2026-11-23, before any Qwen panel is built or judged)
+
+**Decision (user).** Judge **crop-box and plain** (140 panels: 70 + 70, shuffled together
+blind, `--arms plain,cropbox`).
+
+- **Crop-box** stays the registered reading above, scored exactly as written, primary arm
+  `cropbox`. It is not dropped or replaced.
+- **Plain** gets a second reading, added **after the user had seen unblinded Qwen
+  outputs** and judged plain to look better. It is therefore weaker evidence than the
+  crop-box reading and must be reported as added post hoc, with this reason: Qwen redraws
+  the frame zoomed/shifted, so the two arms that paste back into source geometry
+  (crop-box, paste) measure partly that drift, and the crop runs below Qwen's native
+  resolution.
+
+**Plain reading** (primary arm `plain`; Sa2VA-aimed cases, airforce excluded; same rubric,
+same thresholds):
+- The arm-T bands applied to plain: A ≥ 70% not a residual; A ≤ 50% with Z ≥ 50% object
+  absent (the "plain drew it" branch does not apply: plain is the arm); A ≤ 50%, F ≥ 50%,
+  gap ≥ 25 attachment-specific; otherwise mixed.
+- **Pattern holds on Qwen (plain)** with the same test as for crop-box: paired gap ≥ 25
+  points, attach-only failures ≥ 3× control-only, owner + anatomy ≥ 50% of attach
+  failures. Gap < 10 points: not seen in Qwen plain. Otherwise mixed.
+- **Judging rule for drift, fixed now:** a uniform zoom or shift of the whole frame is not
+  a failure in itself. A change to the referent's face, body or posture beyond the edit is
+  `identity` (fails). A change to another person (pose, identity, removal) is `off_target`
+  (counts as edit-right, reported separately). The user has already seen identity and
+  posture changes in plain, so the `identity` count is reported beside A, not hidden in it.
+- **Comparison to klein:** klein's registered result is crop-box (A 29/46 = 63%). klein's
+  plain arm was not judged in full, so there is no klein-plain number to compare with;
+  a Qwen-plain vs klein-crop-box comparison mixes editor and arm and is reported as such.
+
+**Not blind in one respect:** the judge can often tell crop-box from plain by the box
+seam. Arms are still shuffled and unlabelled.
+
+### Qwen — crop-box dropped from judging, plain only (decided 2026-11-23, before any Qwen panel is judged)
+
+**Change to the decision above.** Before judging started, the user looked through the
+outputs and found that most crop-box (and paste) results show the same artefact. Qwen
+returns the frame zoomed and shifted, so the pasted region no longer lines up with the
+source, and limbs or bodies appear twice along the box edge. One example is a ghost arm and
+doubled legs on #52 in the football case. The rubric would call that `anatomy`, but it is a
+paste-alignment failure in our pipeline, not an attachment failure. A crop-box reading
+on Qwen would mostly measure how far Qwen drifts.
+
+- **Crop-box on Qwen: no attachment reading.** The registered crop-box test cannot be
+  run on this editor. If crop-box is reported at all, it is only as a count of misaligned
+  composites, not with attach verdicts. Fixing it would mean registering Qwen's crop
+  output to the source inside `crop()` and running the 70 cases again; that is not done.
+- **Paste** was never judged and stays unjudged. (It could be rebuilt on CPU from
+  `plain.png` after a similarity registration to the source; not done.)
+- **Plain is the only Qwen reading**, scored as written in the section above (primary arm
+  `plain`, same bands, same "pattern holds" test, same drift rule, identity count beside
+  A, airforce excluded). It is **post hoc**: added after unblinded viewing, and now the
+  only reading. Report it as an observation, not a registered test.
+- New blind set, plain only (70 panels): `runs/fresh/attach_blind_qwen_plain`. The
+  140-panel set `runs/fresh/attach_blind_qwen` is left unjudged.
+- **Comparison to klein** stays limited as noted above. The fair comparison would be klein's
+  existing plain outputs for the same 70 cases, judged blind; that has not been done.

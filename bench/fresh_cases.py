@@ -411,7 +411,8 @@ def make_editor(args):
     from flux2_klein_model import Flux2KleinModel  # noqa: PLC0415
     if getattr(args, "editor", "klein") == "qwen":
         from qwen_edit_model import load_qwen  # noqa: PLC0415
-        adapter = load_qwen(args.qwen_repo, args.qwen_mode, args.device)
+        adapter = load_qwen(args.qwen_repo, args.qwen_mode, args.device,
+                            nf4_dir=args.qwen_nf4_dir or None)
         return Flux2KleinModel(pipe=adapter, device=args.device, offload=True)
     return Flux2KleinModel(device=args.device, offload=args.offload)
 
@@ -708,6 +709,9 @@ def main():
     p.add_argument("--qwen-repo", default="Qwen/Qwen-Image-Edit-2511",
                    help="HF id or local path of the downloaded checkpoint")
     p.add_argument("--qwen-mode", choices=("nf4", "sequential", "full"), default="nf4")
+    p.add_argument("--qwen-nf4-dir", default="",
+                   help="dir holding pre-quantised transformer/ and text_encoder/ "
+                        "(from qwen_edit_model.py --quantize); nf4 mode only")
     p.add_argument("--report", metavar="JSONL")
     p.add_argument("--overrides", metavar="JSON")
     p.add_argument("--self-test", action="store_true")
