@@ -1,3 +1,7 @@
+> **Current direction (2026-11-24):** see `NEXT_STAGE.md`. The text below describes the
+> original Stage 0–3 design (SD3, λ/α fields), kept for history; its reports are in
+> `docs/archive/`.
+
 # RegionFlow — graded region control for few-step image editing
 
 ## Staging

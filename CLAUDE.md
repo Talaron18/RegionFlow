@@ -1,8 +1,9 @@
 # RegionFlow — working notes for Claude
 
-Current state lives in `STATUS_REVIEW.md` (read first), then `GATE_A_REOPENING_PLAN.md`
-(the plan's *Verdict* and *Next: the real work queue* sections) and `GATE_C_REPORT.md`.
-`START_HERE.md` is partly stale (it still calls Gate C untouched).
+Read first: `NEXT_STAGE.md` (current plan: two-stage part-graph editing with a reversible
+detail flow), then `MODERN_BASE_EVAL.md` (the evaluation log the plan rests on; latest
+sections at the end) and `RELATED_WORK.md`. Older plans and reports (Stage 0/1, Gate A/B/C,
+DINO, UltraEdit, the first training design) are in `docs/archive/` — see its README.
 
 ## Model setup (see `.claude/`)
 - Main session plans and decides at high effort. Advisor is configured via `advisorModel`
