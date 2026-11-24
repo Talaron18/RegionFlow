@@ -2008,3 +2008,8 @@ Rescored, airforce excluded: **A = 22/45 = 49%**, identity 15/45, owner + anatom
 failures, paired gap +38 with **6 vs 0**. Reading by the arm-T table: still mixed (A ≤ 50 and
 gap ≥ 25, but F < 50, so neither "attachment-specific" nor "general quality"). The
 "pattern holds on Qwen" test is still not met for the same reason (F < 50).
+
+**Who judged what (confirmed by the user, 2026-11-24).** klein crop-box: the user's own blind
+verdicts. Qwen plain: Claude's blind verdicts, checked by the user (5 changed, all clean → fail).
+So the klein vs Qwen comparison differs in judging procedure as well as in arm (crop-box vs
+plain) and precision (Qwen in 4-bit).
