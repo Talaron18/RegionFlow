@@ -104,3 +104,43 @@ A Blender data-generation smoke test: one scene, three copies of one clothed MPF
 one prop; render RGB, part-ID pass, depth, 2D joints (with visibility), and the graph JSON;
 then apply one *attach* edit and render the pair. Look at the outputs before writing anything
 larger.
+
+## Research findings (2026-11-24; two research passes, sources tagged as verified or not in the reports)
+
+**Conditioning format.** Map image as extra reference tokens, not a text graph.
+- Verified: OminiControl appends the condition image as tokens + rank-4 LoRA on FLUX.1-dev
+  (canny, depth, colourization, inpaint; 223k images, 2×H100). ControlNet learns segmentation
+  maps with ~1k images (recognizable output). klein-4B LoRA trains on 24 GB (HF blog: 120 pairs,
+  RTX 4090, ~1 h) — but for a style edit, not a new condition.
+- Text graphs: LAION-SG needed 540k pairs + a GNN for SG-IoU 0.23 → 0.34; no editing.
+- Not found: any LoRA learning a colour-coded part-ID + joint map; any map-vs-text comparison.
+- Known failures: FLUX "tends to ignore the condition" (OminiControl README; matches our
+  stick-figure test); augmentation-only pairs teach copying (OminiControl §4.3).
+- Every graph/scene-based editor (SGEdit, SAGE) keeps unedited content by masks / attention /
+  compositing, never by the condition alone → our design needs explicit preservation.
+
+**Part labels.** Human parsing (LIP/CIHP) has left/right arm, leg, shoe, one glove class,
+sleeves inside upper-clothes; PASCAL-Part covers objects. **No label set has attachment edges**
+(sleeve→forearm, glove→hand). Renders from skinned assets provide them; this is a real gap.
+
+**Rendering.** Blender + Cycles (OptiX) headless; EEVEE needs an OpenGL display. Exact IDs from
+object/material index passes (Cryptomatte is anti-aliased); alpha-blended hair/lashes drop out
+of passes. Joints: bone head in world space → `world_to_camera_view`; occlusion by
+`scene.ray_cast` against depth. No ready-made script found. Existing pipelines don't fit:
+BlenderProc and Kubric have no humans; BEDLAM/AGORA/SURREAL are SMPL-based (licence-gated,
+clothing masks not stated); TDW (Unity) has humanoids + ID passes but more setup.
+
+**Assets (licence for anything released).** CC0: MPFB2 assets (clothing coverage to confirm),
+Quaternius (animals), Kenney, Poly Haven. Avoid for release: SMPL-X / AMASS (non-commercial),
+Mixamo (reported to bar ML training), Ready Player Me (CC BY-NC-SA).
+
+**Sim-to-real.** No 2024-26 number found for diffusion trained on renders transferring structure
+to photos. LightLab (relighting): synthetic-only generalizes poorly; real + synthetic best. So
+mix real images (reconstruction pairs) and edit a real source image.
+
+**Existing edit-pair data.** CLEVR-Change, RS-Objects, SceneForge (Infinigen counterfactuals),
+ObMan (hand–object renders). None: multi-person, per-part, hand–object edit pairs.
+
+**Risks added.** Re-posing changes shadows/indirect light in "unchanged" regions (use a diff
+mask); LoRA may ignore the map or copy the source (fallback: ControlNet-style branch; compare
+against a no-map baseline).
