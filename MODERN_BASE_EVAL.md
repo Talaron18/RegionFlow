@@ -2013,3 +2013,11 @@ gap ≥ 25, but F < 50, so neither "attachment-specific" nor "general quality").
 verdicts. Qwen plain: Claude's blind verdicts, checked by the user (5 changed, all clean → fail).
 So the klein vs Qwen comparison differs in judging procedure as well as in arm (crop-box vs
 plain) and precision (Qwen in 4-bit).
+
+**Why the two editors are compared on different arms (user, 2026-11-24).** Each editor is
+judged on its best pipeline. klein plain makes many mistakes (leakage, wrong owner) and its
+crop-box and paste-back arms are much better. Qwen zooms and shifts the whole frame, so any
+arm that pastes back into source geometry fails on alignment (example: the yellow-hoodie
+girl in the mug control, pasted at a different scale and offset, doubled body along the box
+edge). So the comparison is "each editor at its best": klein crop-box vs Qwen plain. A
+klein-plain sitting is not needed for that framing.
