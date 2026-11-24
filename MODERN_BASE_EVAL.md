@@ -1965,3 +1965,34 @@ on Qwen would mostly measure how far Qwen drifts.
   140-panel set `runs/fresh/attach_blind_qwen` is left unjudged.
 - **Comparison to klein** stays limited as noted above. The fair comparison would be klein's
   existing plain outputs for the same 70 cases, judged blind; that has not been done.
+
+### Qwen plain — verdicts by Claude, pending the user's check (2026-11-24)
+
+At the user's request I judged all 70 panels of `runs/fresh/attach_blind_qwen_plain` (verdict,
+limb, note per panel; each ledger entry carries `judged_by: claude (pending user check)`).
+`key.json` was not opened before every verdict was written; the scorer read it afterwards.
+Drift rule as fixed above: uniform zoom is not a failure; referent's face/body/posture changed
+→ `identity`; another person changed → `off_target`.
+
+`attach_audit.py --score … --primary-arm plain` (Sa2VA-aimed; airforce excluded, its control
+and attach panels 0015 / 0067):
+
+| | Qwen plain (post hoc reading) | klein crop-box (registered) |
+|---|---|---|
+| attach edit-right A | 25/45 = 56% | 29/45 = 64% |
+| of which `identity` failures | 13/45 | 3/46 |
+| owner + anatomy share of failures F | 35% | 69% |
+| paired gap / discordant pairs | +38 / 6 vs 0 (16 pairs) | +44 / 7 vs 0 (16 pairs) |
+| invented holder (limb `other`) | 3 (broom, helmet, airforce) | 5 |
+
+**Reading: mixed** (A between 50 and 70). **"Pattern holds on Qwen" test: not met** — gap ≥ 25
+and 6 vs 0 hold, but owner + anatomy is 35% < 50% of failures. Qwen's attachment failures are
+mostly `identity` (the right person gets the object but is redrawn: new face, new posture,
+replaced player, lost backpack), not wrong owner. Same direction as klein (attachment fails
+where clothing on the same person does not, 6 vs 0), different failure mode.
+
+Seen while judging (not counted): Qwen picks the right person more often than klein crop-box;
+wrong-owner cases are K-On second-from-left (teacup and blazer both went to the center girl:
+the referring expression, not the attachment, failed), the lei, the dog, the Rembrandt hat, the
+NBA headband copied onto a second player; the guitar case is three arms again; text on objects
+gets garbled (podium, poster titles).

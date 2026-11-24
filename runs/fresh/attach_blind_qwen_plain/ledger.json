@@ -1,492 +1,562 @@
 [
  {
   "panel": "panel_0000",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the woman in the grey USC T-shirt at the front right hold a glass of red wine"
+  "verdict": "identity",
+  "limb": "moved",
+  "notes": "wine glass in her own raised hand, correct owner; but her navy T-shirt became light grey (USC letters redrawn)",
+  "instruction": "Make the woman in the grey USC T-shirt at the front right hold a glass of red wine",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0001",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the captain in black with the red sash in the center hold a lantern in his raised left hand"
+  "verdict": "clean",
+  "limb": "moved",
+  "notes": "lantern raised by the captain; held in his right hand (viewer's left), not the left the instruction names; sash redrawn larger and brighter",
+  "instruction": "Make the captain in black with the red sash in the center hold a lantern in his raised left hand",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0002",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the girl in the front center, with her face turned up and one arm raised, hold a rolled diploma in her raised hand"
+  "verdict": "off_target",
+  "limb": "unchanged",
+  "notes": "front-center girl holds the rolled diploma in her raised hand (correct owner); the whole crowd is recomposed and redrawn, more than a uniform zoom",
+  "instruction": "Make the girl in the front center, with her face turned up and one arm raised, hold a rolled diploma in her raised hand",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0003",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the man in the wide black hat on the right hold a book in his raised left hand"
+  "verdict": "identity",
+  "limb": "moved",
+  "notes": "book held by the man in the wide hat (correct owner) at chest height, not raised; his forceps hand leaves the body and is raised into the air, a posture change beyond the edit",
+  "instruction": "Make the man in the wide black hat on the right hold a book in his raised left hand",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0004",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the player wearing number 81 on the left hold a football"
+  "verdict": "identity",
+  "limb": "moved",
+  "notes": "#81 holds the football in his own hands (correct owner); his face is redrawn (moustache gone, different expression)",
+  "instruction": "Make the player wearing number 81 on the left hold a football",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0005",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a small hawk on the shoulder of the player with number 52"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "hawk perched on #52's shoulder; frame zoomed, no other change seen",
+  "instruction": "Put a small hawk on the shoulder of the player with number 52",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0006",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a puppy on the knee of the woman in the pink jacket sitting in front"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "puppy sits on the knee of the woman in the pink jacket; others unchanged apart from the zoom",
+  "instruction": "Put a puppy on the knee of the woman in the pink jacket sitting in front",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0007",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the jacket of the boy in the blue jacket in the middle, with his arms around his friends, to orange"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the middle boy's jacket is orange, including both sleeves over his friends' shoulders; nothing else changed",
+  "instruction": "Change the jacket of the boy in the blue jacket in the middle, with his arms around his friends, to orange",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0008",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the girl in the green top in the middle hold a red balloon in her raised hand"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the green-top girl holds the balloon's knot in her own raised hand; others unchanged",
+  "instruction": "Make the girl in the green top in the middle hold a red balloon in her raised hand",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0009",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the man in the front row wearing a purple stole hold a rolled diploma above his head"
+  "verdict": "identity",
+  "limb": "moved",
+  "notes": "the purple-stole graduate raises the diploma above his head with both arms (correct owner), but he is redrawn larger, facing the camera, with a different face",
+  "instruction": "Make the man in the front row wearing a purple stole hold a rolled diploma above his head",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0010",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the player with number 9 in the center of the front row hold a trophy"
+  "verdict": "identity",
+  "limb": "moved",
+  "notes": "trophy held at the #9 position, but the player is replaced by a different, larger man standing in front of the row",
+  "instruction": "Make the player with number 9 in the center of the front row hold a trophy",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0011",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a red baseball cap on the woman in the blue UCLA T-shirt in the middle"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "red cap on the woman in the blue UCLA T-shirt; others unchanged",
+  "instruction": "Put a red baseball cap on the woman in the blue UCLA T-shirt in the middle",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0012",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the prisoner in a cap at the front left, walking with his back to us, hold a broom"
+  "verdict": "wrong_owner",
+  "limb": "other",
+  "notes": "a new man in a hat appears in the middle of the yard holding the broom; the front-left prisoner is unchanged",
+  "instruction": "Make the prisoner in a cap at the front left, walking with his back to us, hold a broom",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0013",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the girl in the orange jacket and pink striped shirt hold a camera in her raised hand"
+  "verdict": "clean",
+  "limb": "moved",
+  "notes": "the orange-jacket girl holds the camera up in her own raised hand; others unchanged",
+  "instruction": "Make the girl in the orange jacket and pink striped shirt hold a camera in her raised hand",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0014",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the green top of the girl in the middle to purple"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the green top becomes purple; frame strongly zoomed and cropped, nobody else changed",
+  "instruction": "Change the green top of the girl in the middle to purple",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0015",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the tall cadet saluting at center right hold a folded American flag in her left hand"
+  "verdict": "wrong_owner",
+  "limb": "other",
+  "notes": "the whole formation is recomposed; an unfolded flag is held by a different cadet standing left of the saluting target (the airforce instruction already excluded for its error)",
+  "instruction": "Make the tall cadet saluting at center right hold a folded American flag in her left hand",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0016",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the blazer of the girl with long black hair, second from the left, to white"
+  "verdict": "wrong_owner",
+  "limb": "unchanged",
+  "notes": "control edit applied to the wrong girl: the twin-tailed girl in the center gets the white blazer; the long-black-haired girl second from left is unchanged",
+  "instruction": "Change the blazer of the girl with long black hair, second from the left, to white",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0017",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a red cap on the man on the far left"
+  "verdict": "wrong_owner",
+  "limb": "unchanged",
+  "notes": "red hat put on the second man from the left; the man cut by the left frame edge (the target) has none",
+  "instruction": "Put a red cap on the man on the far left",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0018",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put sunglasses on the Marilyn with pink hair on the green background in the center"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "sunglasses on the pink-haired Marilyn on green only; the other eight unchanged (flat rendering, not in the screen-print style)",
+  "instruction": "Put sunglasses on the Marilyn with pink hair on the green background in the center",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0019",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the girl with short brown hair in the center hold a cherry blossom branch in her right hand"
+  "verdict": "clean",
+  "limb": "moved",
+  "notes": "the center girl lowers her hands from her face and holds blossom branches, one in each hand (asked: right hand); others unchanged",
+  "instruction": "Make the girl with short brown hair in the center hold a cherry blossom branch in her right hand",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0020",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the girl with long black hair, second from the left, hold a cup of tea"
+  "verdict": "wrong_owner",
+  "limb": "unchanged",
+  "notes": "the teacup is held by the twin-tailed girl in the center, not the long-black-haired girl second from left (same confusion as the blazer control)",
+  "instruction": "Make the girl with long black hair, second from the left, hold a cup of tea",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0021",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the tall man on the far right hold a microphone"
+  "verdict": "degraded",
+  "limb": "moved",
+  "notes": "the tall man on the far right holds a microphone (correct owner); the podium text is garbled (\"NasdaqListed\" letters changed)",
+  "instruction": "Make the tall man on the far right hold a microphone",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0022",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the T-shirt of the woman in the blue UCLA T-shirt in the middle to green"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the UCLA T-shirt becomes green (letters kept); others unchanged",
+  "instruction": "Change the T-shirt of the woman in the blue UCLA T-shirt in the middle to green",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0023",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the yellow jacket of the girl in front to red"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the yellow jacket becomes red; others unchanged",
+  "instruction": "Change the yellow jacket of the girl in front to red",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0024",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a red flower lei around the neck of the man wearing glasses in the front row, second from the right"
+  "verdict": "wrong_owner",
+  "limb": "unchanged",
+  "notes": "heavy zoom; the red lei hangs on a man with clear glasses near the middle of the front row, not the sunglassed man second from the right",
+  "instruction": "Put a red flower lei around the neck of the man wearing glasses in the front row, second from the right",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0025",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the girl crouching in front with the camera hold an ice cream cone in her left hand"
+  "verdict": "wrong_owner",
+  "limb": "added",
+  "notes": "the camera girl keeps both hands on the camera; the cone is held by an extra hand that belongs to no one, beside the striped girl's face",
+  "instruction": "Make the girl crouching in front with the camera hold an ice cream cone in her left hand",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0026",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the girl in the brown shirt hold a bouquet of flowers"
+  "verdict": "clean",
+  "limb": "moved",
+  "notes": "the brown-shirt girl holds a bouquet in her own hands; others unchanged",
+  "instruction": "Make the girl in the brown shirt hold a bouquet of flowers",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0027",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the boy in the blue jacket in the middle, with his arms around his friends, hold a guitar"
+  "verdict": "anatomy",
+  "limb": "added",
+  "notes": "the boy keeps both arms over his friends' shoulders (hand still on the red-vest girl's shoulder) and a further blue-sleeved hand frets the guitar neck: three arms, the same failure as klein",
+  "instruction": "Make the boy in the blue jacket in the middle, with his arms around his friends, hold a guitar",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0028",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the shirt of the player with number 9 in the center of the front row to white"
+  "verdict": "degraded",
+  "limb": "unchanged",
+  "notes": "#9 in white, but shorts and socks also turned white (whole kit, beyond \"shirt\"); others unchanged",
+  "instruction": "Change the shirt of the player with number 9 in the center of the front row to white",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0029",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a small cat on the shoulder of the girl in the yellow jacket in front"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "cat on the shoulder of the yellow-jacket girl; others unchanged",
+  "instruction": "Put a small cat on the shoulder of the girl in the yellow jacket in front",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0030",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the black jacket of the bearded man to brown"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the bearded man's jacket becomes brown; painting style kept",
+  "instruction": "Change the black jacket of the bearded man to brown",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0031",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the officer in the white uniform on the far left hold a red flag"
+  "verdict": "identity",
+  "limb": "moved",
+  "notes": "a red flag held by the white-uniformed officer at far left, but he is redrawn as a different man (bicorne hat, new face and uniform, no helmet)",
+  "instruction": "Make the officer in the white uniform on the far left hold a red flag",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0032",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a red cape on the yellow robot at the top right"
+  "verdict": "degraded",
+  "limb": "unchanged",
+  "notes": "red cape on the yellow robot at top right; heavy zoom crops the poster, title text partly garbled",
+  "instruction": "Put a red cape on the yellow robot at the top right",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0033",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the player with number 9 on the right hold a football under his arm"
+  "verdict": "clean",
+  "limb": "moved",
+  "notes": "#9 holds a football under his arm; others unchanged",
+  "instruction": "Make the player with number 9 on the right hold a football under his arm",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0034",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the man in the bright blue jacket standing at the back hold an open red umbrella over his head"
+  "verdict": "identity",
+  "limb": "moved",
+  "notes": "the man in bright blue holds the open red umbrella in his own hand (correct owner, natural grip), but his large backpack is gone and he is redrawn standing apart from the wall (borderline; clean if the backpack loss is accepted)",
+  "instruction": "Make the man in the bright blue jacket standing at the back hold an open red umbrella over his head",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0035",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the uniform of the girl with short grey hair on the far left to red"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the grey-haired girl on the far left gets a red uniform; others unchanged",
+  "instruction": "Change the uniform of the girl with short grey hair on the far left to red",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0036",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put sunglasses on the soldier marching on the far left in the front"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "sunglasses on the far-left front soldier; others unchanged",
+  "instruction": "Put sunglasses on the soldier marching on the far left in the front",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0037",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the black clothes of the captain with the red sash in the center to green"
+  "verdict": "degraded",
+  "limb": "unchanged",
+  "notes": "the captain's jacket becomes green, but only the upper body; breeches stay black, and the green looks flat against the painting",
+  "instruction": "Change the black clothes of the captain with the red sash in the center to green",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0038",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a black hat on the blonde girl on the far left"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "black hat on the blonde girl at far left; others unchanged",
+  "instruction": "Put a black hat on the blonde girl on the far left",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0039",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the woman with curly hair in the black vest and red sleeves on the far right hold a red umbrella"
+  "verdict": "clean",
+  "limb": "moved",
+  "notes": "the curly-haired woman in the black vest holds the red umbrella over her head in her own hand; others unchanged",
+  "instruction": "Make the woman with curly hair in the black vest and red sleeves on the far right hold a red umbrella",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0040",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the flowered white dress of the woman on the right to blue"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the flowered dress becomes blue, pattern kept; others unchanged",
+  "instruction": "Change the flowered white dress of the woman on the right to blue",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0041",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the black vest of the woman with curly hair on the far right to white"
+  "verdict": "degraded",
+  "limb": "moved",
+  "notes": "the vest becomes a full white jacket, so her red sleeves are gone too (beyond \"vest\"); her arm pose changes slightly",
+  "instruction": "Change the black vest of the woman with curly hair on the far right to white",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0042",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a red hat on the old man standing on the far left"
+  "verdict": "identity",
+  "limb": "unchanged",
+  "notes": "red hat on the old man at far left (correct owner), but his head is redrawn with a new white-bearded face; the hat is flat and does not match the painting",
+  "instruction": "Put a red hat on the old man standing on the far left",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0043",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the yellow jacket of the girl on the right to blue"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the yellow jacket of the girl on the right becomes blue; others unchanged",
+  "instruction": "Change the yellow jacket of the girl on the right to blue",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0044",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a gold medal around the neck of the player with number 3 on the left"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "gold medal around #3's neck; others unchanged",
+  "instruction": "Put a gold medal around the neck of the player with number 3 on the left",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0045",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a black spiked helmet on the man in the white uniform in the center"
+  "verdict": "identity",
+  "limb": "unchanged",
+  "notes": "the white-uniformed man's whole head is replaced by an oversized black spiked helmet with no face",
+  "instruction": "Put a black spiked helmet on the man in the white uniform in the center",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0046",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the kneeling man in the white robe on the right, who is offering a cup, hold a lit candle in his other hand"
+  "verdict": "identity",
+  "limb": "moved",
+  "notes": "the kneeling man in white holds a lit candle in his offering hand (the cup is gone); his head is redrawn as a cartoonish blob, not his face",
+  "instruction": "Make the kneeling man in the white robe on the right, who is offering a cup, hold a lit candle in his other hand",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0047",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the small child in the straw hat hold a red balloon"
+  "verdict": "degraded",
+  "limb": "moved",
+  "notes": "the child holds the red balloon's string in his own hand (correct owner); the balloon is glossy and photoreal, clashing with the impressionist paint",
+  "instruction": "Make the small child in the straw hat hold a red balloon",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0048",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the man in the black patterned T-shirt on the far right hold a red flag"
+  "verdict": "clean",
+  "limb": "moved",
+  "notes": "the man on the far right holds the red flag pole in his own hand; others unchanged (heavy zoom)",
+  "instruction": "Make the man in the black patterned T-shirt on the far right hold a red flag",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0049",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the bearded man in the black jacket hold a bouquet of flowers"
+  "verdict": "identity",
+  "limb": "moved",
+  "notes": "the bearded man holds a bouquet (correct owner), but his face is redrawn with a much longer dark beard and a different face",
+  "instruction": "Make the bearded man in the black jacket hold a bouquet of flowers",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0050",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a small white dog on the lap of the woman in the olive T-shirt on the far left"
+  "verdict": "wrong_owner",
+  "limb": "unchanged",
+  "notes": "the white dog sits in front of the second woman (dark hair) at the table, not on the lap of the olive-T-shirt woman on the far left",
+  "instruction": "Put a small white dog on the lap of the woman in the olive T-shirt on the far left",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0051",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a red scarf around the neck of the bare-headed prisoner with yellow hair in the center"
+  "verdict": "identity",
+  "limb": "unchanged",
+  "notes": "red scarf on the yellow-haired prisoner (correct owner); his face becomes a pale grey blank and the hair a flat bright yellow cap",
+  "instruction": "Put a red scarf around the neck of the bare-headed prisoner with yellow hair in the center",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0052",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the girl with short grey hair on the far left hold an umbrella"
+  "verdict": "identity",
+  "limb": "moved",
+  "notes": "the far-left girl holds an open umbrella (correct owner), but she is redrawn with silver hair and a different face, her bag is gone, and the umbrella covers the title",
+  "instruction": "Make the girl with short grey hair on the far left hold an umbrella",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0053",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the pink hair of the Marilyn on the green background in the center to blue"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the center Marilyn's pink hair becomes blue; the other eight unchanged",
+  "instruction": "Change the pink hair of the Marilyn on the green background in the center to blue",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0054",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the man in the bright green jacket on the right hold a red flag"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the green-jacket man holds the red flag in his raised fist; others unchanged",
+  "instruction": "Make the man in the bright green jacket on the right hold a red flag",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0055",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the black patterned T-shirt of the man on the far right to white"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the patterned T-shirt of the man on the far right becomes white; others unchanged",
+  "instruction": "Change the black patterned T-shirt of the man on the far right to white",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0056",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the girl in the pink hoodie on the right hold a steaming mug in her hands"
+  "verdict": "identity",
+  "limb": "moved",
+  "notes": "the pink-hoodie girl holds a steaming mug (correct owner), but she is redrawn facing sideways with a different face; the long-haired girl behind her loses her arm and is half hidden",
+  "instruction": "Make the girl in the pink hoodie on the right hold a steaming mug in her hands",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0057",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the suit of the tall man on the far right to light grey"
+  "verdict": "degraded",
+  "limb": "unchanged",
+  "notes": "the far-right man's suit becomes light grey (correct); the podium text is garbled again",
+  "instruction": "Change the suit of the tall man on the far right to light grey",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0058",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a small bird on the head of the girl in the pink jacket on the right"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "small bird on the head of the pink-jacket girl on the right; others unchanged",
+  "instruction": "Put a small bird on the head of the girl in the pink jacket on the right",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0059",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the jacket of the man in the bright blue jacket standing at the back to red"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the man in the bright blue jacket at the back is now in red; others unchanged",
+  "instruction": "Change the jacket of the man in the bright blue jacket standing at the back to red",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0060",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a red headband on the player in the white number 34 jersey who is shooting"
+  "verdict": "wrong_owner",
+  "limb": "unchanged",
+  "notes": "red headband on the shooting #34 (correct), but #30 in green also gets a red headband (edit leaked to a non-target); judged wrong_owner because the object went to two people",
+  "instruction": "Put a red headband on the player in the white number 34 jersey who is shooting",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0061",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the player with number 42 on the right hold a helmet in his left hand"
+  "verdict": "wrong_owner",
+  "limb": "other",
+  "notes": "#42 holds nothing (he is already wearing his helmet); a loose helmet floats beside another player's raised hand on the left",
+  "instruction": "Make the player with number 42 on the right hold a helmet in his left hand",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0062",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the pink hoodie of the girl on the right to yellow"
+  "verdict": "identity",
+  "limb": "moved",
+  "notes": "the pink hoodie becomes yellow (correct), but she is redrawn turned toward the group with a different posture; the girl behind her changes too",
+  "instruction": "Change the pink hoodie of the girl on the right to yellow",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0063",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the jersey of the player wearing number 81 on the left to white"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "#81's jersey becomes a white #81 jersey; heavy zoom crops him at the edge, others unchanged",
+  "instruction": "Change the jersey of the player wearing number 81 on the left to white",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0064",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a small bird on the head of the girl with long black hair on the right"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "small bird on the head of the black-haired girl on the right; others unchanged",
+  "instruction": "Put a small bird on the head of the girl with long black hair on the right",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0065",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Put a sun hat on the girl in the purple striped shirt on the right"
+  "verdict": "degraded",
+  "limb": "unchanged",
+  "notes": "sun hat on the striped-shirt girl (correct owner); her ponytail is gone under the hat and the English subtitle text is garbled",
+  "instruction": "Put a sun hat on the girl in the purple striped shirt on the right",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0066",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the girl in the yellow jacket on the right hold a small flag in her raised hand"
+  "verdict": "clean",
+  "limb": "moved",
+  "notes": "the yellow-jacket girl raises her own hand with a small flag (a Canadian flag, not specified); others unchanged",
+  "instruction": "Make the girl in the yellow jacket on the right hold a small flag in her raised hand",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0067",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Change the shirt of the tall cadet saluting at center right to white"
+  "verdict": "clean",
+  "limb": "unchanged",
+  "notes": "the saluting cadet's shirt becomes white; others unchanged (airforce control)",
+  "instruction": "Change the shirt of the tall cadet saluting at center right to white",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0068",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the soldier marching in front in the center hold a small American flag in his right hand"
+  "verdict": "clean",
+  "limb": "moved",
+  "notes": "the front-center soldier holds a small US flag in his right hand; others unchanged",
+  "instruction": "Make the soldier marching in front in the center hold a small American flag in his right hand",
+  "judged_by": "claude (pending user check)"
  },
  {
   "panel": "panel_0069",
-  "verdict": null,
-  "limb": null,
-  "notes": "",
-  "instruction": "Make the woman in the flowered white dress on the right hold a basket of fruit"
+  "verdict": "clean",
+  "limb": "moved",
+  "notes": "the woman in the flowered dress holds a fruit basket in her own arms; painting style kept, others unchanged",
+  "instruction": "Make the woman in the flowered white dress on the right hold a basket of fruit",
+  "judged_by": "claude (pending user check)"
  }
 ]
