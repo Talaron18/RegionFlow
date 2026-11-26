@@ -34,7 +34,7 @@ The graph is the single source of truth. Nodes:
 | node | examples | attributes |
 |---|---|---|
 | instance | `girl_3`, `umbrella_1`, `chair_2` | class, name, appearance code (§3.3) |
-| part | `girl_3.forearm_L`, `girl_3.glove_L`, `girl_3.jacket.sleeve_L`, `umbrella_1.handle` | 2D mask, depth order, visible / hidden |
+| part | `girl_3.forearm_L`, `girl_3.glove_L`, `girl_3.jacket.sleeve_L`, `umbrella_1.handle` | visible mask (every pixel has exactly one owner, outlines and thin strands included), amodal mask (full extent incl. hidden), cast-shadow mask |
 | joint | `girl_3.wrist_L` | 2D position, visible / hidden |
 
 Edges:
@@ -44,7 +44,7 @@ Edges:
 | `part_of` | glove_L → hand_L → forearm_L → girl_3; handle → umbrella_1 |
 | `attached_to` | sleeve_L skinned to forearm_L; glove_L to hand_L (moves with it) |
 | `holds` / `rests_on` | girl_3.hand_L holds umbrella_1.handle; cat_1 rests_on girl_3.shoulder_R |
-| `occludes` | girl_2.arm_R in front of girl_3.torso |
+| `occludes` | girl_2.arm_R in front of girl_3.torso; a property of the **pose**, not the asset: re-derived (renders) or rewritten by the LLM (real images) after every re-pose |
 | side | every paired part carries L / R from the person's own view |
 
 **Rules** checked by a program on any edited graph, before rendering: each person has two arms
@@ -136,6 +136,37 @@ generation. What it requires:
 For the demo, reversibility is shown on renders (where G is ground truth) and on a few real
 images with hand-made graphs; a general real-image parser is later work.
 
+### 3.4 Lessons from the puppet test: move geometry, never move pixels
+
+The user's Bunny Puppet (2026-11-26): one illustration cut into 13 rigid jointed parts. Small
+rotations look fine; past a safe range it breaks, in five ways, all caused by transplanting
+pixels:
+
+| artefact | cause | rule for this design |
+|---|---|---|
+| soft filled patches where a part left (cheek behind the peace sign) | **disocclusion**: those pixels were never drawn | R includes the uncovered area, and it is generated, never filled from neighbours |
+| ghost fragments left behind or dragged along | **ownership errors** at cut lines (outline strokes, hair strands, ribbon tips, shadows) | part masks give every pixel one owner; R is dilated so stray edge pixels are regenerated |
+| wedge gaps / double overlaps at the pivot | **rigid parts**: real shoulders, sleeves, knees bend and fold | R includes a disc around every joint that moved |
+| wrong layer in front | **fixed draw order**; depth order changes with pose | `occludes` is per pose and checked by a rule (§2) |
+| shadow stays, or shading rotates with the part | **lighting baked into pixels** | old and new cast shadows / contact shading are inside R |
+
+Consequences:
+1. This supports §3's division of labour. Moving geometry (the graph) is easy and exact;
+   moving pixels is what fails. The image model is never handed a cut-and-pasted composite to
+   "clean up"; it regenerates R from the source outside R plus prompt (and map). A composite
+   may serve at most as a weak hint.
+2. **Region recipe** (replaces "parts(G') Δ G" in the diagram):
+   `R = dilate( amodal(old parts) ∪ amodal(new parts) ∪ joint discs ∪ old/new shadows )`,
+   feathered at the border. Outside R the output equals the source — "no residue outside R"
+   is checked by program (pixel diff), not by eye.
+3. The failure is a cliff, and its size is measurable before generating anything: the
+   **disoccluded fraction** of R (pixels uncovered by the move and never visible in the
+   source). Report it per case; quality is read against it.
+4. Renders give amodal masks, exact ownership, per-pose depth and per-part shadows for free —
+   exactly what a cut-out lacks — so §4's pairs teach the cases puppets fail on.
+5. A puppet is a cheap generator of E1 inputs: pose a part, take the new footprint, compute R
+   and the disoccluded fraction, then ask the inpainter to fill it.
+
 ## 4. Training data from 3D assets
 
 Why renders: they give the full graph for free — per-part ID pass, depth, 2D bone projections
@@ -173,7 +204,7 @@ regions after re-posing.
 | step | question | pass | stop |
 |---|---|---|---|
 | **E0 render smoke** | do IDs, joints (with visibility), graph JSON and one attach pair come out right? | all correct on 1 scene, viewed | IDs or joints wrong → fix before any scale-up |
-| **E1 LLM plan + zero-shot inpaint** | on real arm-T attach cases with hand-made graphs: LLM writes G', region R and prompt; klein inpaint fills R | right owner by construction; question is the drawing inside R: no added/shared limb, object held, edit happens | structure wrong inside R in most cases → E1b |
+| **E1 LLM plan + zero-shot inpaint** | on real arm-T attach cases with hand-made graphs: LLM writes G', region R and prompt; klein inpaint fills R | right owner by construction; question is the drawing inside R: no added/shared limb, object held, edit happens, no residue at old footprint / joints (§3.4); results read against the disoccluded fraction of R | structure wrong inside R in most cases → E1b |
 | E1b map guidance / LoRA | does the image model draw the right structure inside R when given map(G')? rendered pairs, held-out scenes | clearly better than E1 without the map | map ignored → ControlNet branch once; if still equal, the image-side route is closed (the LLM side still stands) |
 | E2 copy check (only if E1b trains a LoRA) | does it edit, or copy the source? | edits happen at the rate the pairs demand | copying → change pair design (OminiControl §4.3) |
 | E3 real images | 10–20 arm-T cases with hand-made G' | beats klein crop-box and Qwen plain on owner + anatomy + identity, blind-judged | synthetic gains vanish on real → renders premise fails, part-graph idea does not |
