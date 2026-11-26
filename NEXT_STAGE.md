@@ -67,19 +67,38 @@ L/R arms but sleeves inside "upper clothes"; PASCAL-Part has objects).
 
 ## 3. The model
 
+**Division of labour (user, 2026-11-26).** Editing — deciding *which* parts change, where an
+object goes, whose hand holds it, how an arm moves — is reasoning and geometry. Language models
+are already good at it; image models are hard to train for it and fail at it (§1). So the
+**language model does all of the editing**, on the graph. The **image model only does what it
+was trained for**: follow a prompt and generate pixels, inside the region the graph says has
+changed. Image models are not taught to edit.
+
 ```
-                 ┌──────────────── coarse stage ────────────────┐
+                 ┌──────────────── coarse stage (LLM/VLM) ──────┐
 source image ──► │ parse:  image → part graph G  (+ appearance) │
 instruction  ──► │ edit:   G, instruction → G'  (graph ops)     │
                  │ check:  rules(G') else reject / retry        │
+                 │ plan:   changed region R = parts(G') Δ G,    │
+                 │         a prompt per region, map(G') in R    │
                  └──────────────────┬───────────────────────────┘
-                                    │ map(G'), masks(G, G')
-                 ┌──────────────── detail stage ────────────────┐
-source image ──► │ klein-base-4B + LoRA, references:            │
-                 │   [source image] [map(G')]                   │ ──► edited image
-                 │ compositor: paste back parts unchanged in G' │
+                                    │ R, prompts, map(G')
+                 ┌──────────────── detail stage (image model) ──┐
+source image ──► │ generate inside R only, from the prompt      │
+                 │   (+ map(G') as guidance, only if needed)    │ ──► edited image
+                 │ outside R: source pixels, untouched          │
                  └──────────────────────────────────────────────┘
 ```
+
+Consequences:
+- Wrong owner and neighbour changes become impossible by construction: the image model never
+  sees a choice of whom to edit, and it cannot write outside R.
+- Identity of the referent outside the edited parts is kept the same way (R excludes the face
+  unless the edit names it). This targets Qwen's main failure.
+- What is left for the image model is drawing a hand holding an umbrella in a region whose
+  shape already says where the arm and hand are. That is ordinary prompted inpainting — the
+  task image models are trained on — not instruction editing.
+- Training the image model becomes optional (§3.2), not the core of the method.
 
 ### 3.1 Coarse stage
 - **Edit** (`G, instruction → G'`): an LLM/VLM writes graph operations as code:
@@ -90,16 +109,19 @@ source image ──► │ klein-base-4B + LoRA, references:            │
   hand-made graphs on a handful of real cases and by ground truth on renders.
 
 ### 3.2 Detail stage
-LoRA on FLUX.2 klein-base-4B (undistilled; LoRA training on 24 GB verified by others for a
-style task, not for a new condition), OminiControl-style: the map is an extra reference image
-next to the source. Trained on rendered edit pairs (§4) plus real images with an unchanged
-map (reconstruction), so appearance and identity come from the source image. Fallback if the
-LoRA ignores the map: a ControlNet-style branch.
+Order of preference, cheapest first:
+1. **Zero-shot inpainting** with the LLM's region and prompt: `Flux2KleinInpaintPipeline`
+   (in diffusers 0.43) or Qwen's inpaint pipeline. No training.
+2. **Map as guidance, no training**: the map region drawn as an extra reference image, or a
+   pose control where one exists (FLUX.2-dev Fun ControlNet Union has pose; none found for
+   klein).
+3. **LoRA, only if 1–2 draw the wrong structure inside R** (e.g. a third arm inside the
+   region): klein-base-4B, map as an extra reference (OminiControl-style), trained on rendered
+   pairs (§4). Fallback: a ControlNet-style branch.
 
-**Preservation is explicit**, not left to the condition (every graph-based editor found keeps
-unedited content by masks or compositing, never by conditioning alone): the compositor pastes
-back the source wherever G' leaves parts unchanged. This is what should stop Qwen-style
-identity redraws and neighbour changes.
+**Preservation is explicit**: outside R the output is the source, pixel for pixel (every
+graph-based editor found keeps unedited content by masks or compositing, never by
+conditioning alone). A thin feathered border blends R into the source.
 
 ### 3.3 Reversibility
 The user's idea: image → sketch → edit sketch → image, one model for parsing, editing and
@@ -129,7 +151,9 @@ everything not edited is identical.
 | in-body | swap a clothing material |
 | place | parent an animal to a shoulder / lap |
 
-Pipeline (research, 2026-11-24): Blender 4.2 (user has it), **Cycles (OptiX) headless** —
+Pipeline (research, 2026-11-24): Blender **5.2.2 LTS** (user's version; the research looked at
+4.2 docs, and MPFB2 was stated for ≥ 4.2 — compatibility with 5.x to be checked in E0),
+**Cycles (OptiX) headless** —
 EEVEE needs an OpenGL display. Exact IDs from object / material index passes (Cryptomatte is
 anti-aliased; alpha-blended hair drops out). Joints: bone head → `world_to_camera_view`,
 visibility by `scene.ray_cast` against depth. No ready-made pipeline fits: BlenderProc and
@@ -149,8 +173,9 @@ regions after re-posing.
 | step | question | pass | stop |
 |---|---|---|---|
 | **E0 render smoke** | do IDs, joints (with visibility), graph JSON and one attach pair come out right? | all correct on 1 scene, viewed | IDs or joints wrong → fix before any scale-up |
-| **E1 map learning** | does a klein-base LoRA follow a part map at all? few hundred rendered pairs, held-out scenes | with the map: right owner, no added/shared limb, siblings unchanged in most cases; **clearly better than the same LoRA without the map** | map ignored, or no-map baseline equal → try ControlNet branch once; if still equal, the condition route is closed |
-| E2 copy check | does it edit, or copy the source? | edits happen at the rate the pairs demand | copying → change pair design (OminiControl §4.3) |
+| **E1 LLM plan + zero-shot inpaint** | on real arm-T attach cases with hand-made graphs: LLM writes G', region R and prompt; klein inpaint fills R | right owner by construction; question is the drawing inside R: no added/shared limb, object held, edit happens | structure wrong inside R in most cases → E1b |
+| E1b map guidance / LoRA | does the image model draw the right structure inside R when given map(G')? rendered pairs, held-out scenes | clearly better than E1 without the map | map ignored → ControlNet branch once; if still equal, the image-side route is closed (the LLM side still stands) |
+| E2 copy check (only if E1b trains a LoRA) | does it edit, or copy the source? | edits happen at the rate the pairs demand | copying → change pair design (OminiControl §4.3) |
 | E3 real images | 10–20 arm-T cases with hand-made G' | beats klein crop-box and Qwen plain on owner + anatomy + identity, blind-judged | synthetic gains vanish on real → renders premise fails, part-graph idea does not |
 | E4 coarse editor | LLM writes graph ops for the 70 arm-T instructions | ops correct on most, rules catch the rest | — |
 | E5 reversibility | parse(render(G)) ≈ G on renders; then the full loop | — | — |
@@ -181,6 +206,6 @@ pairs with per-part labels.
 
 ## 8. Immediate next step
 
-E0: a Blender 4.2 + MPFB2 script (headless, Cycles) that builds one scene — two or three
+E0: a Blender 5.2 + MPFB2 script (headless, Cycles) that builds one scene — two or three
 copies of one clothed character, one prop — and writes RGB, part-ID pass, depth, 2D joints with
 visibility and the graph JSON, then applies `attach(prop, char_2.hand_L)` and renders the pair.
