@@ -1,0 +1,152 @@
+{
+ "T-tsurugi-umbrella": {
+  "occluded": true,
+  "low_contrast": true,
+  "note": "I tagged both as the person's left hand is hidden and right hand mostly convered with his bag belt and holding a trekking pole. not clear which hend to hold the umbrella"
+ },
+ "T-alps3-wine": {
+  "occluded": true,
+  "low_contrast": false,
+  "note": "right hand clear, left hand partly seen behind right hand"
+ },
+ "T-alps4-flag": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-alps5-mug": {
+  "occluded": true,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-alps6-guitar": {
+  "occluded": true,
+  "low_contrast": false,
+  "note": "if you check the full pictures, you can see his left hand at least. but after you crop, no. this is the guitar problem"
+ },
+ "T-apls1-umbrella": {
+  "occluded": true,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-army-flag": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": "I think false. not sure if the disguise suit is making it confusing for vlm"
+ },
+ "T-byern-trophy": {
+  "occluded": true,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-byern1-ball": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-grad1-diploma": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-grad3-diploma": {
+  "occluded": true,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-hsm1-balloon": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": "actually both hands raised, and the girl next to her has an arm crossed with her left arm"
+ },
+ "T-hsm2-bouquet": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-nasdaq-mic": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": "left hand behind right hand"
+ },
+ "T-spb1-helmet": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-spb3-football": {
+  "occluded": true,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-tsurugidake-flag": {
+  "occluded": false,
+  "low_contrast": true,
+  "note": "left hand might blend into the shadow, but it's okay from my view. right hand hidden"
+ },
+ "T-kon1-tea": {
+  "occluded": true,
+  "low_contrast": true,
+  "note": ""
+ },
+ "T-kon2-branch": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-yama1-umbrella": {
+  "occluded": false,
+  "low_contrast": true,
+  "note": ""
+ },
+ "T-yama3-icecream": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-yama4-flag": {
+  "occluded": true,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-yama5-camera": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": "arm of neighbor behind her raised arm"
+ },
+ "T-botticelli-basket": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-davinci1-candle": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-monet1-bouquet": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-monet2-balloon": {
+  "occluded": true,
+  "low_contrast": false,
+  "note": ""
+ },
+ "T-nemzeti-flag": {
+  "occluded": true,
+  "low_contrast": true,
+  "note": "left hand hidden, right hand might blend into his clothes"
+ },
+ "T-rambrandt1-lantern": {
+  "occluded": false,
+  "low_contrast": false,
+  "note": "clear in human eyes. don't know what it seems to vlms. right hand might blend, but I remember this one's mistake is model either change nothing, or raise the right hand to hold a lantern"
+ },
+ "T-rambrandt2-book": {
+  "occluded": false,
+  "low_contrast": true,
+  "note": "both hands visible, while arms unclear. probably same with arm behind neighbor with hand stretching out"
+ }
+}

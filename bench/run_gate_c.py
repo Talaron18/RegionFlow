@@ -86,7 +86,13 @@ MODEL_REPOS = {
 # pipeline behaves differently when mask_img is not None" from "the pipeline
 # uses the CONTENT of the mask". Without it, none -> oracle confounds those two
 # changes and neither branch of the reading key is safe.
-MASK_MODES = ("none", "white", "oracle", "sibling")
+# `predicted` reads <--pred-masks>/<id>.png (bench/predict_masks.py): the mask a
+# referring-segmentation model found, not the benchmark's own.
+MASK_MODES = ("none", "white", "oracle", "sibling", "predicted")
+
+# Stock-diffusers models wrapped in their own module (bench/flux2_klein_model.py),
+# because they need a different diffusers than the UltraEdit fork above.
+KLEIN_MODELS = ("flux2-klein-4b",)
 
 
 def outcome_class(r: dict) -> str:
@@ -248,6 +254,32 @@ def load_model(args):
             args.gate_a_ckpt, sigma0=args.gate_a_sigma0, rank=args.gate_a_rank,
             device=args.device, steps_readout=args.gate_a_steps_readout,
             mask_encoder_kind=args.gate_a_mask_encoder_kind)
+    if args.model in KLEIN_MODELS:
+        if args.klein_crop and args.mask_mode == "none":
+            raise SystemExit(
+                "--klein-crop crops to a mask, so it needs --mask-mode oracle\n"
+                "or predicted (sibling is its positive control).")
+        if args.klein_composite and args.mask_mode == "none":
+            raise SystemExit(
+                "--klein-composite pastes the edit back through a mask, so it\n"
+                "needs --mask-mode oracle or predicted (white and sibling are\n"
+                "its controls).")
+        if args.mask_mode != "none" and not (args.klein_composite
+                                             or args.klein_crop):
+            raise SystemExit(
+                f"{args.model} takes a prompt and reference image only -- no\n"
+                "mask or region input is documented for FLUX.2 klein. Run it\n"
+                "with --mask-mode none; its comparison arms are `none`\n"
+                "(RefEdit-SD3) and `freeform` (UltraEdit), not `oracle`.\n"
+                "To paste the edit back through the mask instead, add\n"
+                "--klein-composite.")
+        from flux2_klein_model import Flux2KleinModel  # noqa: PLC0415
+        return Flux2KleinModel(
+            args.model, steps=args.klein_steps, guidance=args.klein_guidance,
+            device=args.device, offload=args.klein_offload,
+            composite_mask=args.klein_composite, feather=args.klein_feather,
+            crop=args.klein_crop, crop_margin=args.klein_crop_margin,
+            crop_paste=args.klein_crop_paste)
     if args.model in MODEL_REPOS:
         if args.model == "refedit-sd3" and args.mask_mode != "none":
             print("  NOTE: RefEdit-SD3 is finetuned on UltraEdit-FREEFORM, so a "
@@ -276,6 +308,24 @@ def dilate(mask: np.ndarray, r: int) -> np.ndarray:
     output and never touched after a score is seen."""
     if r <= 0:
         return mask
+    # PADDED, so np.roll cannot wrap. Until 2026-11-16 this rolled the bare mask:
+    # a target within r px of an image border reappeared as a strip on the
+    # OPPOSITE border, in every --mask-dilate arm. For --klein-crop that strip
+    # stretched the mask's bounding box across the image, so the "crop" was the
+    # full width, height or whole image in 54 of the 151 cases (MODERN_BASE_EVAL.md).
+    m = np.pad(np.asarray(mask, dtype=bool), r, mode="constant", constant_values=False)
+    for axis in (0, 1):
+        out = m.copy()
+        for s_ in range(1, r + 1):
+            out |= np.roll(m, s_, axis=axis)
+            out |= np.roll(m, -s_, axis=axis)
+        m = out
+    return m[r:-r, r:-r]
+
+
+def _dilate_wrapping(mask: np.ndarray, r: int) -> np.ndarray:
+    """The pre-fix dilation, kept ONLY so the self-test can show that interior
+    masks are unchanged by the fix and border masks are not."""
     m = mask
     for axis in (0, 1):
         out = m.copy()
@@ -286,7 +336,22 @@ def dilate(mask: np.ndarray, r: int) -> np.ndarray:
     return m
 
 
-def cond_mask(mode: str, tmask, smasks, size, dilate_px: int):
+def load_pred_mask(pred_dir, case_id: str, shape) -> np.ndarray:
+    """<pred_dir>/<case_id>.png -> bool mask of `shape` (H, W): binarised at
+    >= 128, NEAREST-resized if the PNG is another size. A missing file is an
+    error, never a skipped case."""
+    path = Path(pred_dir) / f"{case_id}.png"
+    if not path.is_file():
+        raise SystemExit(f"--mask-mode predicted: no mask for {case_id!r} in "
+                         f"{pred_dir!r} (expected {path})")
+    im = Image.open(path).convert("L")
+    if im.size != (shape[1], shape[0]):
+        im = im.resize((shape[1], shape[0]), Image.NEAREST)
+    return np.asarray(im) >= 128
+
+
+def cond_mask(mode: str, tmask, smasks, size, dilate_px: int,
+              pred_dir=None, case_id=None):
     """The conditioning image handed to `mask_img`.
 
     POLARITY. UltraEdit's README seeds a BLANK WHITE mask for free-form
@@ -308,6 +373,8 @@ def cond_mask(mode: str, tmask, smasks, size, dilate_px: int):
         if not smasks:
             return None
         m = max(smasks, key=lambda x: np.asarray(x).sum())
+    elif mode == "predicted":
+        m = load_pred_mask(pred_dir, case_id, np.asarray(tmask).shape)
     else:
         raise SystemExit(f"unknown mask mode {mode!r}")
     m = dilate(np.asarray(m) > 0, dilate_px)
@@ -336,8 +403,17 @@ def run(args):
                 # the completed one and reports it as finished.
                 done.add((r["id"], r["prompt_kind"],
                           r.get("mask_mode", "none")))
+                if (args.mask_mode == "predicted" and r.get("mask_mode") == "predicted"
+                        and r.get("pred_masks") != args.pred_masks):
+                    raise SystemExit(
+                        f"{out_path} already holds predicted-mask rows made with "
+                        f"--pred-masks {r.get('pred_masks')!r}, not "
+                        f"{args.pred_masks!r}. The resume key does not include the "
+                        "mask directory: use a separate --out.")
         print(f"resuming: {len(done)} case/prompt results already in {out_path}")
 
+    if args.mask_mode == "predicted" and not Path(args.pred_masks).is_dir():
+        raise SystemExit(f"--pred-masks {args.pred_masks!r} is not a directory")
     kinds = ["full"] + (["single"] if args.ablation else [])
     model = load_model(args)
     print(f"model={model.name}  cases={len(cases)}  prompts={kinds}  "
@@ -362,7 +438,12 @@ def run(args):
             src = np.asarray(src_img)
 
             cmask = cond_mask(args.mask_mode, tmask, smasks, src_img.size,
-                              args.mask_dilate)
+                              args.mask_dilate, args.pred_masks, case["id"])
+            # An EMPTY predicted mask means the pipeline found nothing and makes
+            # no edit: the model is not called and the output is the source.
+            pred_empty = (not load_pred_mask(args.pred_masks, case["id"],
+                                             np.asarray(tmask).shape).any()
+                          if args.mask_mode == "predicted" else None)
             if args.mask_mode == "sibling" and cmask is None:
                 print(f"  {case['id']}: no sibling to point at, skipped")
                 continue
@@ -374,7 +455,7 @@ def run(args):
                 # SAME seed as the mask=none run, so the arms pair case by case
                 # and the only thing that differs is the spatial condition.
                 seed = case_seed(case["id"], args.seed)
-                edited = model(src_img, prompt, seed, cmask)
+                edited = src_img if pred_empty else model(src_img, prompt, seed, cmask)
                 if edited.size != (512, 512):
                     edited = edited.resize((512, 512), Image.BILINEAR)
                 out = np.asarray(edited.convert("RGB"))
@@ -400,6 +481,9 @@ def run(args):
                        "n_siblings": case["n_siblings"], "seed": seed,
                        "model": model.name, "mask_mode": args.mask_mode,
                        "target_bbox": _bbox(tmask), **off,
+                       **({"pred_masks": args.pred_masks,
+                           "pred_mask_empty": pred_empty}
+                          if args.mask_mode == "predicted" else {}),
                        **{k: (round(v, 6) if isinstance(v, float) else v)
                           for k, v in res.items() if k != "invalid_reason"}}
                 fh.write(json.dumps(rec) + "\n")
@@ -619,6 +703,18 @@ def self_test():
     r = instance_selectivity(src, src, t, [s])
     assert not r["valid"], "identity must not score as a usable case"
 
+    # dilation must not wrap round the image. An interior mask is unchanged by
+    # the fix; a mask on the left/bottom border must not reach the right/top.
+    assert (dilate(t, 8) == _dilate_wrapping(t, 8)).all()
+    assert dilate(t, 8).sum() == 116 * 116
+    edge = np.zeros((512, 512), bool); edge[340:506, 0:111] = True   # refedit-184's box
+    d = dilate(edge, 8)
+    assert d.shape == edge.shape and d[332:512, 0:119].all()
+    assert not d[:, 200:].any() and not d[:300].any(), "dilation wrapped round the image"
+    w = _dilate_wrapping(edge, 8)
+    assert w[:, 504:].any() and w[:2].any(), "the old wrap is not what this test thinks"
+    assert dilate(edge, 0) is edge
+
     assert case_seed("refedit-1", 0) == case_seed("refedit-1", 0)
     assert case_seed("refedit-1", 0) != case_seed("refedit-2", 0)
     assert case_seed("refedit-1", 0) != case_seed("refedit-1", 1)
@@ -669,6 +765,34 @@ def self_test():
     b = (np.asarray(cond_mask("oracle", t, [s], (512, 512), 8))[..., 0] > 0)
     assert b.sum() > a.sum() and (a & ~b).sum() == 0
 
+    # predicted: the PNG of the target mask must give EXACTLY the oracle conditioning
+    # image (same binarisation, dilate, format); a missing file exits; an empty PNG
+    # is detectable; a PNG of another size is NEAREST-resized.
+    import tempfile  # noqa: PLC0415
+    with tempfile.TemporaryDirectory() as td:
+        Image.fromarray((t * 255).astype(np.uint8)).save(Path(td) / "c-1.png")
+        for dpx in (0, 8):
+            po = cond_mask("oracle", t, [s], (512, 512), dpx)
+            pp = cond_mask("predicted", t, [s], (512, 512), dpx, td, "c-1")
+            assert pp.mode == po.mode == "RGB"
+            assert np.array_equal(np.asarray(pp), np.asarray(po))
+        try:
+            cond_mask("predicted", t, [s], (512, 512), 8, td, "c-2")
+        except SystemExit as e:
+            assert "c-2" in str(e) and td in str(e)
+        else:
+            raise AssertionError("a missing predicted mask was accepted")
+        Image.fromarray(np.zeros((512, 512), np.uint8)).save(Path(td) / "c-3.png")
+        assert not load_pred_mask(td, "c-3", t.shape).any()
+        assert load_pred_mask(td, "c-1", t.shape).sum() == t.sum()
+        gray = np.full((512, 512), 127, np.uint8); gray[0, 0] = 128
+        Image.fromarray(gray).save(Path(td) / "c-4.png")
+        g = load_pred_mask(td, "c-4", t.shape)
+        assert g.sum() == 1 and g[0, 0], "binarisation must be >= 128"
+        Image.fromarray((t[::2, ::2] * 255).astype(np.uint8)).save(Path(td) / "c-5.png")
+        h = load_pred_mask(td, "c-5", t.shape)
+        assert h.shape == t.shape and h[100:200, 100:200].all() and not h[:90].any()
+
     assert cond_mask("none", t, [s], (512, 512), 8) is None
     assert cond_mask("sibling", t, [], (512, 512), 8) is None
 
@@ -686,7 +810,45 @@ def main():
     p.add_argument("--coco-splits", default="train2014")
     p.add_argument("--coco-cache", default="/data/datasets/coco/desc")
     p.add_argument("--model", default="none",
-                   choices=("none", "gate-a-transport") + tuple(MODEL_REPOS))
+                   choices=("none", "gate-a-transport") + tuple(MODEL_REPOS)
+                   + KLEIN_MODELS)
+    p.add_argument("--klein-steps", type=int, default=4,
+                   help="steps for --model flux2-klein-*; 4 is the model "
+                        "card's setting for the distilled checkpoint. "
+                        "--steps is NOT used for these models.")
+    p.add_argument("--klein-guidance", type=float, default=1.0,
+                   help="guidance_scale for --model flux2-klein-*; 1.0 per "
+                        "the model card. --guidance is NOT used.")
+    p.add_argument("--klein-composite", action="store_true",
+                   help="trivial mask baseline for --model flux2-klein-*: "
+                        "edit with no mask (same call and seed as the plain "
+                        "arm), then paste the result into the source through "
+                        "the --mask-mode mask. Removes sibling leakage by "
+                        "construction; results are written under the model "
+                        "name '<model>+composite'.")
+    p.add_argument("--klein-crop", action="store_true",
+                   help="crop-edit-paste baseline for --model flux2-klein-*: "
+                        "crop the source to the --mask-mode mask's box plus a "
+                        "margin, edit the crop, paste it back. Use with "
+                        "--ablation so the single-instance instruction is "
+                        "scored. Results are written under "
+                        "'<model>+crop-<paste>'.")
+    p.add_argument("--klein-crop-margin", type=float, default=0.25,
+                   help="margin around the mask's box, as a fraction of the "
+                        "box's width/height per side (min 16 px). FREEZE "
+                        "before scoring.")
+    p.add_argument("--klein-crop-paste", default="mask", choices=("mask", "box"),
+                   help="mask: paste back through the mask (nothing outside "
+                        "it changes). box: paste the whole crop, which keeps "
+                        "additions beside the object but lets the margin "
+                        "change.")
+    p.add_argument("--klein-feather", type=float, default=4.0,
+                   help="Gaussian radius in px for the composite's edge; "
+                        "0 = hard edge. FREEZE before scoring, like "
+                        "--mask-dilate.")
+    p.add_argument("--klein-offload", action="store_true",
+                   help="enable_model_cpu_offload for --model flux2-klein-* "
+                        "(lower VRAM, slower). Try without it first on 24GB.")
     p.add_argument("--gate-a-ckpt", default=None,
                    help="checkpoint path for --model gate-a-transport "
                         "(e.g. runs/gate_a_sigma_0.3/ckpt_final.pt)")
@@ -718,7 +880,13 @@ def main():
                    help="none: free-form (the completed Gate C run). white: "
                         "blank mask, the mask-PRESENT-but-uninformative "
                         "control. oracle: the target instance. sibling: "
-                        "positive control, should drive mis-targeting to ~100%%")
+                        "positive control, should drive mis-targeting to ~100%%. "
+                        "predicted: masks from bench/predict_masks.py, see "
+                        "--pred-masks")
+    p.add_argument("--pred-masks", default=None, metavar="DIR",
+                   help="with --mask-mode predicted: directory of <id>.png masks "
+                        "(white = the predicted instance). An empty mask means no "
+                        "edit is made for that case.")
     p.add_argument("--mask-dilate", type=int, default=8,
                    help="FROZEN before scoring. Set it by looking at smoke-test "
                         "output, record the value, never touch it again")
@@ -731,6 +899,10 @@ def main():
     p.add_argument("--report-only", action="store_true")
     p.add_argument("--self-test", action="store_true")
     args = p.parse_args()
+    if args.mask_mode == "predicted" and not args.pred_masks:
+        p.error("--mask-mode predicted requires --pred-masks DIR")
+    if args.pred_masks and args.mask_mode != "predicted":
+        p.error("--pred-masks only applies with --mask-mode predicted")
 
     if args.self_test:
         self_test()

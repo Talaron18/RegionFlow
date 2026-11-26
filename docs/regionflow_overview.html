@@ -1,0 +1,703 @@
+<title>RegionFlow Project Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column (~70ch) with a sticky contents rail on wide screens; figures may run wider than text. */
+:root {
+  --bg: #F5F6F8;          /* cool paper, slight blue bias */
+  --surface: #FFFFFF;
+  --ink: #17202B;
+  --ink-2: #46515F;
+  --ink-3: #6B7684;
+  --rule: #D9DEE5;
+  --tint: #EAEEF5;
+  --accent: #2F5BD3;      /* the "blue" of the red→blue test edit */
+  --accent-soft: #DCE5FB;
+  --warm: #C2412D;        /* the source red; used for negatives */
+  --warm-soft: #F7E1DC;
+  --good: #1E7A4C;
+  --good-soft: #DDF0E5;
+  --amber: #8A5A00;
+  --amber-soft: #F6EBCF;
+  --muted-bar: #AEB8C6;
+  --code-bg: #EEF1F5;
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161C; --surface: #1A1F27; --ink: #E7EBF0; --ink-2: #B4BDC8; --ink-3: #8D97A4;
+    --rule: #2E3642; --tint: #202733; --accent: #5B83EC; --accent-soft: #233257;
+    --warm: #E0694F; --warm-soft: #3B2420; --good: #5BC28C; --good-soft: #1C3328;
+    --amber: #E0B55A; --amber-soft: #3A2F18; --muted-bar: #4A5566; --code-bg: #20262F;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161C; --surface: #1A1F27; --ink: #E7EBF0; --ink-2: #B4BDC8; --ink-3: #8D97A4;
+  --rule: #2E3642; --tint: #202733; --accent: #5B83EC; --accent-soft: #233257;
+  --warm: #E0694F; --warm-soft: #3B2420; --good: #5BC28C; --good-soft: #1C3328;
+  --amber: #E0B55A; --amber-soft: #3A2F18; --muted-bar: #4A5566; --code-bg: #20262F;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--f-body); font-size: 1.0625rem; line-height: 1.62;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 4rem;
+}
+.shell { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 3rem; }
+@media (min-width: 1040px) { .shell { grid-template-columns: 220px minmax(0, 1fr); } }
+
+nav.toc { display: none; }
+@media (min-width: 1040px) {
+  nav.toc { display: block; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 2rem); align-self: start; padding-top: 2.5rem; font-family: var(--f-display); font-size: .86rem; }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: .35rem; counter-reset: toc; }
+  nav.toc li { counter-increment: toc; }
+  nav.toc a { color: var(--ink-2); text-decoration: none; display: grid; grid-template-columns: 1.8rem 1fr; }
+  nav.toc a::before { content: counter(toc, decimal-leading-zero); color: var(--ink-3); font-family: var(--f-mono); font-size: .75rem; padding-top: .12rem; }
+  nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); }
+  nav.toc .toc-label { text-transform: uppercase; letter-spacing: .08em; font-size: .72rem; color: var(--ink-3); margin-bottom: .8rem; }
+}
+main { min-width: 0; max-width: 46rem; }
+
+h1, h2, h3, h4 { font-family: var(--f-display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2.3rem, 5vw, 3.4rem); font-weight: 700; letter-spacing: -.02em; }
+h2 { font-size: 1.75rem; font-weight: 700; letter-spacing: -.01em; }
+h3 { font-size: 1.2rem; font-weight: 700; }
+h4 { font-size: 1rem; font-weight: 700; }
+p { margin: 0; }
+a { color: var(--accent); }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+strong { font-weight: 600; }
+code, .mono { font-family: var(--f-mono); font-size: .86em; }
+code { background: var(--code-bg); padding: .08em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+.eyebrow { font-family: var(--f-display); text-transform: uppercase; letter-spacing: .1em; font-size: .75rem; color: var(--ink-3); font-weight: 500; }
+
+header.hero { padding-block: 3rem 1rem; display: grid; gap: 1.1rem; }
+header.hero .lede { font-size: 1.25rem; line-height: 1.5; color: var(--ink-2); max-width: 40rem; }
+.status-row { display: flex; flex-wrap: wrap; gap: .5rem; }
+.pill { font-family: var(--f-display); font-size: .8rem; font-weight: 500; padding: .25rem .65rem; border-radius: 999px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink-2); display: inline-flex; gap: .4rem; align-items: center; }
+.pill .dot { width: .55rem; height: .55rem; border-radius: 50%; display: inline-block; }
+.dot.good { background: var(--good); } .dot.bad { background: var(--warm); } .dot.mid { background: var(--amber); } .dot.open { background: var(--muted-bar); }
+
+section { display: grid; gap: 1.1rem; padding-top: 3.2rem; scroll-margin-top: 1rem; }
+section > h2 { padding-top: .2rem; border-top: 1px solid var(--rule); padding-block-start: 1.6rem; }
+section h3 { margin-top: .8rem; }
+ul, ol { margin: 0; padding-left: 1.3rem; display: grid; gap: .45rem; }
+
+.callout { border-radius: 10px; padding: 1rem 1.15rem; display: grid; gap: .5rem; background: var(--tint); }
+.callout.neg { background: var(--warm-soft); }
+.callout.pos { background: var(--good-soft); }
+.callout.warn { background: var(--amber-soft); }
+.callout .k { font-family: var(--f-display); font-weight: 700; font-size: .82rem; text-transform: uppercase; letter-spacing: .07em; }
+.callout.neg .k { color: var(--warm); } .callout.pos .k { color: var(--good); } .callout.warn .k { color: var(--amber); }
+
+.plain { font-size: .98rem; color: var(--ink-2); border-left: 3px solid var(--accent); padding-left: .9rem; }
+.plain b { color: var(--ink); font-family: var(--f-display); font-weight: 600; }
+
+figure { margin: 0; display: grid; gap: .6rem; }
+figcaption { font-size: .9rem; color: var(--ink-3); line-height: 1.5; }
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.diagram { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 1rem; }
+.diagram svg { display: block; width: 100%; height: auto; min-width: 640px; }
+
+table { border-collapse: collapse; width: 100%; font-size: .92rem; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-family: var(--f-display); font-weight: 600; font-size: .8rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; }
+td.num, th.num { text-align: right; font-family: var(--f-mono); font-size: .86rem; }
+tr.hl td { background: var(--accent-soft); }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; }
+.tablewrap table { min-width: 520px; }
+.tablewrap tr:last-child td { border-bottom: 0; }
+
+.verdict { font-family: var(--f-display); font-size: .75rem; font-weight: 600; padding: .1rem .5rem; border-radius: 999px; white-space: nowrap; }
+.v-good { background: var(--good-soft); color: var(--good); }
+.v-bad { background: var(--warm-soft); color: var(--warm); }
+.v-mid { background: var(--amber-soft); color: var(--amber); }
+.v-open { background: var(--tint); color: var(--ink-2); }
+
+.timeline { display: grid; gap: 0; border-left: 2px solid var(--rule); margin-left: .35rem; }
+.tl-item { position: relative; padding: 0 0 1.4rem 1.4rem; display: grid; gap: .3rem; }
+.tl-item::before { content: ""; position: absolute; left: -7px; top: .45rem; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--ink-3); }
+.tl-item.good::before { border-color: var(--good); background: var(--good); }
+.tl-item.bad::before { border-color: var(--warm); background: var(--warm); }
+.tl-item.mid::before { border-color: var(--amber); background: var(--amber); }
+.tl-item.open::before { border-color: var(--ink-3); }
+.tl-head { display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline; }
+.tl-head h4 { font-size: 1.05rem; }
+.tl-item p { color: var(--ink-2); font-size: .97rem; }
+
+.formula { font-family: var(--f-mono); font-size: .9rem; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: .8rem 1rem; overflow-x: auto; white-space: pre; line-height: 1.7; }
+
+.grid2 { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.card { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 1rem 1.1rem; display: grid; gap: .45rem; align-content: start; min-width: 0; }
+.card h4 { font-size: .98rem; }
+.card p { font-size: .94rem; color: var(--ink-2); }
+
+.chart text { font-family: var(--f-mono); font-size: 11px; fill: var(--ink-3); }
+.chart .lbl { font-family: var(--f-display); font-size: 12px; fill: var(--ink-2); }
+.chart .val { fill: var(--ink); font-weight: 600; }
+.chart .grid { stroke: var(--rule); stroke-width: 1; }
+.chart .axis { stroke: var(--ink-3); stroke-width: 1; }
+.chart .bar { fill: var(--muted-bar); }
+.chart .bar.on { fill: var(--accent); }
+.chart .bar.neg { fill: var(--warm); }
+.chart .bar:hover { opacity: .8; }
+
+.panel-img { width: 100%; border-radius: 8px; border: 1px solid var(--rule); display: block; background: #fff; }
+.panel-labels { display: grid; grid-template-columns: repeat(4, 1fr); gap: .25rem; font-family: var(--f-display); font-size: .78rem; color: var(--ink-3); text-align: center; }
+.panel-labels b { color: var(--ink); display: block; font-size: .86rem; }
+
+dl.gloss { display: grid; grid-template-columns: minmax(0, 1fr); gap: .9rem; margin: 0; }
+@media (min-width: 640px) { dl.gloss { grid-template-columns: 11rem minmax(0, 1fr); gap: .7rem 1.2rem; } }
+dl.gloss dt { font-family: var(--f-display); font-weight: 600; }
+dl.gloss dd { margin: 0; color: var(--ink-2); font-size: .96rem; }
+
+details { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: .7rem 1rem; }
+details > summary { cursor: pointer; font-family: var(--f-display); font-weight: 600; }
+details[open] > summary { margin-bottom: .6rem; }
+details .inner { display: grid; gap: .7rem; font-size: .96rem; }
+
+footer { margin-top: 4rem; padding-top: 1.2rem; border-top: 1px solid var(--rule); color: var(--ink-3); font-size: .88rem; display: grid; gap: .4rem; }
+
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="shell">
+<nav class="toc" aria-label="Contents">
+  <div class="toc-label">Contents</div>
+  <ol>
+    <li><a href="#what">What it is</a></li>
+    <li><a href="#primer">Background in 5 minutes</a></li>
+    <li><a href="#journey">The journey</a></li>
+    <li><a href="#stage0">Stage 0: no-training fields</a></li>
+    <li><a href="#model">The current model</a></li>
+    <li><a href="#training">How it is trained</a></li>
+    <li><a href="#can">What it can do today</a></li>
+    <li><a href="#diagnosis">Diagnosing the gap</a></li>
+    <li><a href="#gateb">Gate B: few-step</a></li>
+    <li><a href="#gatec">Gate C: the benchmark</a></li>
+    <li><a href="#findings">What has been learned</a></li>
+    <li><a href="#next">Open problems and next steps</a></li>
+    <li><a href="#glossary">Glossary</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="eyebrow">Research project guide · state as of commit 09ba658 and the review branch</div>
+  <h1>RegionFlow</h1>
+  <p class="lede">An attempt to edit one specific object in a photo, such as “make <em>this</em> can blue”, without touching the rest of the picture and without also changing the other cans that look just like it.</p>
+  <div class="status-row" aria-label="Status summary">
+    <span class="pill"><span class="dot good"></span>Finding the region: works</span>
+    <span class="pill"><span class="dot bad"></span>Clean edits from our own model: not yet</span>
+    <span class="pill"><span class="dot mid"></span>Few-step sampling: works, with a scale rule</span>
+    <span class="pill"><span class="dot good"></span>Instance-selectivity benchmark: built and scored</span>
+  </div>
+</header>
+
+<!-- 1 -->
+<section id="what">
+  <h2>1. What the project is</h2>
+  <p>Image editors driven by text (“turn the apple red”) are now common. They tend to fail in a specific way when a picture contains several things of the same kind. Ask to recolour one apple in a bowl of apples and many editors recolour every apple, or the wrong one, or smear the whole bowl. The project calls this <strong>instance leakage</strong>.</p>
+  <p>RegionFlow’s goal, unchanged from the first day, is an editor that does five things at once:</p>
+  <ol>
+    <li>changes the named attribute (usually colour) of the named object,</li>
+    <li>keeps that object’s identity, shape and texture,</li>
+    <li>leaves everything outside the object untouched,</li>
+    <li>leaves no visible seam at the boundary,</li>
+    <li>does <strong>not</strong> affect other instances of the same category. This last requirement is the research problem; the other four are infrastructure.</li>
+  </ol>
+  <p>It is built on <strong>Stable Diffusion 3 Medium</strong> (SD3-Medium), a 2-billion-parameter open image generator. The compute budget is one consumer GPU (an RTX 3090 Ti with 24 GB) plus occasional six-hour blocks on 8×A100. That rules out out-training large labs, so the contribution has to be a mechanism or a measurement.</p>
+  <p>The work is organised as <strong>gates</strong>: separate experiments that each test one claim and are judged against a pass/fail threshold written down before the run.</p>
+  <div class="grid2">
+    <div class="card"><h4>Gate A: the edit mechanism</h4><p>Can a small trained add-on turn a source image into the edited image by a learned move in latent space?</p><span class="verdict v-bad">Negative so far</span></div>
+    <div class="card"><h4>Gate B: speed</h4><p>Can SD3, which normally needs ~50 steps, be adapted to produce images in 1–4 steps?</p><span class="verdict v-mid">Passed, with a stated correction</span></div>
+    <div class="card"><h4>Gate C: the measurement</h4><p>Build a benchmark where some same-category objects are meant to stay unedited, then score existing editors on it.</p><span class="verdict v-good">Done, standalone result</span></div>
+    <div class="card"><h4>Stage 0 (before the gates)</h4><p>Can the goal be reached with no training at all, just by steering SD3 at inference time?</p><span class="verdict v-bad">Negative, but informative</span></div>
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="primer">
+  <h2>2. Background in five minutes</h2>
+  <p>You need five ideas to follow the rest of this page.</p>
+
+  <h3>Latents</h3>
+  <p>SD3 never works on pixels directly. A <strong>VAE</strong> (variational autoencoder) compresses a 512×512 RGB image into a <strong>latent</strong>: a 16-channel grid of 64×64 numbers, eight times smaller per side. Editing happens on that grid; the VAE decodes the result back to pixels at the end.</p>
+
+  <h3>Flow matching and velocity</h3>
+  <p>SD3 is a <strong>rectified-flow</strong> model. Picture a straight line from pure noise (t = 1) to a real image latent (t = 0). The network is trained to predict, at any point on that line, the <strong>velocity</strong>: the direction to move to get closer to the image. Generating means starting from noise and taking many small steps along the predicted velocity, usually about 50. Running those steps backwards, from an image to noise, is called <strong>inversion</strong>.</p>
+
+  <h3>The transformer (MMDiT)</h3>
+  <p>The network that predicts velocity is a <strong>Multimodal Diffusion Transformer</strong> with 24 blocks. It cuts the 64×64 latent into 2×2 patches, which gives 1,024 image tokens. It also takes 333 text tokens from three text encoders (two CLIP models and T5-XXL), plus a 2,048-number summary vector of the prompt called <code>pooled_projections</code>. Image and text tokens attend to each other jointly in every block. The pooled vector and the timestep steer each block through scale-and-shift modulation (adaLN).</p>
+
+  <h3>LoRA</h3>
+  <p>Instead of retraining all 2 billion weights, <strong>LoRA</strong> freezes them and adds a small trainable correction to selected layers: a pair of thin matrices whose product is added to the layer’s output. “Rank 16” means the matrices are 16 wide. RegionFlow’s add-ons start at exactly zero, so before training the wrapped model is bit-for-bit the original SD3.</p>
+
+  <h3>Masks and instances</h3>
+  <p>A <strong>mask</strong> is a black-and-white image marking the region to edit. An <strong>instance</strong> is one individual object; a <strong>category</strong> is the kind (“can”, “giraffe”). Same-category instances that should stay unedited are called <strong>siblings</strong>.</p>
+</section>
+
+<!-- 3 -->
+<section id="journey">
+  <h2>3. The journey, in order</h2>
+  <p>Each step below was triggered by the result of the one before it.</p>
+  <div class="timeline">
+    <div class="tl-item bad"><div class="tl-head"><h4>Stage 0: steer SD3 without training</h4><span class="verdict v-bad">negative</span></div><p>Invert the photo to noise, then regenerate it while biasing attention inside the mask and pinning everything outside. Localisation was excellent. But every setting that changed the colour also destroyed the object’s structure in equal measure.</p></div>
+    <div class="tl-item bad"><div class="tl-head"><h4>Gate A, first run: learn the edit as a move</h4><span class="verdict v-bad">negative</span></div><p>Train a LoRA to predict the displacement from source latent to target latent and apply it in one step. Output went from “no visible change” straight to blur. The metric used to judge it was also found to be broken: the ground-truth edits scored worse than the model.</p></div>
+    <div class="tl-item mid"><div class="tl-head"><h4>Gate B: make SD3 fast (MeanFlow)</h4><span class="verdict v-mid">positive with a rule</span></div><p>First run: the adapter was worse than doing nothing. After the regression target was fixed, it beat the frozen model at every tested interval, given one inference-time scale constant.</p></div>
+    <div class="tl-item good"><div class="tl-head"><h4>Gate C: build the benchmark and score other people’s editors</h4><span class="verdict v-good">positive</span></div><p>151 hard cases with sibling masks. Handing an editor the right mask drops wrong-instance edits from 40% to 0%. Edit quality does not improve: four in five outputs are still not clean.</p></div>
+    <div class="tl-item bad"><div class="tl-head"><h4>Gate A reopened: why does our edit blur?</h4><span class="verdict v-bad">negative, well-diagnosed</span></div><p>Tested the “many possible edits average into mush” theory with a noise-injection sweep (Direction A) and six cheap diagnostics. Ambiguity was ruled out as the main cause; the mask path works. What remains is how precisely the one-step readout can place the edit.</p></div>
+    <div class="tl-item open"><div class="tl-head"><h4>Current: sharpen with a perceptual loss</h4><span class="verdict v-open">built, not yet trained</span></div><p>LPIPS loss did not sharpen outputs. A pre-check found DINOv2 features separate blurry predictions from sharp targets about 8× better (30.1 vs 3.8), so a DINOv2 patch loss was added. A synthetic red→blue circle test shows the current model still fails an unambiguous edit.</p></div>
+  </div>
+</section>
+
+<!-- 4 -->
+<section id="stage0">
+  <h2>4. Stage 0: editing with two hand-built fields</h2>
+  <p class="plain"><b>In plain words:</b> turn the photo back into noise, then regenerate it, while telling SD3 “inside this region, listen to the word <em>blue</em>” and “outside it, copy the original”.</p>
+  <p>Stage 0 needed no training. It added two spatial maps (“fields”), both built from one mask:</p>
+  <div class="grid2">
+    <div class="card"><h4>λ: the attention bias field</h4><p>Adds a bonus (+4.0) to attention between image tokens inside the mask and the edit words in the prompt, and a penalty (−2.0) outside. A graded band of width <em>r</em> around the edge was meant to prevent seams.</p><p class="mono" style="font-size:.8rem">region/lambda_field.py · region/sd3_processor.py</p></div>
+    <div class="card"><h4>τ: the inversion-depth field</h4><p>Pins tokens to the original image’s inversion path for most of the generation. Background tokens stay pinned almost to the end; target tokens are released early so they can change.</p><p class="mono" style="font-size:.8rem">region/alpha_field.py · bench/inversion.py</p></div>
+  </div>
+  <h3>What it found</h3>
+  <p>A 3×3 grid of settings on three real photos (a ball, a sheep, a phone booth) gave one clear result. The more the colour moved (ΔE), the more the object’s structure was destroyed. The correlation between the two was <strong>−0.958, −0.726 and −0.955</strong>. The sheep’s weaker number has a simple cause: it was white, so there was little chroma to lose.</p>
+  <div class="callout neg"><span class="k">Headline negative (F1)</span><p>Edit strength and source destruction lie on the same axis. A mixing ratio between “original” and “freshly generated” can only say <em>how much to keep</em>, never <em>which direction to move</em>. Colour is decided early in generation, when content is still noise-like, so releasing a region early enough to change its colour also releases its shape.</p></div>
+  <div class="callout pos"><span class="k">Headline positive (F2)</span><p>Localisation is solved. Background change stayed at 0.012–0.026 everywhere, seams were near zero, and SAM masks matched ground truth at IoU 0.82–0.86. Finding <em>where</em> to edit was never the problem; <em>what to turn it into</em> was.</p></div>
+  <p>Two smaller findings: the band radius <em>r</em> did nothing useful (selectivity flat at 0.93–0.95 for r ∈ {0,1,2,4}), and inversion error on real photos is structural (geometry gets rearranged) rather than random noise. This motivated Stage 1: replace the mixing ratio with a <strong>learned direction</strong>.</p>
+</section>
+
+<!-- 5 -->
+<section id="model">
+  <h2>5. The current model: a transport adapter on SD3</h2>
+  <p class="plain"><b>In plain words:</b> keep SD3 frozen, bolt on about 11 million trainable numbers, and teach the combination to look at the source image, the mask and the instruction and output “how far, and in which direction, each latent value should move”. Add that move to the source and decode.</p>
+
+  <figure>
+    <div class="diagram scroll">
+      <svg viewBox="0 0 880 520" role="img" aria-labelledby="archT archD">
+        <title id="archT">Transport adapter architecture</title>
+        <desc id="archD">Source image goes through the VAE encoder to a 16 by 64 by 64 latent. The mask is turned into three planes and passed through a small CNN whose output is added to the latent. The instruction goes through CLIP-L, CLIP-G and T5 into 333 text tokens and a pooled vector, to which an interval embedding is added. The frozen SD3 MMDiT with gated rank-16 LoRA on its attention projections predicts u. The edit is z_src plus u times the mask, then decoded by the VAE.</desc>
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--ink-3)"/></marker>
+        </defs>
+        <style>
+          .bx{fill:var(--surface);stroke:var(--rule);stroke-width:1.5}
+          .bx-in{fill:var(--tint);stroke:var(--rule);stroke-width:1.5}
+          .bx-tr{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.5}
+          .bx-frozen{fill:var(--tint);stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:5 4}
+          .bx-out{fill:var(--good-soft);stroke:var(--good);stroke-width:1.5}
+          .t1{font-family:var(--f-display);font-size:14px;font-weight:700;fill:var(--ink)}
+          .t2{font-family:var(--f-mono);font-size:11px;fill:var(--ink-2)}
+          .t3{font-family:var(--f-display);font-size:11px;fill:var(--ink-3);letter-spacing:.06em}
+          .ln{stroke:var(--ink-3);stroke-width:1.5;fill:none}
+          .op{fill:var(--surface);stroke:var(--ink-2);stroke-width:1.5}
+          .opt{font-family:var(--f-display);font-size:16px;font-weight:700;fill:var(--ink)}
+        </style>
+
+        <text class="t3" x="20" y="24">INPUTS</text>
+        <text class="t3" x="300" y="24">TRAINABLE ADD-ONS (blue) · FROZEN SD3 (dashed)</text>
+        <text class="t3" x="700" y="24">OUTPUT</text>
+
+        <!-- source image -->
+        <rect class="bx-in" x="20" y="44" width="200" height="62" rx="8"/>
+        <text class="t1" x="34" y="70">Source image</text>
+        <text class="t2" x="34" y="90">512×512 RGB</text>
+        <rect class="bx-frozen" x="20" y="126" width="200" height="56" rx="8"/>
+        <text class="t1" x="34" y="150">VAE encoder</text>
+        <text class="t2" x="34" y="169">frozen · posterior mode</text>
+        <path class="ln" d="M120 106 V126" marker-end="url(#ar)"/>
+
+        <!-- latent -->
+        <rect class="bx" x="300" y="126" width="170" height="56" rx="8"/>
+        <text class="t1" x="314" y="150">z_src</text>
+        <text class="t2" x="314" y="169">16 × 64 × 64</text>
+        <path class="ln" d="M220 154 H300" marker-end="url(#ar)"/>
+
+        <!-- mask -->
+        <rect class="bx-in" x="20" y="214" width="200" height="62" rx="8"/>
+        <text class="t1" x="34" y="240">Mask M</text>
+        <text class="t2" x="34" y="260">pooled to 64×64 latent grid</text>
+        <rect class="bx-tr" x="300" y="214" width="170" height="62" rx="8"/>
+        <text class="t1" x="314" y="238">Mask encoder</text>
+        <text class="t2" x="314" y="256">3 planes → small CNN</text>
+        <path class="ln" d="M220 245 H300" marker-end="url(#ar)"/>
+
+        <!-- add op -->
+        <circle class="op" cx="520" cy="200" r="14"/>
+        <text class="opt" x="514.5" y="206">+</text>
+        <path class="ln" d="M470 154 H506 V188" marker-end="url(#ar)"/>
+        <path class="ln" d="M470 245 H506 V212" marker-end="url(#ar)"/>
+
+        <!-- instruction -->
+        <rect class="bx-in" x="20" y="308" width="200" height="62" rx="8"/>
+        <text class="t1" x="34" y="334">Instruction</text>
+        <text class="t2" x="34" y="354">“change the red circle to blue”</text>
+        <rect class="bx-frozen" x="20" y="390" width="200" height="64" rx="8"/>
+        <text class="t1" x="34" y="414">CLIP-L + CLIP-G + T5</text>
+        <text class="t2" x="34" y="433">frozen · run once, cached</text>
+        <path class="ln" d="M120 370 V390" marker-end="url(#ar)"/>
+
+        <rect class="bx" x="300" y="390" width="170" height="64" rx="8"/>
+        <text class="t1" x="314" y="413">Text features</text>
+        <text class="t2" x="314" y="430">333 tokens × 4096</text>
+        <text class="t2" x="314" y="445">pooled: 2048</text>
+        <path class="ln" d="M220 422 H300" marker-end="url(#ar)"/>
+
+        <rect class="bx-tr" x="300" y="306" width="170" height="62" rx="8"/>
+        <text class="t1" x="314" y="330">Interval embed</text>
+        <text class="t2" x="314" y="349">(s, r) → MLP → +pooled</text>
+
+        <!-- transformer -->
+        <rect class="bx-frozen" x="560" y="150" width="140" height="300" rx="10"/>
+        <text class="t1" x="574" y="176">SD3 MMDiT</text>
+        <text class="t2" x="574" y="194">24 joint blocks</text>
+        <text class="t2" x="574" y="210">frozen, bf16</text>
+        <rect class="bx-tr" x="572" y="232" width="116" height="168" rx="8"/>
+        <text class="t1" x="584" y="256" style="font-size:13px">Gated LoRA</text>
+        <text class="t2" x="584" y="276">rank 16</text>
+        <text class="t2" x="584" y="294">on q, k, v, out</text>
+        <text class="t2" x="584" y="310">both streams</text>
+        <text class="t2" x="584" y="326">191 layers</text>
+        <text class="t2" x="584" y="342">fp32, zero-init</text>
+        <text class="t2" x="584" y="374">patch 2×2 →</text>
+        <text class="t2" x="584" y="390">1024 img tokens</text>
+        <path class="ln" d="M534 200 H560" marker-end="url(#ar)"/>
+        <path class="ln" d="M470 422 H530 V420 H560" marker-end="url(#ar)"/>
+        <path class="ln" d="M470 337 H545 V330 H560" marker-end="url(#ar)"/>
+
+        <!-- output -->
+        <rect class="bx" x="730" y="196" width="130" height="58" rx="8"/>
+        <text class="t1" x="744" y="220">u (velocity)</text>
+        <text class="t2" x="744" y="239">16 × 64 × 64</text>
+        <path class="ln" d="M700 225 H730" marker-end="url(#ar)"/>
+        <rect class="bx-out" x="730" y="284" width="130" height="74" rx="8"/>
+        <text class="t1" x="744" y="308">Edited latent</text>
+        <text class="t2" x="744" y="327">z_src + u·M</text>
+        <text class="t2" x="744" y="344">(one step, s=0)</text>
+        <path class="ln" d="M795 254 V284" marker-end="url(#ar)"/>
+        <rect class="bx-frozen" x="730" y="388" width="130" height="56" rx="8"/>
+        <text class="t1" x="744" y="412">VAE decoder</text>
+        <text class="t2" x="744" y="431">→ edited image</text>
+        <path class="ln" d="M795 358 V388" marker-end="url(#ar)"/>
+      </svg>
+    </div>
+    <figcaption>The Gate A transport adapter (<code>transport/adapter.py</code>, mode <code>"pair"</code>). Blue boxes are trained; dashed boxes are frozen pretrained parts. The mask enters by being added to the latent before patch embedding, so SD3’s input layer keeps its pretrained shape. Scroll sideways on a phone.</figcaption>
+  </figure>
+
+  <h3>The parts, one by one</h3>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Component</th><th>What it does</th><th>Shape / setting</th><th class="num">Trainable params</th></tr></thead>
+      <tbody>
+        <tr><td><strong>SD3-Medium transformer</strong></td><td>Pretrained velocity predictor. Never updated.</td><td>24 MMDiT blocks, hidden width 1536, run in bf16</td><td class="num">0 (≈2B frozen)</td></tr>
+        <tr><td><strong>Gated LoRA</strong></td><td>Low-rank correction on every attention projection, image stream (<code>to_q/k/v/out</code>) and text stream (<code>add_q/k/v_proj</code>, <code>to_add_out</code>). Feed-forward layers are left alone.</td><td>rank 16, α 16, 191 layers (the last block has no text output projection), output matrix zero-initialised, fp32</td><td class="num">≈9.4 M</td></tr>
+        <tr><td><strong>Mask encoder</strong></td><td>Turns the mask into three planes (inside, signed distance to the edge, soft edge band), runs a small CNN, and adds the result to the latent.</td><td>Conv 3→64, 64→64, 64→16, 3×3 kernels, SiLU, last conv zero-init</td><td class="num">≈48 k</td></tr>
+        <tr><td><strong>Interval embedding</strong></td><td>Encodes the path position <em>s</em> and interval end <em>r</em> with sinusoids, passes them through an MLP, and adds the result to the pooled text vector.</td><td>512 → 512 → 512 → 2048, last layer zero-init</td><td class="num">≈1.6 M</td></tr>
+        <tr><td><strong>VAE and text encoders</strong></td><td>Run once, ahead of time, and their outputs are cached on disk. T5-XXL alone is ~9.5 GB and is never loaded during training.</td><td>16-ch latent at 1/8 resolution; 333 text tokens</td><td class="num">0</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:.9rem;color:var(--ink-3)">Parameter counts are computed from the layer shapes in the code, not read from a checkpoint.</p>
+
+  <h3>Three design guarantees</h3>
+  <ul>
+    <li><strong>Identity at start.</strong> Every new output layer starts at zero, so before training the model equals SD3 exactly. Any change measured later comes from training, not from the wrapper.</li>
+    <li><strong>A gate on every new path.</strong> Each add-on is multiplied by a per-sample gate. In the edit (“pair”) mode the gate is always 1, so the add-ons stay active at s = 0, the only point where the edit is read out. In the few-step (“meanflow”) mode the gate encodes the interval instead.</li>
+    <li><strong>Mask enters the latent, not the attention.</strong> Stage 0 showed attention bias ties “how loudly the instruction is heard” to “how much of the original is destroyed”. Here the mask instead says <em>where</em> a learned move applies.</li>
+  </ul>
+
+  <h3>Mask encoder variants</h3>
+  <p>Two versions exist, chosen with <code>--mask-encoder-kind</code>:</p>
+  <div class="grid2">
+    <div class="card"><h4><code>single</code> (default)</h4><p>One CNN head produces the whole shift. It learned a large, near-constant offset across the whole image plus a small mask-shaped part.</p></div>
+    <div class="card"><h4><code>global_local</code></h4><p>The shift is forced to split into a learned constant vector (the “operating point”) plus a local CNN output with its average subtracted. The local part cannot drift into the constant, whatever it learns.</p></div>
+  </div>
+</section>
+
+<!-- 6 -->
+<section id="training">
+  <h2>6. How it is trained</h2>
+
+  <h3>Training data</h3>
+  <ul>
+    <li><strong>Dataset:</strong> MagicBrush, a human-annotated instruction-editing dataset. Each item is a source image, an instruction, a target image and a mask of the edited area.</li>
+    <li><strong>Only first turns.</strong> MagicBrush sessions are multi-turn; later turns start from a model output rather than a real photo, so only <code>turn_index == 1</code> is used. That gives <strong>4,511 triplets</strong>.</li>
+    <li><strong>Mask convention:</strong> the mask is the <em>alpha channel</em>, with alpha &lt; 128 meaning “edit here”. Reading the RGB channels by mistake once produced a confident wrong claim.</li>
+    <li><strong>Pre-encoded cache:</strong> images are resized to 512×512 and encoded once (VAE mode, not a random sample), the mask is pooled to the 64×64 latent grid, and text embeddings are deduplicated by instruction. Training reads only this cache.</li>
+  </ul>
+
+  <h3>What the model is taught: the straight-line “pair flow”</h3>
+  <p>Draw a straight line in latent space from the source to the target. The velocity along it is constant and equals the whole edit. Training picks a random point on the line and asks the model to predict that velocity.</p>
+  <div class="formula">z_s  = (1 − s) · z_src + s · z_tgt        s ~ Uniform(0, 1)
+v    = z_tgt − z_src                    (the true edit, constant along the line)
+u    = model(z_s, s, r, text, mask)
+loss = mean_inside_mask (u − v)²  +  mean_outside_mask (u − v)²
+edit = z_src + u(z_src, s = 0) · M      (read out in ONE step)</div>
+  <p>Outside the mask the target equals the source, so <em>v</em> = 0 there and that term teaches the model to leave the background alone. The two halves of the loss are reported separately, so a model that wins by moving everything a little is visible.</p>
+
+  <h3>Settings (defaults of <code>scripts/gate_a_transport.py train</code>)</h3>
+  <div class="tablewrap">
+    <table>
+      <tbody>
+        <tr><td>Steps</td><td class="num">8,000</td><td>Batch</td><td class="num">4 × 4 accumulation = 16</td></tr>
+        <tr><td>Learning rate</td><td class="num">1e-4</td><td>LoRA rank</td><td class="num">16</td></tr>
+        <tr><td>Mask dropout</td><td class="num">10%</td><td>Text dropout</td><td class="num">10%</td></tr>
+        <tr><td>Frozen forward</td><td class="num">bf16</td><td>Adapter + optimiser</td><td class="num">fp32</td></tr>
+        <tr><td>Gradient checkpointing</td><td class="num">on</td><td>Hardware</td><td class="num">single 24 GB GPU</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Dropping the mask or the text for 10% of samples keeps a mask-free and a text-free path alive. Those serve as control conditions, and the text-free path makes classifier-free guidance possible later.</p>
+
+  <h3>Variants that have been tried</h3>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Variant</th><th>What changes</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Direction A</strong> (σ0 sweep)</td><td>Add mask-only noise to the source: z_src′ = z_src + σ0·ε·M, with σ0 ∈ {0, 0.1, 0.3, 0.5, 0.7, 1.0}. Meant to let the noise pick one of several possible edits.</td><td><span class="verdict v-bad">no gain</span> σ0 ≤ 0.1 ties, σ0 ≥ 0.5 destroys the signal</td></tr>
+        <tr><td><strong>global_local</strong> mask encoder</td><td>Forces the constant/local split described above.</td><td><span class="verdict v-mid">structural win</span> cleaner localisation, accuracy unchanged (−2 to −4%)</td></tr>
+        <tr><td><strong>More inference steps</strong></td><td>Apply the model 4 times along the path instead of once, with no retraining.</td><td><span class="verdict v-bad">worse</span> raw cosine 0.517 → 0.372</td></tr>
+        <tr><td><strong>Interval conditioning</strong></td><td>Train on random sub-intervals [s, r] so multi-step use is in-distribution. Default since the latest commits.</td><td><span class="verdict v-open">not yet evaluated</span></td></tr>
+        <tr><td><strong>LPIPS perceptual loss</strong></td><td>Decode the prediction through the VAE and add an LPIPS image-similarity loss.</td><td><span class="verdict v-bad">did not sharpen</span></td></tr>
+        <tr><td><strong>DINOv2 patch loss</strong></td><td>1 − cosine between DINOv2 patch features of prediction and target, inside an eroded mask.</td><td><span class="verdict v-open">built, not yet trained</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 7 -->
+<section id="can">
+  <h2>7. What the current model can do today</h2>
+  <p class="plain"><b>Short answer:</b> it knows <em>where</em> to edit and roughly <em>which way</em> to push the colour, but it cannot yet produce a clean, sharp edit. It has never been scored on the Gate C benchmark.</p>
+
+  <h3>The clearest single test</h3>
+  <p>A synthetic image with a red circle and a green circle, the instruction “change the red circle to blue”, and a mask on the red circle only. Nothing about it is ambiguous. The four panels are the source, the target, the <em>oracle</em> (the true latent difference pasted in, to check the VAE and the masking), and the model’s output from the best checkpoint (σ0 = 0).</p>
+  <figure>
+    <img class="panel-img" src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAQDAwMDAgQDAwMEBAQFBgoGBgUFBgwICQcKDgwPDg4MDQ0PERYTDxAVEQ0NExoTFRcYGRkZDxIbHRsYHRYYGRj/2wBDAQQEBAYFBgsGBgsYEA0QGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBj/wAARCAEsBLADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD7+ooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKjqSo6ACiijFABRS4oxQAlFLijFAWEopcUYoASilxRigBKKXFGKAEopcUYoCwlFLijFACUUuKMUAJRS4oxQAlFLijFACUUuKMUAJRS4oxQFhKKXFGKAEopcUYoCwlFLijFACUUuKTFABRRiigBMDNLR3ooAMUYFFFABgUmBS0tADcClwKKKADAowKKWgBMCjAoooATApcCiloAbgUuBRRQAYFJgUtFACYFLgUUtACYFJgU7FJQAmBRgUtLigBMCkxS0UAJgUuBS4ooAbgUYFOxRigBMCjApaSgAwKMCiigBMClxRRigAoIooNAElFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABUdSVHQAUtJS0AFFFFAwoo7UUAFFFFABmiiigA5o70UUAFFFHegAozRRQAUUlLQAUUUUAFFFFABRRRQAUUUUAFFFFAB3ooooAKKKKACjtRRQAUlLR2oEJ3pRSd6UUAFJSmkoAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAWikpaAE70GjvQaAJKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACo6kqOgApaSigBaKTtS0DCijNFACUtJS0CCkoooAWiko70ALRSUUALSUUUAFHaiigBaKSigBaKKSgYtFJRQIWkopaAEpaKKBhSUtFAgpKO9FAC0UlL2oGJRS9qSgQd6UUnelFAB3pKWkoAKKKKACiiigAoo70tACUUUYoAKWjFGKB2CkpaSgQUUUtACUUUUAFFFFABRRRQAUtJRQAtFJS0AJRRRQAUtJS0AFJRRQAUtJSigBKDRQaAJKKKKACiiigAooooAKKKKACiiigAooqpqWqabo+nvf6tqFrY2qfenuZVjQfixApN21ZUYuTUYq7ZborwvxT+1T8OdEZ4NDW+8RTg43WieVD15/eSYz36A/rmvMdQ/bC8WyXIOl+ENFtoccrczSzMTnrldgHGOMH61w1Myw1N2cr+mp9VguCM5xceeN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" alt="Four panels. Source: red circle and green circle on white. Target: blue circle and green circle. Oracle: clean blue circle and green circle. Model: a grey-tan disc with a fine grid texture where the red circle was, green circle unchanged.">
+    <div class="panel-labels"><span><b>Source</b>red + green</span><span><b>Target</b>what was asked</span><span><b>Oracle</b>true move pasted in</span><span><b>Model</b>current output</span></div>
+    <figcaption><code>synthetic_result.png</code>, produced by <code>scripts/clear_edit.py</code>. The green circle and background are preserved and the change lands exactly in the mask. But the circle turns grey-tan rather than blue and carries a regular grid pattern that follows the latent’s patch grid. One sample on an image unlike the training data, so read it as strong evidence, not proof.</figcaption>
+  </figure>
+
+  <h3>Accuracy against the true edit</h3>
+  <p>The main measurement is the cosine between the model’s predicted move <em>u</em> and the true move <em>v</em>, over all 4,511 cached examples. 1.0 would be perfect, 0 is unrelated. It is scored three ways, because “where” and “which way” fail differently:</p>
+  <ul>
+    <li><strong>raw</strong>: the whole frame, pixel by pixel. Needs both the right direction and the right location.</li>
+    <li><strong>pooled</strong>: averaged over the mask into one value per channel. Only asks “right direction?”.</li>
+    <li><strong>centered</strong>: pooled, minus the average shift every MagicBrush edit shares. Asks “right direction <em>for this instruction</em>?”.</li>
+  </ul>
+
+  <figure>
+    <div class="diagram scroll">
+      <svg class="chart" viewBox="0 0 640 260" role="img" aria-labelledby="c1t c1d" style="min-width:520px">
+        <title id="c1t">Centered cosine by noise level σ0</title>
+        <desc id="c1d">Centered cosine at step 8000: σ0 0.0 is 0.664, 0.1 is 0.681, 0.3 is 0.587, 0.5 is 0.137, 0.7 is 0.020, 1.0 is 0.031.</desc>
+        <!-- x scale: 0..0.8 → 120..600 (600px per 1.0) -->
+        <line class="grid" x1="120" y1="20" x2="120" y2="222"/><line class="grid" x1="240" y1="20" x2="240" y2="222"/><line class="grid" x1="360" y1="20" x2="360" y2="222"/><line class="grid" x1="480" y1="20" x2="480" y2="222"/><line class="grid" x1="600" y1="20" x2="600" y2="222"/>
+        <text x="120" y="240" text-anchor="middle">0</text><text x="240" y="240" text-anchor="middle">0.2</text><text x="360" y="240" text-anchor="middle">0.4</text><text x="480" y="240" text-anchor="middle">0.6</text><text x="600" y="240" text-anchor="middle">0.8</text>
+        <text class="lbl" x="112" y="44" text-anchor="end">σ0 = 0.0</text>
+        <rect class="bar on" x="120" y="30" width="398.4" height="22" rx="4"><title>σ0 0.0 · centered 0.664 · raw 0.541 · pooled 0.769</title></rect>
+        <text class="val" x="524" y="45">0.664</text>
+        <text class="lbl" x="112" y="76" text-anchor="end">0.1</text>
+        <rect class="bar" x="120" y="62" width="408.6" height="22" rx="4"><title>σ0 0.1 · centered 0.681 · raw 0.546 · pooled 0.775</title></rect>
+        <text class="lbl" x="112" y="108" text-anchor="end">0.3</text>
+        <rect class="bar" x="120" y="94" width="352.2" height="22" rx="4"><title>σ0 0.3 · centered 0.587 · raw 0.539 · pooled 0.713</title></rect>
+        <text class="lbl" x="112" y="140" text-anchor="end">0.5</text>
+        <rect class="bar neg" x="120" y="126" width="82.2" height="22" rx="4"><title>σ0 0.5 · centered 0.137 · raw 0.321 · pooled 0.362</title></rect>
+        <text class="val" x="208" y="141">0.137</text>
+        <text class="lbl" x="112" y="172" text-anchor="end">0.7</text>
+        <rect class="bar neg" x="120" y="158" width="12" height="22" rx="3"><title>σ0 0.7 · centered 0.020 · raw 0.262 · pooled 0.256</title></rect>
+        <text class="lbl" x="112" y="204" text-anchor="end">1.0</text>
+        <rect class="bar neg" x="120" y="190" width="18.6" height="22" rx="3"><title>σ0 1.0 · centered 0.031 · raw 0.261 · pooled 0.258</title></rect>
+        <line class="axis" x1="120" y1="222" x2="600" y2="222"/>
+      </svg>
+    </div>
+    <figcaption>Centered cosine (higher is better) for each Direction A noise level, all at step 8,000–8,100. Hover a bar for all three scores. Adding noise never helps by more than run-to-run noise, and from σ0 = 0.5 the instruction-specific signal collapses.</figcaption>
+  </figure>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Checkpoint</th><th class="num">raw</th><th class="num">pooled</th><th class="num">centered</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td>σ0 = 0.0, <code>single</code> encoder (best)</td><td class="num">0.541</td><td class="num">0.769</td><td class="num">0.664</td></tr>
+        <tr><td>σ0 = 0.0, <code>global_local</code> encoder</td><td class="num">0.517</td><td class="num">0.752</td><td class="num">0.644</td></tr>
+        <tr><td><code>global_local</code>, 4 Euler steps</td><td class="num">0.372</td><td class="num">0.720</td><td class="num">0.590</td></tr>
+        <tr><td>Best checkpoint with the mask removed (λ = 0)</td><td class="num">0.240</td><td class="num">0.681</td><td class="num">0.494</td></tr>
+        <tr><td><em>Best possible from instruction alone (data ceiling)</em></td><td class="num"><em>0.420</em></td><td class="num"><em>0.621</em></td><td class="num"><em>~0.458</em></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>How to read this:</p>
+  <ul>
+    <li>The model beats the instruction-only ceiling on every treatment, so it really does use the source image, not just the words.</li>
+    <li>Removing the mask more than halves <strong>raw</strong> (0.541 → 0.240): the mask is doing real work, mostly for <em>where</em>.</li>
+    <li>The gap between raw (0.541) and pooled (0.769) is position error: right average direction, wrong exact pixels. That gap is the main open problem.</li>
+    <li>A cosine of ~0.54 in latent space does not translate into a clean picture, as the synthetic test shows. These numbers measure progress on a proxy, not edit quality.</li>
+  </ul>
+
+  <div class="callout warn"><span class="k">Not yet measured</span><p>The Gate A model has never been run through the 151-case Gate C benchmark or the calibrated quality judge. The wrapper to do so exists (<code>bench/gate_a_model.py</code>); it needs a GPU run.</p></div>
+</section>
+
+<!-- 8 -->
+<section id="diagnosis">
+  <h2>8. Diagnosing why the edit blurs</h2>
+  <p>The first explanation was <strong>mean collapse</strong>. If “make the dog brown” could mean many different browns, a model trained with squared error learns their average, which looks like a desaturated smear. The reopened Gate A tested that and five other explanations cheaply, without retraining:</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Suspect</th><th>Check</th><th>Outcome</th></tr></thead>
+      <tbody>
+        <tr><td>Instruction is ambiguous (mean collapse)</td><td>Ambiguity probe: are same-instruction edits more alike than unrelated ones, after removing the shared bias?</td><td><span class="verdict v-good">ruled out</span> instruction carries strong signal (gap +0.451, in-sample)</td></tr>
+        <tr><td>Needs noise to pick a mode</td><td>Six-point σ0 sweep</td><td><span class="verdict v-good">ruled out</span> no σ0 beats 0</td></tr>
+        <tr><td>Mask path is dead</td><td>Weights moved off zero; λ = 0 ablation</td><td><span class="verdict v-good">ruled out</span> raw −55.6% without it</td></tr>
+        <tr><td>Mask encoder ignores the mask</td><td>Shift the mask and compare outputs</td><td><span class="verdict v-good">ruled out</span> output follows the mask</td></tr>
+        <tr><td>Localisation is malformed</td><td>Inside/outside signal ratio</td><td><span class="verdict v-good">ruled out</span> strongly differentiated (0.21, background-dominant)</td></tr>
+        <tr><td>Constant offset is wasted capacity</td><td>Subtract it at inference</td><td><span class="verdict v-good">ruled out</span> pooled 0.769 → 0.211: it is load-bearing</td></tr>
+        <tr><td>One step is too coarse</td><td>4 naive Euler steps</td><td><span class="verdict v-good">ruled out as a free fix</span> it makes things worse</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>What is left standing: a single forward pass at s = 0 cannot place the edit as precisely as the mask allows. The synthetic test adds one more observation: on an unambiguous edit, the output is muddy and gridded rather than blue.</p>
+  <div class="callout"><span class="k">A plausible root cause (reviewer’s reading, not yet tested)</span><p>SD3 was trained to turn noise into images. Gate A instead queries it at a clean image and asks a small add-on to emit a displacement. Nothing keeps <code>z_src + u</code> on the set of latents that decode to natural images, and the noise-driven sampling that makes ordinary editors sharp is missing by design. The test that would settle this is a noise-start, mask-conditioned control trained on the same data.</p></div>
+</section>
+
+<!-- 9 -->
+<section id="gateb">
+  <h2>9. Gate B: making SD3 fast</h2>
+  <p class="plain"><b>In plain words:</b> instead of predicting the direction to move <em>right now</em> and taking 50 tiny steps, predict the <em>average</em> direction over a long stretch so a few big steps land in the same place.</p>
+  <p>This is <strong>MeanFlow</strong>. The model gets a start time <em>t</em> and an end time <em>r</em> and predicts the average velocity over [r, t]. The same adapter structure is used in <code>"meanflow"</code> mode: rank-32 gated LoRA, learning rate 5e-5, with 75% of each batch at r = t (“anchors”), where the target reduces to ordinary flow matching. It was trained on the same MagicBrush latents and scored against a ground-truth average velocity integrated from the frozen model.</p>
+  <ul>
+    <li><strong>Stage 1:</strong> the adapter was worse than simply reusing SD3’s instantaneous velocity at every interval. Its correction pointed nowhere (cosine to the needed correction ≈ 0).</li>
+    <li><strong>Stage 1B:</strong> the cause was the regression target, not adapter size. With the target fixed, cosine rose to ≈ 0.72.</li>
+    <li><strong>Stage 1C:</strong> a “distill” variant reached cosine 0.70–0.78 across intervals. It beats the frozen model at every tested time (0.20–0.80) and interval (0.1–0.5) given one rule: scale the correction by 1.0 below t = 0.35 and by 0.5 above.</li>
+    <li><strong>Δ-curriculum:</strong> training short intervals before long ones adds about 3%, reproducibly across two seeds.</li>
+  </ul>
+  <div class="callout warn"><span class="k">Caveat</span><p>The scale rule fixes magnitude, not direction. The leftover direction error (1 − cos², 0.26–0.67 depending on time; 0.44 at the Δ = 0.5 operating point) is now the binding limit. Gate B is also a <em>generation</em> speed-up; it has never been connected to the editor. The project’s own plan says few-step should come last.</p></div>
+</section>
+
+<!-- 10 -->
+<section id="gatec">
+  <h2>10. Gate C: the instance-selectivity benchmark</h2>
+  <p class="plain"><b>In plain words:</b> collect photos with several objects of the same kind where only one should change. Then check whether editors change the right one, leave the others alone, and do a good job.</p>
+
+  <h3>How it was built</h3>
+  <ul>
+    <li><strong>Cases:</strong> 151 “hard” cases from RefEdit-Bench joined to COCO, which annotates every instance of 80 object categories, so sibling masks are available. Example instruction: “Remove the giraffe right next to the lady”.</li>
+    <li><strong>Where:</strong> change inside the target mask versus change on siblings and on the background. A case is <em>mis-targeted</em> when the siblings changed more than the target. This classifier agreed with human judgment on 14/14 checked cases.</li>
+    <li><strong>Off-instance:</strong> a peak detector for edits that land on an untracked object (for example, a parrot placed on the stove instead of the chef’s shoulder).</li>
+    <li><strong>How good:</strong> a 40-case blind human audit (clean / degraded / destroyed / wrong edit / no edit), plus a VLM judge using the VIEScore protocol. The judge (GLM-5.3-Flash) correlates with the human verdicts at ρ = 0.717.</li>
+    <li><strong>Frozen rules:</strong> every threshold was fixed before any model was scored.</li>
+  </ul>
+
+  <h3>Results on existing editors</h3>
+  <figure>
+    <div class="diagram scroll">
+      <svg class="chart" viewBox="0 0 640 210" role="img" aria-labelledby="c2t c2d" style="min-width:520px">
+        <title id="c2t">Mis-targeted share by arm</title>
+        <desc id="c2d">Mis-targeted out of 151 cases: freeform 40 percent, white mask 30 percent, RefEdit-SD3 no mask 28 percent, oracle mask 0 percent, sibling mask 94 percent.</desc>
+        <!-- x: 0..100% → 170..600 (4.3 px per %) -->
+        <line class="grid" x1="170" y1="16" x2="170" y2="176"/><line class="grid" x1="277.5" y1="16" x2="277.5" y2="176"/><line class="grid" x1="385" y1="16" x2="385" y2="176"/><line class="grid" x1="492.5" y1="16" x2="492.5" y2="176"/><line class="grid" x1="600" y1="16" x2="600" y2="176"/>
+        <text x="170" y="194" text-anchor="middle">0%</text><text x="277.5" y="194" text-anchor="middle">25%</text><text x="385" y="194" text-anchor="middle">50%</text><text x="492.5" y="194" text-anchor="middle">75%</text><text x="600" y="194" text-anchor="middle">100%</text>
+        <text class="lbl" x="162" y="38" text-anchor="end">UltraEdit, no mask</text>
+        <rect class="bar" x="170" y="24" width="171.9" height="22" rx="4"><title>freeform · 60 / 151 mis-targeted (40%)</title></rect>
+        <text class="val" x="348" y="39">40%</text>
+        <text class="lbl" x="162" y="68" text-anchor="end">UltraEdit, blank mask</text>
+        <rect class="bar" x="170" y="54" width="131" height="22" rx="4"><title>white · 46 / 151 mis-targeted (30%)</title></rect>
+        <text class="lbl" x="162" y="98" text-anchor="end">RefEdit-SD3, no mask</text>
+        <rect class="bar" x="170" y="84" width="122.4" height="22" rx="4"><title>none · 43 / 151 mis-targeted (28%)</title></rect>
+        <text class="lbl" x="162" y="128" text-anchor="end">UltraEdit, target mask</text>
+        <rect class="bar on" x="170" y="114" width="3" height="22" rx="1.5"><title>oracle · 0 / 151 mis-targeted (0%)</title></rect>
+        <text class="val" x="180" y="129">0%</text>
+        <text class="lbl" x="162" y="158" text-anchor="end">Sibling mask (control)</text>
+        <rect class="bar neg" x="170" y="144" width="404.2" height="22" rx="4"><title>sibling · 142 / 151 mis-targeted (94%)</title></rect>
+        <text class="val" x="564" y="159" text-anchor="end" style="fill:var(--surface)">94%</text>
+        <line class="axis" x1="170" y1="176" x2="600" y2="176"/>
+      </svg>
+    </div>
+    <figcaption>Share of 151 cases where the wrong instance was edited. Giving the editor the target’s mask removes wrong-instance editing completely (60 : 0 discordant pairs, p &lt; 0.0001). Pointing the mask at a sibling drives it to 94%, which proves the model really follows the mask.</figcaption>
+  </figure>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Arm (40 blind-audited cases)</th><th class="num">clean</th><th class="num">degraded</th><th class="num">destroyed</th><th class="num">wrong edit</th><th class="num">no edit</th><th class="num">clean %</th></tr></thead>
+      <tbody>
+        <tr><td>RefEdit-SD3, no mask</td><td class="num">6</td><td class="num">8</td><td class="num">3</td><td class="num">0</td><td class="num">23</td><td class="num">15%</td></tr>
+        <tr><td>UltraEdit, blank mask</td><td class="num">3</td><td class="num">8</td><td class="num">3</td><td class="num">3</td><td class="num">23</td><td class="num">8%</td></tr>
+        <tr class="hl"><td>UltraEdit, target mask</td><td class="num">9</td><td class="num">12</td><td class="num">3</td><td class="num">6</td><td class="num">10</td><td class="num">22%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout pos"><span class="k">The defensible claim</span><p>Conditioning on the target instance’s mask eliminates wrong-instance editing (28% → 0%, or 40% → 0% within one model family) and buys no measurable improvement in edit quality (15% → 22% clean, p = 0.51). Four in five outputs remain unclean. The mask decides <em>where</em> the model edits, not <em>what</em> it does there. No other benchmark leaves same-category instances deliberately unedited, so this ceiling of “route the edit to the right place” methods had not been measured before.</p></div>
+</section>
+
+<!-- 11 -->
+<section id="findings">
+  <h2>11. What has been learned</h2>
+  <div class="grid2">
+    <div class="card"><h4>Localisation is solved; transformation is not</h4><p>Found in Stage 0 and again, independently, in Gate C. Masks fix <em>where</em>. Nobody’s mechanism, including this project’s, yet reliably fixes <em>what</em>.</p></div>
+    <div class="card"><h4>Mixing ratios cannot express a direction</h4><p>Blending original and regenerated content couples colour change to structure loss (correlation ≈ −0.95).</p></div>
+    <div class="card"><h4>Ambiguity is not why Gate A blurs</h4><p>Six cheap checks ruled it out. The open suspect is the one-step readout and how it places the edit.</p></div>
+    <div class="card"><h4>Few-step conversion works at LoRA rank</h4><p>With the right target and one scale rule. Direction error remains the limit.</p></div>
+    <div class="card"><h4>Score the ground truth on your metric first</h4><p>The Stage 0 structure metric rated real human edits worse than the model, which proved the metric measured something else (luminance edges).</p></div>
+    <div class="card"><h4>Automated verdicts need eyes</h4><p>Every automated verdict in the project was wrong at least once, which is why the eval tool refuses to print one until <code>--i-looked-at-the-images</code> is passed.</p></div>
+  </div>
+  <details>
+    <summary>Claims that were made and later withdrawn</summary>
+    <div class="inner">
+      <p><strong>“Stage 0 decouples colour from structure.”</strong> Withdrawn: the metric was an artifact.</p>
+      <p><strong>“SD3’s flow field is too stiff for few steps (S ≈ 15).”</strong> Withdrawn: the number came from CFG amplification and an aliased timestep embedding. Real trajectory curvature is ~2.84, implying a floor near 3 steps.</p>
+      <p><strong>“Changing the target raised cosine to 0.72 with the same LoRA.”</strong> Do not quote: that was Gate B’s generation task, not Gate A’s edit.</p>
+      <p><strong>“Mean collapse from ambiguity explains Gate A.”</strong> Superseded by the elimination sequence in §8.</p>
+      <p><strong>“The band radius r helps.”</strong> Withdrawn: flat across r ∈ {0,1,2,4}.</p>
+    </div>
+  </details>
+</section>
+
+<!-- 12 -->
+<section id="next">
+  <h2>12. Open problems and next steps</h2>
+  <p>In priority order. All of them need a GPU and the data cache, which the cloud review environment does not have.</p>
+  <ol>
+    <li><strong>Score the existing best checkpoints on Gate C</strong> (σ0 = 0 <code>single</code> and <code>global_local</code>), using the calibrated judge and the blind-audit rubric. Without this, nothing else has a baseline to beat.</li>
+    <li><strong>Run the DINOv2-loss experiment with a kill criterion written first.</strong> Pass means a recognisably blue circle in the synthetic test <em>and</em> a better clean rate than a no-DINO control trained with the same flags. Fail means stop the displacement-regression line.</li>
+    <li><strong>Run the control the thesis avoided:</strong> a noise-start, source-and-mask-conditioned flow-matching fine-tune at full steps on the same data. If it wins, the “no noise” premise was the bottleneck.</li>
+    <li><strong>Publish Gate C on its own.</strong> The benchmark and the “routing saturates, quality doesn’t move” result stand whatever happens to the editor.</li>
+    <li><strong>Check one open risk:</strong> older checkpoints were trained with r = s but are queried with r = 1. Compare the two on the σ0 = 0 checkpoint.</li>
+  </ol>
+  <div class="callout warn"><span class="k">Code state to know about</span><p>Commit <code>9c67baa</code> changed the training objective: interval conditioning became the default, and in that mode σ0 was silently ignored. The review branch now rejects interval conditioning with σ0 &gt; 0, restores the self-test, fixes a crash in the DINOv2 loss for erode = 0, and adds <code>--interval-conditioning / --no-interval-conditioning</code> and <code>--perceptual-mask-erode</code> flags. Neither current setting reproduces the r = s objective of the documented checkpoints, so new runs need a matching control.</p></div>
+</section>
+
+<!-- 13 -->
+<section id="glossary">
+  <h2>13. Glossary</h2>
+  <dl class="gloss">
+    <dt>Latent (z)</dt><dd>The compressed 16×64×64 version of a 512×512 image that SD3 works in.</dd>
+    <dt>z_src, z_tgt</dt><dd>Latents of the source (before) and target (after) images.</dd>
+    <dt>Velocity (v, u)</dt><dd>The direction to move a latent. <em>v</em> is the true one; <em>u</em> is the model’s prediction.</dd>
+    <dt>Rectified flow</dt><dd>Training a model to move along straight lines between noise and data, or here between source and target.</dd>
+    <dt>Inversion</dt><dd>Running generation backwards to find the noise that would regenerate a given photo.</dd>
+    <dt>MMDiT</dt><dd>SD3’s transformer, where image and text tokens attend to each other in every block.</dd>
+    <dt>LoRA</dt><dd>A small trainable low-rank correction added to frozen layers.</dd>
+    <dt>Gate</dt><dd>A self-contained experiment with a threshold fixed before running it.</dd>
+    <dt>Oracle mask</dt><dd>The true mask of the target instance, given to the model rather than predicted.</dd>
+    <dt>Mis-targeted</dt><dd>A case where same-category siblings changed more than the requested target.</dd>
+    <dt>Cosine (raw / pooled / centered)</dt><dd>Agreement between predicted and true edit direction; see §7 for the three treatments.</dd>
+    <dt>σ0 (Direction A)</dt><dd>Strength of noise injected inside the mask during training, meant to choose between several possible edits.</dd>
+    <dt>MeanFlow</dt><dd>Predicting the average velocity over an interval so a few big steps replace many small ones.</dd>
+    <dt>LPIPS / DINOv2</dt><dd>Neural feature spaces used to compare images by appearance rather than by raw pixels.</dd>
+    <dt>VIEScore</dt><dd>A published protocol for asking a vision-language model to grade edits on instruction-following and image quality.</dd>
+  </dl>
+</section>
+
+<footer>
+  <p>Compiled from the repository’s own reports (<code>RESEARCH_REPORT.md</code>, <code>STAGE1*_REPORT.md</code>, <code>GATE_C_REPORT.md</code>, <code>GATE_A_REOPENING_PLAN.md</code>, <code>STATUS_REVIEW.md</code>) and source code (<code>transport/</code>, <code>scripts/gate_a_transport.py</code>, <code>bench/</code>). Numbers are quoted as recorded there; none were re-run for this page.</p>
+</footer>
+</main>
+</div>

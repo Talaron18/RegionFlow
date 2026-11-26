@@ -1,0 +1,488 @@
+[
+ {
+  "id": "smoke-axe",
+  "arm": "S",
+  "expr_type": "attribute",
+  "image": "runs/fresh/smoke_images/yamanosusume.jpg",
+  "instruction": "make the girl in the back row in blue hold an ice axe in her hand",
+  "target": [
+   262,
+   85,
+   445,
+   355
+  ],
+  "siblings": [
+   [
+    0,
+    0,
+    165,
+    315
+   ],
+   [
+    135,
+    105,
+    278,
+    300
+   ],
+   [
+    0,
+    250,
+    240,
+    640
+   ],
+   [
+    190,
+    250,
+    452,
+    640
+   ]
+  ],
+  "note": "boxes for the 452x640 poster; target = back-right girl, front-right girl in light blue is the distractor",
+  "image_wh": [
+   452,
+   640
+  ],
+  "counter_instructions": [
+   "make the girl in the back row in pink hold an ice axe in her hand",
+   "make the girl in the back row with her arm raised hold an ice axe in her hand"
+  ]
+ },
+ {
+  "id": "smoke-teio-raw",
+  "arm": "S",
+  "expr_type": "spatial",
+  "image": "runs/fresh/smoke_images/umamusume_pipeline.png",
+  "instruction": "turn the specialweek on the left into toukaiteio",
+  "target": [
+   0,
+   520,
+   245,
+   905
+  ],
+  "siblings": [
+   [
+    1205,
+    220,
+    1435,
+    575
+   ],
+   [
+    615,
+    480,
+    835,
+    775
+   ],
+   [
+    995,
+    685,
+    1265,
+    950
+   ]
+  ],
+  "note": "boxes for the 1448x1086 source; the user's original wording",
+  "image_wh": [
+   1448,
+   1086
+  ]
+ },
+ {
+  "id": "smoke-teio",
+  "arm": "S",
+  "expr_type": "spatial",
+  "image": "runs/fresh/smoke_images/umamusume_pipeline.png",
+  "instruction": "Turn Special Week on the left into Tokai Teio",
+  "target": [
+   0,
+   520,
+   245,
+   905
+  ],
+  "siblings": [
+   [
+    1205,
+    220,
+    1435,
+    575
+   ],
+   [
+    615,
+    480,
+    835,
+    775
+   ],
+   [
+    995,
+    685,
+    1265,
+    950
+   ]
+  ],
+  "note": "same case, names spelled as written in English sources",
+  "image_wh": [
+   1448,
+   1086
+  ]
+ },
+ {
+  "image": "runs/fresh/smoke_images/yamanosusume.jpg",
+  "target": [
+   262,
+   85,
+   445,
+   355
+  ],
+  "siblings": [
+   [
+    0,
+    0,
+    165,
+    315
+   ],
+   [
+    135,
+    105,
+    278,
+    300
+   ],
+   [
+    0,
+    250,
+    240,
+    640
+   ],
+   [
+    190,
+    250,
+    452,
+    640
+   ]
+  ],
+  "arm": "S",
+  "expr_type": "attribute",
+  "id": "smoke-rain",
+  "instruction": "Make the girl in the back row in blue wear a yellow rain jacket instead",
+  "note": "in-body edit: the change stays inside her mask",
+  "image_wh": [
+   452,
+   640
+  ],
+  "counter_instructions": [
+   "Make the girl in the back row in pink wear a yellow rain jacket instead"
+  ]
+ },
+ {
+  "image": "runs/fresh/smoke_images/yamanosusume.jpg",
+  "target": [
+   262,
+   85,
+   445,
+   355
+  ],
+  "siblings": [
+   [
+    0,
+    0,
+    165,
+    315
+   ],
+   [
+    135,
+    105,
+    278,
+    300
+   ],
+   [
+    0,
+    250,
+    240,
+    640
+   ],
+   [
+    190,
+    250,
+    452,
+    640
+   ]
+  ],
+  "arm": "S",
+  "expr_type": "attribute",
+  "id": "smoke-red",
+  "instruction": "Change the jacket of the girl in the back row in blue to red",
+  "note": "colour change, the easiest kind for klein",
+  "image_wh": [
+   452,
+   640
+  ],
+  "counter_instructions": [
+   "Change the jacket of the girl in the back row in pink to red"
+  ]
+ },
+ {
+  "id": "smoke-desk-teacher",
+  "arm": "S",
+  "expr_type": "attribute",
+  "image": "runs/fresh/smoke_images/classroom.jpg",
+  "instruction": "Make the large dark wooden teacher's desk white",
+  "target": [
+   1312,
+   494,
+   1834,
+   827
+  ],
+  "siblings": [
+   [
+    1294,
+    632,
+    1610,
+    827
+   ],
+   [
+    1619,
+    739,
+    2071,
+    1031
+   ],
+   [
+    1040,
+    547,
+    1255,
+    709
+   ]
+  ],
+  "note": "2364x1330 photo; only neighbouring student desks boxed (target rate does not need every sibling)",
+  "image_wh": [
+   2364,
+   1330
+  ],
+  "counter_instructions": [
+   "Make the student desk next to the teacher's desk white"
+  ]
+ },
+ {
+  "id": "smoke-desk-left",
+  "arm": "S",
+  "expr_type": "spatial",
+  "image": "runs/fresh/smoke_images/classroom.jpg",
+  "instruction": "Paint the desk closest to the camera on the left red",
+  "target": [
+   290,
+   904,
+   756,
+   1330
+  ],
+  "siblings": [
+   [
+    298,
+    703,
+    609,
+    960
+   ],
+   [
+    1156,
+    801,
+    1622,
+    1182
+   ],
+   [
+    1572,
+    1040,
+    2364,
+    1330
+   ],
+   [
+    225,
+    591,
+    440,
+    756
+   ]
+  ],
+  "note": "2364x1330 photo; the bottom-right desk is the near distractor",
+  "image_wh": [
+   2364,
+   1330
+  ],
+  "counter_instructions": [
+   "Paint the desk closest to the camera on the right red"
+  ]
+ },
+ {
+  "id": "smoke-axe-raised",
+  "arm": "S",
+  "expr_type": "attribute",
+  "image": "runs/fresh/smoke_images/yamanosusume.jpg",
+  "image_wh": [
+   452,
+   640
+  ],
+  "pose_ref": "runs/fresh/smoke_images/yamanosusume_pose.png",
+  "instruction": "make the girl in the back row with her arm raised hold an ice axe in her raised hand",
+  "target": [
+   0,
+   0,
+   165,
+   315
+  ],
+  "siblings": [
+   [
+    135,
+    105,
+    278,
+    300
+   ],
+   [
+    262,
+    85,
+    445,
+    355
+   ],
+   [
+    0,
+    250,
+    240,
+    640
+   ],
+   [
+    190,
+    250,
+    452,
+    640
+   ]
+  ],
+  "note": "user's stick figure (452x640, same canvas as the poster): the red mark on the back-left girl's raised arm is the grip"
+ },
+ {
+  "id": "smoke-axe-pose",
+  "arm": "S",
+  "expr_type": "attribute",
+  "image": "runs/fresh/smoke_images/yamanosusume.jpg",
+  "image_wh": [
+   452,
+   640
+  ],
+  "pose_ref": "runs/fresh/smoke_images/yamanosusume_pose2.png",
+  "instruction": "make the girl in the back row in blue raise her right hand and hold an ice axe in it",
+  "target": [
+   262,
+   85,
+   445,
+   355
+  ],
+  "siblings": [
+   [
+    0,
+    0,
+    165,
+    315
+   ],
+   [
+    135,
+    105,
+    278,
+    300
+   ],
+   [
+    0,
+    250,
+    240,
+    640
+   ],
+   [
+    190,
+    250,
+    452,
+    640
+   ]
+  ],
+  "note": "the original hard target; user's second drawing (back-right girl's arm raised, joints marked red)"
+ },
+ {
+  "id": "smoke-axe-erase",
+  "arm": "S",
+  "expr_type": "attribute",
+  "image": "runs/fresh/smoke_images/yamanosusume.jpg",
+  "image_wh": [
+   452,
+   640
+  ],
+  "pre_instruction": "Remove the gloved hand held up in front of the chest of the girl in the back row in blue, so both of her arms hang down at her sides out of view",
+  "instruction": "make the girl in the back row in blue raise her right hand and hold an ice axe in it",
+  "target": [
+   262,
+   85,
+   445,
+   355
+  ],
+  "siblings": [
+   [
+    0,
+    0,
+    165,
+    315
+   ],
+   [
+    135,
+    105,
+    278,
+    300
+   ],
+   [
+    0,
+    250,
+    240,
+    640
+   ],
+   [
+    190,
+    250,
+    452,
+    640
+   ]
+  ],
+  "note": "erase-then-redraw; optional pre_mask (white = may change, 452x640) confines step 1 to her",
+  "pre_mask": "runs/fresh/smoke_images/yamanosusume_erase_mask.png"
+ },
+ {
+  "id": "smoke-axe-moved",
+  "arm": "S",
+  "expr_type": "attribute",
+  "image": "runs/fresh/smoke_move/moved.png",
+  "instruction": "make the girl in the back row in blue hold an ice axe in her raised hand",
+  "target": [
+   262,
+   85,
+   445,
+   355
+  ],
+  "siblings": [
+   [
+    0,
+    0,
+    165,
+    315
+   ],
+   [
+    135,
+    105,
+    278,
+    300
+   ],
+   [
+    0,
+    250,
+    240,
+    640
+   ],
+   [
+    190,
+    250,
+    452,
+    640
+   ]
+  ],
+  "note": "step 2 of move-then-attach: the right-hand panel of DragDiffusion's saved strip, resized to 452x640 (same aspect as its 512x725 output), so the poster boxes apply",
+  "image_wh": [
+   452,
+   640
+  ]
+ }
+]
